@@ -79,6 +79,15 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     display: flex; gap: 12px; margin-bottom: 4px;
     font-family: ui-monospace, Consolas, monospace;
   }
+  .metrics-pane .legend [data-series] {
+    cursor: pointer; user-select: none;
+    padding: 1px 4px; border-radius: 3px;
+    transition: opacity 0.1s, background 0.1s;
+  }
+  .metrics-pane .legend [data-series]:hover { background: #2a2d2e; }
+  .metrics-pane .legend [data-series].off {
+    opacity: 0.35; text-decoration: line-through;
+  }
   .metrics-pane .legend .cpu { color: #f48771; }
   .metrics-pane .legend .gpu { color: #4ec9b0; }
   .metrics-pane .legend .rss { color: #7cb7ff; }
@@ -142,12 +151,12 @@ __TRACKS_HTML__
   </div>
   <aside>
     <div class="metrics-pane" id="metrics-pane">
-      <div class="legend">
-        <span class="cpu">CPU <span id="cur-cpu">--</span>%</span>
-        <span class="gpu">GPU <span id="cur-gpu">--</span>%</span>
-        <span class="rss">RSS <span id="cur-rss">--</span> MB</span>
-        <span class="vram">VRAM <span id="cur-vram">--</span> MB</span>
-        <span class="fps">fps <span id="cur-fps">--</span></span>
+      <div class="legend" id="metrics-legend" title="클릭으로 표시/숨김 토글">
+        <span class="cpu" data-series="cpu">CPU <span id="cur-cpu">--</span>%</span>
+        <span class="gpu" data-series="gpu">GPU <span id="cur-gpu">--</span>%</span>
+        <span class="rss" data-series="rss">RSS <span id="cur-rss">--</span> MB</span>
+        <span class="vram" data-series="vram">VRAM <span id="cur-vram">--</span> MB</span>
+        <span class="fps" data-series="fps">fps <span id="cur-fps">--</span></span>
         <span class="threads">threads <span id="cur-threads">--</span></span>
       </div>
       <canvas id="metrics-chart"></canvas>
@@ -328,6 +337,30 @@ __TRACKS_HTML__
     metricsPane.classList.add('empty');
   }
 
+  // ---- Series visibility (click legend to toggle, persisted) ------------
+
+  const VISIBILITY_KEY = 'trailbox-series-visible';
+  const DEFAULT_VISIBLE = { cpu: true, gpu: true, rss: true, vram: true, fps: true };
+  const visible = Object.assign({}, DEFAULT_VISIBLE,
+    JSON.parse(localStorage.getItem(VISIBILITY_KEY) || '{}'));
+
+  function applyVisibility() {
+    document.querySelectorAll('#metrics-legend [data-series]').forEach(el => {
+      el.classList.toggle('off', !visible[el.dataset.series]);
+    });
+    try {
+      localStorage.setItem(VISIBILITY_KEY, JSON.stringify(visible));
+    } catch (e) { /* private mode etc. — ignore */ }
+    drawChart();
+  }
+
+  document.querySelectorAll('#metrics-legend [data-series]').forEach(el => {
+    el.addEventListener('click', () => {
+      visible[el.dataset.series] = !visible[el.dataset.series];
+      applyVisibility();
+    });
+  });
+
   const cpuMax = Math.max(100, ...metrics.map(s => s.cpu_pct || 0));
   const gpuMax = Math.max(100, ...metrics.map(s => s.gpu_pct || 0));
   const rssMax = Math.max(1, ...metrics.map(s => s.rss_mb || 0));
@@ -377,7 +410,7 @@ __TRACKS_HTML__
 
     // fps line (drawn first so CPU/RSS land on top — fps has the most points
     // and would otherwise occlude the slower-changing curves).
-    if (frames.length) {
+    if (frames.length && visible.fps) {
       ctx.strokeStyle = '#ffcc66';
       ctx.lineWidth = 1.0;
       ctx.beginPath();
@@ -408,10 +441,10 @@ __TRACKS_HTML__
       const gpuFn = s => s.gpu_pct || 0; gpuFn.scale = yGpu;
       const rssFn = s => s.rss_mb || 0; rssFn.scale = yRss;
       const vramFn = s => s.gpu_vram_mb || 0; vramFn.scale = yVram;
-      drawSeries('#f48771', cpuFn);
-      drawSeries('#4ec9b0', gpuFn);
-      drawSeries('#7cb7ff', rssFn);
-      drawSeries('#b596ff', vramFn);
+      if (visible.cpu)  drawSeries('#f48771', cpuFn);
+      if (visible.gpu)  drawSeries('#4ec9b0', gpuFn);
+      if (visible.rss)  drawSeries('#7cb7ff', rssFn);
+      if (visible.vram) drawSeries('#b596ff', vramFn);
     }
 
     // Playhead line.
@@ -450,7 +483,7 @@ __TRACKS_HTML__
   searchInput.addEventListener('input', render);
   render();
   updateMetricsLegend();
-  drawChart();
+  applyVisibility();  // also triggers initial drawChart()
 </script>
 </body>
 </html>
