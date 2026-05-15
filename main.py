@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 # (soundcard). soundcard initializes COM with a different threading mode, which
 # makes the later comtypes init fail with "thread mode already set".
 from core.screen_recorder import ScreenRecorder, WindowTarget
+from core.system_info import gather as gather_system_info
 from core.audio_recorder import AudioRecorder
 from core.input_recorder import InputRecorder
 from core.log_collector import LogCollector
@@ -75,6 +76,7 @@ class TrailboxWindow(QMainWindow):
         self.setStatusBar(QStatusBar(self))
 
         self._session: Session | None = None
+        self._system_info: dict = {}
         self._screen_recorder: ScreenRecorder | None = None
         self._audio_recorder: AudioRecorder | None = None
         self._log_collector: LogCollector | None = None
@@ -137,6 +139,10 @@ class TrailboxWindow(QMainWindow):
         max_fps = self.launcher.capture_fps()
         audio_on = self.launcher.audio_enabled()
 
+        # Snapshot host PC profile once at start (OS/CPU/RAM/GPU/displays).
+        # Stashed on self so finalize can include it in the meta JSON.
+        self._system_info = gather_system_info()
+
         # t0 = the perf_counter instant log entries are timestamped against.
         # Capture it just before starting the screen recorder so log offsets
         # align with the first written video frame within a few ms.
@@ -146,6 +152,7 @@ class TrailboxWindow(QMainWindow):
             output_path=session.dir / VIDEO_TMP,
             target=target,
             max_fps=max_fps,
+            frames_log_path=session.dir / "metrics" / "frames.jsonl",
         )
         try:
             screen_recorder.start()
@@ -238,11 +245,13 @@ class TrailboxWindow(QMainWindow):
 
         frames_written = 0
         effective_fps = 0.0
+        frame_stats: dict = {}
         if self._screen_recorder is not None:
             try:
                 self._screen_recorder.stop()
                 frames_written = self._screen_recorder.frames_written()
                 effective_fps = self._screen_recorder.effective_fps()
+                frame_stats = self._screen_recorder.frame_stats()
             except Exception as e:  # noqa: BLE001
                 recorder_error = e
             self._screen_recorder = None
@@ -317,6 +326,8 @@ class TrailboxWindow(QMainWindow):
                 "max_fps": self.launcher.capture_fps(),
                 "screen_frames": frames_written,
                 "effective_fps": round(effective_fps, 2),
+                "frame_stats": frame_stats,
+                "system": self._system_info,
                 "audio_enabled": self.launcher.audio_enabled(),
                 "audio_device": audio_device,
                 "audio_seconds": round(audio_seconds, 2),

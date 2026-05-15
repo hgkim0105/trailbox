@@ -15,10 +15,12 @@ source presents at very high rates. Set high (e.g. 120) to keep everything.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import dxcam
@@ -47,16 +49,20 @@ class ScreenRecorder:
         output_path: Path,
         target: CaptureTarget,
         max_fps: int = 60,
+        frames_log_path: Path | None = None,
     ) -> None:
         self.output_path = Path(output_path)
         self.target = target
         self.max_fps = max(1, int(max_fps))
+        self.frames_log_path = Path(frames_log_path) if frames_log_path else None
 
         self._stop = threading.Event()
         self._started = threading.Event()
         self._thread: threading.Thread | None = None
         self._proc: subprocess.Popen | None = None
         self._stderr_log = None
+        self._frames_fh = None
+        self._frame_intervals_ms: list[float] = []
         self._error: BaseException | None = None
         self._frames_written = 0
         self._first_write_t: float | None = None
@@ -106,6 +112,7 @@ class ScreenRecorder:
 
     def _run(self) -> None:
         try:
+            self._open_frame_log()
             if isinstance(self.target, WindowTarget):
                 self._run_window(self.target)
             else:
@@ -114,7 +121,27 @@ class ScreenRecorder:
             self._error = e
             self._started.set()
         finally:
+            self._close_frame_log()
             self._close_ffmpeg()
+
+    def _open_frame_log(self) -> None:
+        if self.frames_log_path is None:
+            return
+        try:
+            self.frames_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._frames_fh = open(
+                self.frames_log_path, "w", encoding="utf-8", newline="\n"
+            )
+        except OSError:
+            self._frames_fh = None
+
+    def _close_frame_log(self) -> None:
+        if self._frames_fh is not None:
+            try:
+                self._frames_fh.close()
+            except OSError:
+                pass
+            self._frames_fh = None
 
     # ---- Monitor (dxcam) --------------------------------------------------
 
@@ -247,11 +274,60 @@ class ScreenRecorder:
 
     def _write(self, stdin, data: bytes, now: float | None = None) -> None:
         stdin.write(data)
-        self._frames_written += 1
         t = now if now is not None else time.perf_counter()
+        delta_ms: float | None = None
         if self._first_write_t is None:
             self._first_write_t = t
+            t_video = 0.0
+        else:
+            t_video = t - self._first_write_t
+            delta_ms = (t - self._last_write_t) * 1000.0
+            self._frame_intervals_ms.append(delta_ms)
         self._last_write_t = t
+        self._frame_log(t_video, delta_ms)
+        self._frames_written += 1
+
+    def _frame_log(self, t_video: float, delta_ms: float | None) -> None:
+        """Append one JSONL line per frame written to ffmpeg (optional)."""
+        if self._frames_fh is None:
+            return
+        ts_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        rec = {
+            "@timestamp": ts_utc,
+            "t_video_s": round(t_video, 4),
+            "frame": {
+                "index": self._frames_written,
+                "delta_ms": round(delta_ms, 3) if delta_ms is not None else None,
+            },
+            "ecs": {"version": "8.11"},
+        }
+        try:
+            self._frames_fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def frame_stats(self) -> dict[str, float]:
+        """Aggregate frame interval statistics in milliseconds.
+
+        ``count`` is the number of *intervals* observed (= frames - 1). Useful
+        as a session-level jitter readout in session_meta.json.
+        """
+        intervals = self._frame_intervals_ms
+        if not intervals:
+            return {}
+        sorted_iv = sorted(intervals)
+        n = len(sorted_iv)
+        # Simple percentile via nearest-rank, sufficient for QA visualization.
+        p99 = sorted_iv[min(n - 1, int(n * 0.99))]
+        p95 = sorted_iv[min(n - 1, int(n * 0.95))]
+        return {
+            "intervals": n,
+            "min_ms": round(min(intervals), 3),
+            "avg_ms": round(sum(intervals) / n, 3),
+            "max_ms": round(max(intervals), 3),
+            "p95_ms": round(p95, 3),
+            "p99_ms": round(p99, 3),
+        }
 
     def _spawn_ffmpeg(self, width: int, height: int) -> subprocess.Popen:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)

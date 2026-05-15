@@ -48,6 +48,16 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   header h1 { font-size: 14px; margin: 0; font-weight: 500; }
   header .meta { color: var(--text-dim); font-size: 12px; }
+  header details { font-size: 11px; color: var(--text-dim); }
+  header details summary { cursor: pointer; user-select: none; }
+  header details[open] summary { color: var(--text); }
+  header details .specs {
+    display: grid; grid-template-columns: auto 1fr;
+    gap: 2px 12px; margin-top: 6px;
+    font-family: ui-monospace, Consolas, monospace;
+  }
+  header details .specs .k { color: var(--text-dim); }
+  header details .specs .v { color: var(--text); white-space: pre-wrap; }
   main { display: flex; flex: 1; overflow: hidden; }
   .video-pane {
     flex: 1.6; padding: 12px; background: black;
@@ -118,6 +128,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <header>
   <h1>__SESSION_ID__</h1>
   <span class="meta" id="meta-summary"></span>
+  <details id="specs-details"><summary>PC 사양</summary><div class="specs" id="specs-grid"></div></details>
 </header>
 <main>
   <div class="video-pane">
@@ -161,16 +172,65 @@ __TRACKS_HTML__
   const searchInput = document.getElementById('q');
   const filterChecks = Array.from(document.querySelectorAll('.filters input[type=checkbox]'));
 
+  const fs = meta.frame_stats || {};
   metaSummary.textContent = [
     events.length + ' events',
     (meta.duration_seconds || 0).toFixed(1) + 's',
     (meta.screen_frames || 0) + ' frames',
     (meta.effective_fps || 0).toFixed(1) + ' fps',
+    (fs.avg_ms != null
+      ? `Δ avg ${fs.avg_ms.toFixed(1)}ms / p99 ${(fs.p99_ms || 0).toFixed(1)}ms`
+      : null),
     (meta.audio_enabled ? '오디오' : '오디오 없음'),
     (meta.log_lines || 0) + '라인',
     (meta.input_events || 0) + '입력',
     (meta.cpu_cores ? meta.cpu_cores + ' cores' : '? cores')
-  ].join('  ·  ');
+  ].filter(Boolean).join('  ·  ');
+
+  // ---- PC specs panel ---------------------------------------------------
+
+  const specsGrid = document.getElementById('specs-grid');
+  const specsDetails = document.getElementById('specs-details');
+  const sys = meta.system || {};
+  if (!Object.keys(sys).length) {
+    specsDetails.style.display = 'none';
+  } else {
+    function addSpec(label, value) {
+      if (!value && value !== 0) return;
+      const k = document.createElement('span'); k.className = 'k'; k.textContent = label;
+      const v = document.createElement('span'); v.className = 'v'; v.textContent = String(value);
+      specsGrid.appendChild(k); specsGrid.appendChild(v);
+    }
+    if (sys.os) {
+      const o = sys.os;
+      addSpec('OS', `${o.release || ''} (build ${o.build || '?'})`.trim());
+    }
+    if (sys.cpu) {
+      const c = sys.cpu;
+      const cores = `${c.physical_cores || '?'}P / ${c.logical_cores || '?'}L`;
+      const mhz = c.max_mhz ? ` @ ${(c.max_mhz / 1000).toFixed(2)} GHz` : '';
+      addSpec('CPU', `${c.name || '?'} — ${cores}${mhz}`);
+    }
+    if (sys.ram) {
+      const r = sys.ram;
+      addSpec('RAM', `${((r.total_mb || 0) / 1024).toFixed(1)} GB total · ${((r.available_mb_at_start || 0) / 1024).toFixed(1)} GB free at start`);
+    }
+    if (sys.gpus && sys.gpus.length) {
+      addSpec('GPU', sys.gpus.join(' / '));
+    }
+    if (sys.displays && sys.displays.length) {
+      const d = sys.displays.map(s => {
+        const nw = s.native_width || s.width;
+        const nh = s.native_height || s.height;
+        const scale = s.device_pixel_ratio && s.device_pixel_ratio !== 1
+          ? ` (${Math.round(s.device_pixel_ratio * 100)}% scale)` : '';
+        return `${nw}×${nh}@${s.refresh_hz}Hz${scale}${s.primary ? ' (primary)' : ''}`;
+      }).join(' · ');
+      addSpec('Display', d);
+    }
+    if (sys.trailbox_version) addSpec('Trailbox', `v${sys.trailbox_version}`);
+    if (sys.python) addSpec('Python', sys.python);
+  }
 
   function fmtTime(t) {
     const m = Math.floor(t / 60);
