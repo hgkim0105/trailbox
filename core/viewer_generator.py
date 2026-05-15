@@ -81,6 +81,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   }
   .metrics-pane .legend .cpu { color: #f48771; }
   .metrics-pane .legend .rss { color: #7cb7ff; }
+  .metrics-pane .legend .fps { color: #ffcc66; }
   .metrics-pane .legend .threads { color: #c8c8c8; }
   .metrics-pane canvas { display: block; width: 100%; height: 90px; }
   .metrics-pane.empty { display: none; }
@@ -142,6 +143,7 @@ __TRACKS_HTML__
       <div class="legend">
         <span class="cpu">CPU <span id="cur-cpu">--</span>%</span>
         <span class="rss">RSS <span id="cur-rss">--</span> MB</span>
+        <span class="fps">fps <span id="cur-fps">--</span></span>
         <span class="threads">threads <span id="cur-threads">--</span></span>
       </div>
       <canvas id="metrics-chart"></canvas>
@@ -161,10 +163,12 @@ __TRACKS_HTML__
 <script id="events-data" type="application/json">__EVENTS_JSON__</script>
 <script id="meta-data" type="application/json">__META_JSON__</script>
 <script id="metrics-data" type="application/json">__METRICS_JSON__</script>
+<script id="frames-data" type="application/json">__FRAMES_JSON__</script>
 <script>
   const events = JSON.parse(document.getElementById('events-data').textContent);
   const meta = JSON.parse(document.getElementById('meta-data').textContent);
   const metrics = JSON.parse(document.getElementById('metrics-data').textContent);
+  const frames = JSON.parse(document.getElementById('frames-data').textContent);
   const video = document.getElementById('player');
   const timeline = document.getElementById('timeline');
   const counts = document.getElementById('counts');
@@ -311,21 +315,30 @@ __TRACKS_HTML__
   const chartCanvas = document.getElementById('metrics-chart');
   const curCpu = document.getElementById('cur-cpu');
   const curRss = document.getElementById('cur-rss');
+  const curFps = document.getElementById('cur-fps');
   const curThreads = document.getElementById('cur-threads');
 
-  if (!metrics.length) {
+  if (!metrics.length && !frames.length) {
     metricsPane.classList.add('empty');
   }
 
   const cpuMax = Math.max(100, ...metrics.map(s => s.cpu_pct || 0));
   const rssMax = Math.max(1, ...metrics.map(s => s.rss_mb || 0));
+  // Cap fps Y-axis at the higher of (recording's max_fps setting, observed
+  // peak). Floor at 60 so a 30fps cap doesn't make the chart look saturated.
+  const fpsMax = Math.max(
+    60,
+    meta.max_fps || 0,
+    ...frames.map(s => s.fps || 0),
+  );
   const tMax = Math.max(
     meta.duration_seconds || 0,
     ...metrics.map(s => s.t),
+    ...frames.map(s => s.t),
   ) || 1;
 
   function drawChart() {
-    if (!metrics.length) return;
+    if (!metrics.length && !frames.length) return;
     const dpr = window.devicePixelRatio || 1;
     const cssW = chartCanvas.clientWidth;
     const cssH = chartCanvas.clientHeight;
@@ -342,6 +355,7 @@ __TRACKS_HTML__
     function tx(t) { return padL + (t / tMax) * plotW; }
     function yCpu(v) { return padT + plotH - (v / cpuMax) * plotH; }
     function yRss(v) { return padT + plotH - (v / rssMax) * plotH; }
+    function yFps(v) { return padT + plotH - (v / fpsMax) * plotH; }
 
     // Grid: 25/50/75 lines (faint).
     ctx.strokeStyle = '#333';
@@ -351,27 +365,43 @@ __TRACKS_HTML__
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y); ctx.stroke();
     }
 
-    // CPU line.
-    ctx.strokeStyle = '#f48771';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    metrics.forEach((s, i) => {
-      const x = tx(s.t);
-      const y = yCpu(s.cpu_pct || 0);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    // fps line (drawn first so CPU/RSS land on top — fps has the most points
+    // and would otherwise occlude the slower-changing curves).
+    if (frames.length) {
+      ctx.strokeStyle = '#ffcc66';
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      frames.forEach((s, i) => {
+        const x = tx(s.t);
+        const y = yFps(s.fps || 0);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
-    // RSS line.
-    ctx.strokeStyle = '#7cb7ff';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    metrics.forEach((s, i) => {
-      const x = tx(s.t);
-      const y = yRss(s.rss_mb || 0);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
+    // CPU line.
+    if (metrics.length) {
+      ctx.strokeStyle = '#f48771';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      metrics.forEach((s, i) => {
+        const x = tx(s.t);
+        const y = yCpu(s.cpu_pct || 0);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // RSS line.
+      ctx.strokeStyle = '#7cb7ff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      metrics.forEach((s, i) => {
+        const x = tx(s.t);
+        const y = yRss(s.rss_mb || 0);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
 
     // Playhead line.
     const t = video.currentTime;
@@ -381,11 +411,10 @@ __TRACKS_HTML__
     ctx.beginPath(); ctx.moveTo(px, padT); ctx.lineTo(px, padT + plotH); ctx.stroke();
   }
 
-  function currentMetric() {
-    if (!metrics.length) return null;
-    const t = video.currentTime;
-    let cur = metrics[0];
-    for (const s of metrics) {
+  function currentSampleBefore(arr, t) {
+    if (!arr.length) return null;
+    let cur = arr[0];
+    for (const s of arr) {
       if (s.t > t) break;
       cur = s;
     }
@@ -393,16 +422,13 @@ __TRACKS_HTML__
   }
 
   function updateMetricsLegend() {
-    const cur = currentMetric();
-    if (!cur) {
-      curCpu.textContent = '--';
-      curRss.textContent = '--';
-      curThreads.textContent = '--';
-      return;
-    }
-    curCpu.textContent = (cur.cpu_pct ?? 0).toFixed(1);
-    curRss.textContent = (cur.rss_mb ?? 0).toFixed(0);
-    curThreads.textContent = String(cur.threads ?? '?');
+    const t = video.currentTime;
+    const m = currentSampleBefore(metrics, t);
+    const f = currentSampleBefore(frames, t);
+    curCpu.textContent = m ? (m.cpu_pct ?? 0).toFixed(1) : '--';
+    curRss.textContent = m ? (m.rss_mb ?? 0).toFixed(0) : '--';
+    curThreads.textContent = m ? String(m.threads ?? '?') : '--';
+    curFps.textContent = f ? (f.fps ?? 0).toFixed(1) : '--';
   }
 
   video.addEventListener('timeupdate', () => { highlightCurrent(); updateMetricsLegend(); drawChart(); });
@@ -435,6 +461,31 @@ def _format_input(inp: dict[str, Any]) -> str:
         if a == "move":
             return f"🖱 move @ ({inp.get('x', 0)},{inp.get('y', 0)})"
     return json.dumps(inp, ensure_ascii=False)
+
+
+def _load_frames(session_dir: Path) -> list[dict[str, Any]]:
+    """Per-frame interval data, converted to instantaneous fps for plotting.
+
+    The very first frame's ``delta_ms`` is null (no prior) and is skipped.
+    A zero or negative delta is also skipped to avoid divide-by-zero.
+    """
+    path = session_dir / "metrics" / "frames.jsonl"
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        delta = rec.get("frame", {}).get("delta_ms")
+        if delta is None or delta <= 0:
+            continue
+        out.append({
+            "t": float(rec.get("t_video_s", 0.0)),
+            "fps": round(1000.0 / float(delta), 2),
+        })
+    return out
 
 
 def _load_metrics(session_dir: Path) -> list[dict[str, Any]]:
@@ -531,6 +582,7 @@ def generate_viewer(session_dir: Path, meta: dict[str, Any]) -> Path:
         )
 
     metrics = _load_metrics(session_dir)
+    frames = _load_frames(session_dir)
 
     html = (
         _HTML_TEMPLATE
@@ -539,6 +591,7 @@ def generate_viewer(session_dir: Path, meta: dict[str, Any]) -> Path:
         .replace("__EVENTS_JSON__", _safe_inline_json(events))
         .replace("__META_JSON__", _safe_inline_json(meta))
         .replace("__METRICS_JSON__", _safe_inline_json(metrics))
+        .replace("__FRAMES_JSON__", _safe_inline_json(frames))
     )
     out = session_dir / "viewer.html"
     out.write_text(html, encoding="utf-8")
