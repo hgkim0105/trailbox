@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtGui import QCloseEvent, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -476,9 +476,25 @@ class TrailboxWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _icon_path() -> Path:
+    """Locate the bundled trailbox.ico (works for source + PyInstaller).
+
+    PyInstaller extracts ``--add-data`` payloads to ``sys._MEIPASS``; in
+    source layout the file lives at ``assets/trailbox.ico``.
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        base = Path(__file__).resolve().parent
+    return base / "assets" / "trailbox.ico"
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Trailbox")
+    icon_file = _icon_path()
+    if icon_file.is_file():
+        app.setWindowIcon(QIcon(str(icon_file)))
     window = TrailboxWindow()
     window.show()
     return app.exec()

@@ -25,10 +25,15 @@ from pathlib import Path
 import imageio_ffmpeg
 
 
+_ICON = "assets/trailbox.ico"
+
 _GUI_FLAGS = [
     "--onefile",
     "--windowed",
     "--name", "Trailbox",
+    "--icon", _ICON,
+    # Bundle the icon as data so Qt can load it at runtime for the window/taskbar.
+    "--add-data", f"{_ICON};assets",
     "--collect-data", "soundcard",
     "--collect-data", "windows_capture",
     "--collect-data", "imageio_ffmpeg",
@@ -42,6 +47,7 @@ _MCP_FLAGS = [
     "--onefile",
     "--console",
     "--name", "Trailbox-mcp",
+    "--icon", _ICON,  # file icon only (no Qt window)
     "--collect-submodules", "mcp_server",
     "--collect-submodules", "mcp.server",
     "--collect-submodules", "mcp.shared",
