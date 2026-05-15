@@ -7,18 +7,28 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 
-_DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "output"
-
-
 def _output_root() -> Path:
+    """Resolve where to read sessions from.
+
+    Priority:
+      1. ``$TRAILBOX_OUTPUT`` (explicit override — always wins)
+      2. When frozen by PyInstaller: ``<exe_dir>/output`` so users can drop
+         Trailbox-mcp.exe next to the GUI's output folder and Just Work
+      3. Otherwise: ``../output`` relative to this module (source layout)
+    """
     env = os.environ.get("TRAILBOX_OUTPUT")
-    return Path(env) if env else _DEFAULT_OUTPUT
+    if env:
+        return Path(env)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "output"
+    return Path(__file__).resolve().parent.parent / "output"
 
 
 mcp = FastMCP(

@@ -1,11 +1,25 @@
-"""Trailbox entry point: PyQt6 main window wiring launcher and recorder panels."""
+"""Trailbox entry point: PyQt6 main window wiring launcher and recorder panels.
+
+When invoked with ``--mcp-server`` (or via the Trailbox-mcp.exe build), the
+entry point dispatches to the MCP stdio server BEFORE any Qt/dxcam imports,
+so the same codebase ships as both a GUI binary and an MCP-server binary
+without one path dragging the other path's deps into memory or touching
+stdio at import time.
+"""
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
+
+import sys
+
+# Early dispatch: keep the MCP path free of Qt / dxcam / soundcard imports.
+if __name__ == "__main__" and "--mcp-server" in sys.argv[1:]:
+    from mcp_server.__main__ import mcp
+    mcp.run()
+    sys.exit(0)
 
 import json
 import os
-import sys
 import time
 from pathlib import Path
 

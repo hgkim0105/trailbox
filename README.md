@@ -32,11 +32,12 @@ PyQt6 기반 단일 앱. 게임/일반 앱 모두 대상.
 
 ### A. 바이너리 (권장 — 일반 사용자)
 
-[Releases 페이지](https://github.com/hgkim0105/trailbox/releases/latest) 에서 **`Trailbox.exe`** 를 받으세요. Python 설치 불필요, ffmpeg/PyQt6 모두 단일 파일에 포함 (약 120 MB).
+[Releases 페이지](https://github.com/hgkim0105/trailbox/releases/latest) 에서 두 파일을 받아 **같은 폴더**에 두세요:
 
-다운로드 후 임의의 폴더에 두고 더블클릭하면 됩니다. 첫 실행 시 PyInstaller 가 임시 폴더에 의존성을 풀어 약 5~10초 소요 — 이후 실행은 빠릅니다. 녹화 결과는 `Trailbox.exe` 와 같은 폴더의 `output/` 에 쌓입니다.
+- **`Trailbox.exe`** — GUI 본체 (녹화·뷰어 생성. 약 124 MB)
+- **`Trailbox-mcp.exe`** — MCP 서버 (AI 연동용. 약 13 MB. AI에서 세션 분석할 때만 필요)
 
-> ⚠️ MCP 서버 기능 (AI 연동) 은 현재 바이너리에 포함되지 않습니다. 그 부분이 필요하면 아래 소스 설치를 사용하세요.
+Python 설치 불필요. `Trailbox.exe` 더블클릭으로 GUI 실행. 첫 실행 시 PyInstaller 가 의존성을 임시 폴더에 풀어 5~10초 소요 — 이후 실행은 빠릅니다. 녹화 결과는 `Trailbox.exe` 와 같은 폴더의 `output/` 에 쌓이며, `Trailbox-mcp.exe` 가 자동으로 같은 폴더의 `output/` 을 읽습니다.
 
 ### B. 소스 설치 (개발자 / MCP 서버 사용)
 
@@ -70,14 +71,14 @@ py -3.11 -m venv .venv
 
 ### 바이너리 빌드 (개발자용)
 
-소스에서 자체적으로 `Trailbox.exe` 를 빌드하려면:
+소스에서 자체적으로 바이너리를 빌드하려면:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
 .\.venv\Scripts\python.exe build.py
 ```
 
-결과: `dist/Trailbox.exe` (단일 파일, ~120 MB).
+결과: `dist/Trailbox.exe` (GUI, ~124 MB), `dist/Trailbox-mcp.exe` (MCP, ~13 MB).
 
 ## 출력 구조
 
@@ -168,16 +169,25 @@ mcp_server/
 
 ### 실행
 
-MCP 서버는 **소스 설치(B)** 가 필요합니다. 바이너리(`Trailbox.exe`)는 GUI 만 포함합니다.
-
-```powershell
-# stdio 트랜스포트 — 보통은 MCP 클라이언트(Claude Desktop 등)가 subprocess로 띄웁니다
-.\.venv\Scripts\python.exe -m mcp_server
-```
+stdio 트랜스포트 — 보통은 MCP 클라이언트(Claude Desktop 등)가 subprocess 로 자동으로 띄웁니다. 직접 실행할 일은 없습니다.
 
 ### Claude Desktop / Claude Code 등록
 
-`%APPDATA%\Claude\claude_desktop_config.json` (Claude Desktop) 또는 Claude Code 설정에 추가:
+`%APPDATA%\Claude\claude_desktop_config.json` (Claude Desktop) 또는 Claude Code 설정에 추가.
+
+**바이너리 사용자 (A 설치 방식)** — `Trailbox-mcp.exe` 경로만 지정하면 자동으로 옆 폴더의 `output/` 을 읽습니다:
+
+```json
+{
+  "mcpServers": {
+    "trailbox": {
+      "command": "C:\\path\\to\\Trailbox-mcp.exe"
+    }
+  }
+}
+```
+
+**소스 사용자 (B 설치 방식)** — venv 의 python.exe 로 모듈 실행:
 
 ```json
 {
@@ -193,9 +203,9 @@ MCP 서버는 **소스 설치(B)** 가 필요합니다. 바이너리(`Trailbox.e
 }
 ```
 
-`command` 는 venv 의 `python.exe` 절대경로, `TRAILBOX_OUTPUT` 은 분석할 세션이 쌓이는 폴더 절대경로. 환경변수 미지정 시엔 `mcp_server/` 모듈 위치 기준 `../output` 을 자동 사용합니다.
-
-> 💡 바이너리(`Trailbox.exe`) 로 녹화한 세션도 같은 `output/` 폴더를 가리키게 `TRAILBOX_OUTPUT` 만 설정해 주면 MCP 서버에서 그대로 조회 가능합니다 — Trailbox.exe 가 있는 폴더의 `output/` 경로로 지정하세요.
+`TRAILBOX_OUTPUT` 환경변수로 분석 대상 폴더를 명시적으로 지정 가능합니다. 미지정 시:
+- 바이너리 빌드: `Trailbox-mcp.exe` 가 있는 폴더의 `output/`
+- 소스 실행: `mcp_server/` 모듈 위치 기준 `../output`
 
 설정 후 Claude Desktop / Claude Code 재시작하면 `list_sessions` 등 6개 도구가 자동 인식됩니다.
 
