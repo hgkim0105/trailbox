@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
 from core.screen_recorder import ScreenRecorder, WindowTarget
 from core.system_info import gather as gather_system_info
 from core.audio_recorder import AudioRecorder
+from core.global_hotkey import GlobalHotkey
 from core.input_recorder import InputRecorder
 from core.log_collector import LogCollector
 from core.metrics_recorder import MetricsRecorder
@@ -48,6 +49,7 @@ from core.session import Session
 from core.viewer_generator import generate_viewer
 from ui.launcher_panel import LauncherPanel
 from ui.recorder_panel import RecorderPanel
+from ui.recording_overlay import RecordingOverlay
 from ui.session_picker import SessionPickerDialog
 
 OUTPUT_ROOT = Path(__file__).resolve().parent / "output"
@@ -55,6 +57,9 @@ OUTPUT_ROOT = Path(__file__).resolve().parent / "output"
 VIDEO_TMP = "screen.video.mp4"
 AUDIO_TMP = "screen.audio.wav"
 FINAL_NAME = "screen.mp4"
+
+STOP_HOTKEY = "<ctrl>+<alt>+r"
+STOP_HOTKEY_LABEL = "Ctrl+Alt+R"
 
 
 class TrailboxWindow(QMainWindow):
@@ -82,6 +87,8 @@ class TrailboxWindow(QMainWindow):
         self._log_collector: LogCollector | None = None
         self._input_recorder: InputRecorder | None = None
         self._metrics_recorder: MetricsRecorder | None = None
+        self._overlay: RecordingOverlay | None = None
+        self._stop_hotkey: GlobalHotkey | None = None
 
         self.launcher.app_launched.connect(self._on_app_launched)
         self.recorder.start_requested.connect(self._on_start_requested)
@@ -233,11 +240,29 @@ class TrailboxWindow(QMainWindow):
             5000,
         )
 
+        # On-screen "● REC" overlay (visible over windowed/borderless games)
+        # + global stop hotkey active only while recording.
+        self._overlay = RecordingOverlay(stop_hotkey_label=STOP_HOTKEY_LABEL)
+        self._overlay.begin()
+        self._stop_hotkey = GlobalHotkey(STOP_HOTKEY)
+        self._stop_hotkey.triggered.connect(self._on_stop_requested)
+        self._stop_hotkey.start()
+
     def _on_stop_requested(self) -> None:
         session = self._session
         if session is None:
             self.recorder.set_recording(False)
             return
+
+        # Immediately tear down the overlay + hotkey so the user gets visual
+        # feedback before the (potentially multi-second) mux/finalize chain.
+        if self._overlay is not None:
+            self._overlay.end()
+            self._overlay.deleteLater()
+            self._overlay = None
+        if self._stop_hotkey is not None:
+            self._stop_hotkey.stop()
+            self._stop_hotkey = None
 
         recorder_error: Exception | None = None
         audio_error: Exception | None = None
@@ -436,6 +461,16 @@ class TrailboxWindow(QMainWindow):
         if self._metrics_recorder is not None:
             try:
                 self._metrics_recorder.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        if self._stop_hotkey is not None:
+            try:
+                self._stop_hotkey.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        if self._overlay is not None:
+            try:
+                self._overlay.end()
             except Exception:  # noqa: BLE001
                 pass
         super().closeEvent(event)
