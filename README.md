@@ -28,27 +28,56 @@ PyQt6 기반 단일 앱. 게임/일반 앱 모두 대상.
 
 ## 설치
 
-요구사항: Windows 10 1903+, Python 3.11+, ffmpeg (imageio-ffmpeg가 동봉)
+요구사항: Windows 10 1903 이상.
+
+### A. 바이너리 (권장 — 일반 사용자)
+
+[Releases 페이지](https://github.com/hgkim0105/trailbox/releases/latest) 에서 **`Trailbox.exe`** 를 받으세요. Python 설치 불필요, ffmpeg/PyQt6 모두 단일 파일에 포함 (약 120 MB).
+
+다운로드 후 임의의 폴더에 두고 더블클릭하면 됩니다. 첫 실행 시 PyInstaller 가 임시 폴더에 의존성을 풀어 약 5~10초 소요 — 이후 실행은 빠릅니다. 녹화 결과는 `Trailbox.exe` 와 같은 폴더의 `output/` 에 쌓입니다.
+
+> ⚠️ MCP 서버 기능 (AI 연동) 은 현재 바이너리에 포함되지 않습니다. 그 부분이 필요하면 아래 소스 설치를 사용하세요.
+
+### B. 소스 설치 (개발자 / MCP 서버 사용)
+
+Python 3.11+ 필요. venv 권장.
 
 ```powershell
+git clone https://github.com/hgkim0105/trailbox.git
+cd trailbox
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ## 실행
 
+### A. 바이너리 — `Trailbox.exe` 더블클릭
+
+### B. 소스
+
 ```powershell
 .\.venv\Scripts\python.exe main.py
 ```
 
-사용 흐름:
+### 사용 흐름 (양쪽 동일)
 
-1. **캡처 대상** 선택 — `전체 모니터` 또는 `특정 창 (WGC)` (창 선택 시 콤보/클릭/단축키 중 택일)
+1. **캡처 대상** 선택 — `전체 모니터` 또는 `특정 창 (WGC)` (창 선택 시 콤보/🎯 클릭 픽업/`Ctrl+Shift+P` 전역 단축키 중 택일)
 2. (선택) **실행 파일** + **로그 폴더** — 둘 중 하나만 입력해도 다른 쪽 자동 추론 시도
 3. **시스템 사운드 녹음** · **키보드/마우스 입력 기록** · **프로세스 텔레메트리** 토글 (기본 모두 ON)
 4. **최대 fps** 선택 (10/15/24/30/60, 기본 60). VFR이라 실제 fps는 소스 따라 변함
 5. **녹화 시작** → 녹화 → **녹화 종료**
-6. **📂 세션 뷰어 열기…** → 목록에서 골라 더블클릭하면 브라우저로 뷰어 열림
+6. **📂 세션 뷰어 열기…** → 목록에서 골라 더블클릭하면 브라우저로 통합 뷰어 열림
+
+### 바이너리 빌드 (개발자용)
+
+소스에서 자체적으로 `Trailbox.exe` 를 빌드하려면:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pyinstaller
+.\.venv\Scripts\python.exe build.py
+```
+
+결과: `dist/Trailbox.exe` (단일 파일, ~120 MB).
 
 ## 출력 구조
 
@@ -139,8 +168,10 @@ mcp_server/
 
 ### 실행
 
+MCP 서버는 **소스 설치(B)** 가 필요합니다. 바이너리(`Trailbox.exe`)는 GUI 만 포함합니다.
+
 ```powershell
-# stdio 트랜스포트로 동작 — MCP 클라이언트가 subprocess로 띄움
+# stdio 트랜스포트 — 보통은 MCP 클라이언트(Claude Desktop 등)가 subprocess로 띄웁니다
 .\.venv\Scripts\python.exe -m mcp_server
 ```
 
@@ -152,17 +183,21 @@ mcp_server/
 {
   "mcpServers": {
     "trailbox": {
-      "command": "D:\\Projects\\Trailbox\\.venv\\Scripts\\python.exe",
+      "command": "C:\\path\\to\\trailbox\\.venv\\Scripts\\python.exe",
       "args": ["-m", "mcp_server"],
       "env": {
-        "TRAILBOX_OUTPUT": "D:\\Projects\\Trailbox\\output"
+        "TRAILBOX_OUTPUT": "C:\\path\\to\\trailbox\\output"
       }
     }
   }
 }
 ```
 
-`TRAILBOX_OUTPUT` 미지정 시엔 모듈 위치 기준 `../output` 을 사용합니다.
+`command` 는 venv 의 `python.exe` 절대경로, `TRAILBOX_OUTPUT` 은 분석할 세션이 쌓이는 폴더 절대경로. 환경변수 미지정 시엔 `mcp_server/` 모듈 위치 기준 `../output` 을 자동 사용합니다.
+
+> 💡 바이너리(`Trailbox.exe`) 로 녹화한 세션도 같은 `output/` 폴더를 가리키게 `TRAILBOX_OUTPUT` 만 설정해 주면 MCP 서버에서 그대로 조회 가능합니다 — Trailbox.exe 가 있는 폴더의 `output/` 경로로 지정하세요.
+
+설정 후 Claude Desktop / Claude Code 재시작하면 `list_sessions` 등 6개 도구가 자동 인식됩니다.
 
 ### 활용 예시
 
