@@ -80,7 +80,9 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     font-family: ui-monospace, Consolas, monospace;
   }
   .metrics-pane .legend .cpu { color: #f48771; }
+  .metrics-pane .legend .gpu { color: #4ec9b0; }
   .metrics-pane .legend .rss { color: #7cb7ff; }
+  .metrics-pane .legend .vram { color: #b596ff; }
   .metrics-pane .legend .fps { color: #ffcc66; }
   .metrics-pane .legend .threads { color: #c8c8c8; }
   .metrics-pane canvas { display: block; width: 100%; height: 90px; }
@@ -142,7 +144,9 @@ __TRACKS_HTML__
     <div class="metrics-pane" id="metrics-pane">
       <div class="legend">
         <span class="cpu">CPU <span id="cur-cpu">--</span>%</span>
+        <span class="gpu">GPU <span id="cur-gpu">--</span>%</span>
         <span class="rss">RSS <span id="cur-rss">--</span> MB</span>
+        <span class="vram">VRAM <span id="cur-vram">--</span> MB</span>
         <span class="fps">fps <span id="cur-fps">--</span></span>
         <span class="threads">threads <span id="cur-threads">--</span></span>
       </div>
@@ -314,7 +318,9 @@ __TRACKS_HTML__
   const metricsPane = document.getElementById('metrics-pane');
   const chartCanvas = document.getElementById('metrics-chart');
   const curCpu = document.getElementById('cur-cpu');
+  const curGpu = document.getElementById('cur-gpu');
   const curRss = document.getElementById('cur-rss');
+  const curVram = document.getElementById('cur-vram');
   const curFps = document.getElementById('cur-fps');
   const curThreads = document.getElementById('cur-threads');
 
@@ -323,7 +329,9 @@ __TRACKS_HTML__
   }
 
   const cpuMax = Math.max(100, ...metrics.map(s => s.cpu_pct || 0));
+  const gpuMax = Math.max(100, ...metrics.map(s => s.gpu_pct || 0));
   const rssMax = Math.max(1, ...metrics.map(s => s.rss_mb || 0));
+  const vramMax = Math.max(1, ...metrics.map(s => s.gpu_vram_mb || 0));
   // Cap fps Y-axis at the higher of (recording's max_fps setting, observed
   // peak). Floor at 60 so a 30fps cap doesn't make the chart look saturated.
   const fpsMax = Math.max(
@@ -354,7 +362,9 @@ __TRACKS_HTML__
 
     function tx(t) { return padL + (t / tMax) * plotW; }
     function yCpu(v) { return padT + plotH - (v / cpuMax) * plotH; }
+    function yGpu(v) { return padT + plotH - (v / gpuMax) * plotH; }
     function yRss(v) { return padT + plotH - (v / rssMax) * plotH; }
+    function yVram(v) { return padT + plotH - (v / Math.max(1, vramMax)) * plotH; }
     function yFps(v) { return padT + plotH - (v / fpsMax) * plotH; }
 
     // Grid: 25/50/75 lines (faint).
@@ -379,28 +389,29 @@ __TRACKS_HTML__
       ctx.stroke();
     }
 
-    // CPU line.
+    // CPU / GPU / RSS / VRAM lines (1Hz samples).
     if (metrics.length) {
-      ctx.strokeStyle = '#f48771';
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      metrics.forEach((s, i) => {
-        const x = tx(s.t);
-        const y = yCpu(s.cpu_pct || 0);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
-
-      // RSS line.
-      ctx.strokeStyle = '#7cb7ff';
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      metrics.forEach((s, i) => {
-        const x = tx(s.t);
-        const y = yRss(s.rss_mb || 0);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
+      const drawSeries = (color, getValue) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        metrics.forEach((s, i) => {
+          const v = getValue(s);
+          if (v == null) return;
+          const x = tx(s.t);
+          const y = getValue.scale(v);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      };
+      const cpuFn = s => s.cpu_pct || 0; cpuFn.scale = yCpu;
+      const gpuFn = s => s.gpu_pct || 0; gpuFn.scale = yGpu;
+      const rssFn = s => s.rss_mb || 0; rssFn.scale = yRss;
+      const vramFn = s => s.gpu_vram_mb || 0; vramFn.scale = yVram;
+      drawSeries('#f48771', cpuFn);
+      drawSeries('#4ec9b0', gpuFn);
+      drawSeries('#7cb7ff', rssFn);
+      drawSeries('#b596ff', vramFn);
     }
 
     // Playhead line.
@@ -426,7 +437,9 @@ __TRACKS_HTML__
     const m = currentSampleBefore(metrics, t);
     const f = currentSampleBefore(frames, t);
     curCpu.textContent = m ? (m.cpu_pct ?? 0).toFixed(1) : '--';
+    curGpu.textContent = m ? (m.gpu_pct ?? 0).toFixed(1) : '--';
     curRss.textContent = m ? (m.rss_mb ?? 0).toFixed(0) : '--';
+    curVram.textContent = m ? (m.gpu_vram_mb ?? 0).toFixed(0) : '--';
     curThreads.textContent = m ? String(m.threads ?? '?') : '--';
     curFps.textContent = f ? (f.fps ?? 0).toFixed(1) : '--';
   }

@@ -22,6 +22,8 @@ from pathlib import Path
 
 import psutil
 
+from core.gpu_monitor import GPUMonitor
+
 
 _ECS_VERSION = "8.11"
 # psutil.Process.cpu_percent() returns *per-logical-core* percent (a 16-core box
@@ -49,6 +51,7 @@ class MetricsRecorder:
         self._fh = None
         self._samples_written = 0
         self._error: BaseException | None = None
+        self._gpu: GPUMonitor | None = None
 
     # ---- Public API -------------------------------------------------------
 
@@ -66,6 +69,15 @@ class MetricsRecorder:
 
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = open(self.output_path, "w", encoding="utf-8", newline="\n")
+
+        # Best-effort GPU monitor — failure to attach (no GPU counters / driver
+        # missing) is non-fatal, samples will just lack gpu_pct.
+        try:
+            self._gpu = GPUMonitor(self.pid)
+            self._gpu.start()
+        except Exception:  # noqa: BLE001
+            self._gpu = None
+
         self._thread = threading.Thread(
             target=self._run, name="MetricsRecorder", daemon=True
         )
@@ -76,6 +88,12 @@ class MetricsRecorder:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             self._thread = None
+        if self._gpu is not None:
+            try:
+                self._gpu.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._gpu = None
         if self._fh is not None:
             try:
                 self._fh.close()
@@ -135,6 +153,14 @@ class MetricsRecorder:
             payload["handles"] = proc.num_handles()
         except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
             pass
+
+        if self._gpu is not None:
+            try:
+                gpu = self._gpu.sample()
+                # Merge gpu_pct, gpu_vram_mb, gpu_engines into the process block.
+                payload.update(gpu)
+            except Exception:  # noqa: BLE001
+                pass
 
         sample = {
             "@timestamp": ts_utc,

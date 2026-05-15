@@ -92,12 +92,23 @@ output/{session_id}/        # session_id = "{safe_app_name}_{YYYYMMDD_HHMMSS}"
 ├── screen.mp4              # video+audio after post-mux (intermediates deleted)
 ├── logs/{logs.jsonl, logs.vtt, raw/*}
 ├── inputs/{inputs.jsonl, inputs.vtt}
-├── metrics/process.jsonl
+├── metrics/{process.jsonl, frames.jsonl}
 ├── viewer.html
-└── session_meta.json
+└── session_meta.json       # carries `system` snapshot + `frame_stats`
 ```
 
 The MCP server, viewer generator, and `_smoketest_*` scripts all assume this layout. JSONL lines across recorders share `@timestamp` (UTC ISO), `t_video_s`, and `ecs.version` fields — keep that schema stable, callers index on it.
+
+## GPU monitoring via PDH (counter quirks that will bite you)
+
+`core/gpu_monitor.py` uses `win32pdh` against `\GPU Engine(*)\Utilization Percentage` and `\GPU Process Memory(*)\Dedicated Usage`. Two things to remember:
+
+1. **Delta counter first-sample rule** — PDH utilization counters are computed from a delta between consecutive `CollectQueryData` calls. The very first read after `AddCounter` always returns 0 (no prior sample). We call `CollectQueryData` once at the end of `start()` to prime; the first real `sample()` read returns valid data only on the *second* `CollectQueryData`. Don't move the priming call.
+2. **`PDH_CALC_NEGATIVE_DENOMINATOR`** — for an engine with zero activity over the sample window, `GetFormattedCounterValue` can raise. We catch and skip (engine treated as absent). That's why `gpu_engines` filters out near-zero values — they're not zero readings, they're absent readings.
+
+`gpu_pct` is the MAX engine percentage (Task Manager convention), not the sum. Summing would exceed 100 routinely since engines run in parallel on different GPU blocks. If you change this, also update the viewer's `gpuMax = Math.max(100, ...)` floor logic.
+
+## CPU% normalization
 
 ## Known constraint footprint
 

@@ -13,7 +13,9 @@ PyQt6 기반 단일 앱. 게임/일반 앱 모두 대상.
 | 시스템 오디오 | `soundcard` (WASAPI loopback) | `screen.mp4` 내 AAC 스트림 |
 | 게임 로그 | `watchdog` + tail-follow | `logs/logs.jsonl`, `logs/logs.vtt`, `logs/raw/` |
 | 키보드 + 마우스 | `pynput` 글로벌 리스너 | `inputs/inputs.jsonl`, `inputs/inputs.vtt` |
-| 프로세스 텔레메트리 | `psutil` 1Hz 샘플 | `metrics/process.jsonl` |
+| 프로세스 텔레메트리 (CPU + **GPU** + RAM + VRAM + threads) | `psutil` + Windows PDH (`win32pdh`) 1Hz 샘플 | `metrics/process.jsonl` |
+| 프레임 타이밍 | 매 프레임 인스턴트 fps + Δ | `metrics/frames.jsonl` |
+| PC 사양 스냅샷 | OS / CPU / RAM / GPU / 디스플레이 / Python / Trailbox 버전 | `session_meta.json` 의 `system` 필드 |
 | 통합 뷰어 | 자체 생성 HTML | `viewer.html` |
 
 전부 동일한 `t_video_s` (영상 시작 기준 초) 로 동기화. AI/Elasticsearch에 그대로 던지거나 viewer.html에서 사람이 보면서 검토 가능.
@@ -93,9 +95,10 @@ output/{session_id}/
 │   ├── inputs.jsonl        # 키·마우스 이벤트 (이동은 100ms 다운샘플)
 │   └── inputs.vtt
 ├── metrics/
-│   └── process.jsonl       # CPU%, RSS, threads, handles (1Hz)
+│   ├── process.jsonl       # CPU%, GPU%, RSS, VRAM, threads, handles (1Hz)
+│   └── frames.jsonl        # 매 프레임 t_video_s + delta_ms (인스턴트 fps)
 ├── viewer.html             # 단일 파일 통합 뷰어
-└── session_meta.json
+└── session_meta.json       # 메타 + system 정보 + frame_stats
 ```
 
 `session_id` 형식: `{앱명}_{YYYYMMDD_HHMMSS}` (예: `ACOdyssey_20260515_213131`)
@@ -112,9 +115,14 @@ output/{session_id}/
 {"@timestamp":"2026-05-15T12:31:32.919990Z","t_video_s":1.225,"input":{"type":"mouse","action":"click","button":"left","pressed":true,"x":1232,"y":1616,"window_x":1232,"window_y":566},"ecs":{"version":"8.11"}}
 ```
 
-메트릭 (CPU%는 시스템 전체 대비 정규화, `cpu_pct_per_core`는 raw 값):
+메트릭 (CPU%는 시스템 전체 대비 정규화 / `cpu_pct_per_core`는 raw / `gpu_pct`는 Task Manager 컨벤션의 busiest-engine):
 ```json
-{"@timestamp":"2026-05-15T13:02:32.426259Z","t_video_s":28.4,"process":{"cpu_pct":58.28,"cpu_pct_per_core":1165.6,"rss_mb":2616.9,"threads":81,"handles":1570},"ecs":{"version":"8.11"}}
+{"@timestamp":"...","t_video_s":28.4,"process":{"cpu_pct":58.28,"cpu_pct_per_core":1165.6,"rss_mb":2616.9,"threads":81,"handles":1570,"gpu_pct":92.4,"gpu_vram_mb":6840.2,"gpu_engines":{"3D":92.4,"Copy":0.3}},"ecs":{"version":"8.11"}}
+```
+
+프레임 타이밍:
+```json
+{"@timestamp":"...","t_video_s":1.234,"frame":{"index":74,"delta_ms":16.7},"ecs":{"version":"8.11"}}
 ```
 
 ## 통합 뷰어 (`viewer.html`)
@@ -122,9 +130,10 @@ output/{session_id}/
 세션 종료 시 자동 생성되는 단일 HTML 파일. 폴더에서 더블클릭하면 기본 브라우저로 열림.
 
 - 좌측: HTML5 비디오 (`logs.vtt`/`inputs.vtt` 가 자막 트랙으로 자동 표시 — 토글 가능)
-- 우측 상단: CPU·RSS 라인 차트 (영상 currentTime 따라 playhead 이동, 현재값 legend)
-- 우측 하단: logs + inputs 통합 타임라인 (필터 / 검색 / 행 클릭 → 그 시점 점프 + 재생)
-- 헤더: 세션 요약 (events 수, duration, frames, fps, audio, log 라인, input 이벤트, cores)
+- 우측 상단: 통합 라인 차트 — **CPU**(빨강) / **GPU**(초록) / **RSS**(파랑) / **VRAM**(보라) / **fps**(노랑) 5개 라인 + 영상 playhead 수직선
+- 우측 중간: logs + inputs 통합 타임라인 (필터 / 검색 / 행 클릭 → 그 시점 점프 + 재생)
+- 헤더 summary: events 수, duration, frames, effective_fps, **Δ avg/p99**, cores 등 한눈 요약
+- 헤더 `PC 사양 ▶` 토글: OS / CPU / RAM / GPU / Display(해상도+scaling) / Python / Trailbox 버전
 
 ## 아키텍처
 
@@ -141,7 +150,9 @@ core/
 ├── post_mux.py               # ffmpeg로 video+audio → screen.mp4
 ├── log_collector.py          # watchdog tail-follow → jsonl + vtt
 ├── input_recorder.py         # pynput 글로벌 리스너 → jsonl + vtt
-├── metrics_recorder.py       # psutil 1Hz 샘플 → jsonl
+├── metrics_recorder.py       # psutil + GPU 1Hz 샘플 → metrics/process.jsonl
+├── gpu_monitor.py            # PDH(win32pdh) 기반 per-PID GPU% + VRAM (vendor-agnostic)
+├── system_info.py            # OS/CPU/RAM/GPU/디스플레이 스냅샷 (세션 시작 시)
 ├── window_picker.py          # 보이는 top-level 창 열거 (psutil로 exe 보강)
 ├── window_clicker.py         # 클릭 픽업 + Ctrl+Shift+P 단축키
 ├── process_detector.py       # 로그 폴더 ↔ 프로세스 양방향 매칭 (open_files + install heuristic + parent walk)

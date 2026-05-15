@@ -107,6 +107,35 @@ CLAUDE.md에 "고정 ticker로 돌아가지 말 것"을 명시 — 이게 가장
 
 휴리스틱 튜닝 포인트 — 처음엔 `_HEURISTIC_MAX_DEPTH=4` 양쪽 독립 (총 8) → AC Odyssey 가 *드라이브 루트만 공유*해서 매칭되는 false positive. 그래서 `_HEURISTIC_MAX_COMBINED=4` + 드라이브 루트 제외로 좁힘. 휴리스틱은 *덜 매칭하는 게 더 매칭하는 것보다 나쁘지 않다* — 잘못된 결과로 사용자를 misleading 하는 것보다 "못 찾았음" 이 낫다.
 
+### 5b. PC 사양 + 프레임 로그 + GPU 부하 (v0.1.2)
+
+v0.1.1 출시 후 추가된 세 줄기 — 모두 "세션을 *해석 가능하게* 만드는" 메타데이터.
+
+**PC 사양 스냅샷** (`session_meta.json`의 `system` 필드)
+- 의도: 며칠 뒤 같은 세션을 다시 볼 때 "어느 PC에서?" 가 명확해야 함. 게임 QA는 머신 사양이 결정적.
+- 수집: `platform.win32_ver()` + `psutil` + `wmic path win32_videocontroller` + Qt `screen()`.
+- 트랩 한 건: Qt `geometry()` 는 DIP (device-independent pixels). 사용자 환경이 125% 스케일이라 `3072×1728` 로 보고됨 → 실제 native 는 `3840×2160`. `device_pixel_ratio` 와 `native_width/height` 모두 노출해서 *둘 다 의미 있게* 사용 가능하게 함.
+
+**프레임 로그** (`metrics/frames.jsonl`)
+- 매 프레임 한 라인: `{frame.index, t_video_s, delta_ms}`. 첫 프레임은 `delta_ms: null` (선행 없음).
+- 집계 통계는 메타 `frame_stats`: min/avg/max/p95/p99 ms.
+- 60fps × 5분 ≈ 18k 라인 ≈ 1.5 MB — 부담 없음.
+- 의도: viewer 차트와 jitter 분석. CPU spike 직후 fps 떨어지는 구간 같은 *상관관계* 가 한 눈에 보임.
+
+**GPU 부하** (`metrics/process.jsonl` 안에 합쳐서)
+- 게임 QA에 GPU는 CPU보다 중요할 때가 많아 늦게 추가하긴 했지만 핵심.
+- 첫 후보: NVML (NVIDIA 전용) — clean API, vendor lock. **거부**.
+- 채택: **Windows PDH** (`win32pdh`) — `\GPU Engine(*)\Utilization Percentage` 와 `\GPU Process Memory(*)\Dedicated Usage`. NVIDIA / AMD / Intel 통일. pywin32 이미 의존성이라 추가 dep 0.
+- PDH 특유의 트랩 두 건:
+  1. **Delta counter first-sample = 0** — `AddCounter` 후 첫 `CollectQueryData` 는 항상 0 반환 (선행 표본 없음). `start()` 끝에 primed call 한 번 추가 후 실제 샘플은 그 다음부터.
+  2. **`PDH_CALC_NEGATIVE_DENOMINATOR`** — 활동 없는 엔진은 예외 발생. `try/except` 로 잡고 "absent" 처리. 그래서 `gpu_engines` 가 비어 있는 게 "값이 0" 이 아니라 "샘플 없음"을 뜻함.
+- `gpu_pct` 는 `max(engines)` — Task Manager 의 "GPU" 컬럼 컨벤션. `sum(engines)` 으로 가면 100% 자주 초과 (병렬 엔진), `max` 가 *병목 엔진을 가리키는* 더 의미 있는 단일 숫자.
+
+**Viewer 차트 5-라인 통합**
+- 빨강 CPU% · 초록 GPU% · 파랑 RSS · 보라 VRAM · 노랑 fps
+- 각 라인 *독립 Y 스케일* — 단위 다른데 한 캔버스에 그리는 트릭. CPU/GPU 는 0–100% / RSS/VRAM 은 MB / fps 는 0–max_fps. 시각적으로 *상대적 추이* 만 봐도 충분히 정보가 됨.
+- fps 는 데이터 포인트 가장 많으므로 *제일 먼저* 그려서 (opacity 낮은 라인이 뒤로) CPU/GPU 가 그 위에 얹히게 했음.
+
 ### 6. 메모리 덤프 → 프로세스 텔레메트리
 
 스펙엔 5단계로 메모리 덤프가 있었지만, 실제 도입 직전에 ROI 분석을 하니:
