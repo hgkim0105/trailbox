@@ -1,0 +1,9 @@
+PyQt6>=6.6
+dxcam>=0.3
+windows-capture>=2.0
+soundcard>=0.4
+imageio[ffmpeg]>=2.34
+psutil>=5.9
+pywin32>=306
+pynput>=1.7
+watchdog>=4.0
