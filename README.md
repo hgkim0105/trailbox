@@ -116,7 +116,61 @@ core/
 ├── window_clicker.py         # 클릭 픽업 + Ctrl+Shift+P 단축키
 ├── process_detector.py       # 로그 폴더 ↔ 프로세스 양방향 매칭 (open_files + install heuristic + parent walk)
 └── viewer_generator.py       # session 폴더로부터 viewer.html 생성
+mcp_server/
+└── __main__.py               # MCP 서버 (stdio) — AI용 읽기 전용 분석 도구 6종
 ```
+
+## MCP 서버 (AI에서 세션 분석)
+
+녹화한 세션을 AI 가 직접 들여다보고 질문에 답하게 할 수 있는 MCP (Model Context Protocol) 서버가 들어 있습니다. **읽기 전용 분석 도구**가 6개 노출됩니다 (캡처 제어는 미포함).
+
+### 노출 도구
+
+| 도구 | 용도 |
+|---|---|
+| `list_sessions(limit=20)` | 최신 세션 N개 요약 (id, 시작 시각, duration, log/input/frame 카운트 등) |
+| `get_session(session_id)` | 전체 메타 + 산출물 파일 절대경로들 |
+| `query_events(session_id, t_start?, t_end?, kinds?, text?, limit?)` | 로그+입력을 시간/종류/텍스트로 필터 (kinds: log/input/mouse/key) |
+| `get_metrics(session_id, t_start?, t_end?)` | CPU/RSS/threads 샘플 + 윈도우 내 cpu_max/avg, rss_min/max 요약 |
+| `search_logs(session_id, query, limit?)` | 로그 메시지 전문 검색 |
+| `get_viewer_path(session_id)` | `viewer.html` 절대경로 (브라우저 열기용) |
+
+모든 이벤트는 `t_video_s` 필드를 공유해서 AI 가 "12.3초 시점에 무슨 일?" 같이 시간축 기반으로 통합 질의 가능.
+
+### 실행
+
+```powershell
+# stdio 트랜스포트로 동작 — MCP 클라이언트가 subprocess로 띄움
+.\.venv\Scripts\python.exe -m mcp_server
+```
+
+### Claude Desktop / Claude Code 등록
+
+`%APPDATA%\Claude\claude_desktop_config.json` (Claude Desktop) 또는 Claude Code 설정에 추가:
+
+```json
+{
+  "mcpServers": {
+    "trailbox": {
+      "command": "D:\\Projects\\Trailbox\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "mcp_server"],
+      "env": {
+        "TRAILBOX_OUTPUT": "D:\\Projects\\Trailbox\\output"
+      }
+    }
+  }
+}
+```
+
+`TRAILBOX_OUTPUT` 미지정 시엔 모듈 위치 기준 `../output` 을 사용합니다.
+
+### 활용 예시
+
+AI 에 던지는 질문 예:
+- "최근 세션에서 CPU 50% 넘긴 구간 알려줘"
+- "이 세션 12~15초 사이에 무슨 입력이 있었나"
+- "logs 에서 'error' 들어간 라인만 영상 타임코드와 같이 보여줘"
+- "최근 5개 세션 중 RSS 가장 많이 늘어난 세션은?"
 
 ## 알려진 한계
 
