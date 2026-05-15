@@ -553,6 +553,9 @@ def _load_metrics(session_dir: Path) -> list[dict[str, Any]]:
                 "rss_mb": proc.get("rss_mb"),
                 "threads": proc.get("threads"),
                 "handles": proc.get("handles"),
+                "gpu_pct": proc.get("gpu_pct"),
+                "gpu_vram_mb": proc.get("gpu_vram_mb"),
+                "gpu_engines": proc.get("gpu_engines"),
             }
         )
     samples.sort(key=lambda s: s["t"])
