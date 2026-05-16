@@ -1,21 +1,31 @@
-"""FastAPI app for the Hub. Phase 1: REST only, no /v viewer routes yet."""
+"""FastAPI app for the Hub.
+
+Phase 1: token-auth REST (upload/list/get/zip/delete).
+Phase 2: share tokens + `/v/{token}/*` static viewer routes (no API auth).
+"""
 from __future__ import annotations
 
+import re
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .auth import require_token
 from .config import HubConfig, load as load_config
+from .shares import ShareStore
 from .storage import Storage, is_valid_session_id
+
+
+_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{16,64}$")
 
 
 def create_app(cfg: HubConfig | None = None) -> FastAPI:
     cfg = cfg or load_config()
     storage = Storage(cfg.data_root)
+    shares = ShareStore(cfg.data_root / "_tokens.json")
     auth = require_token(cfg)
 
     app = FastAPI(
@@ -113,6 +123,77 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid session_id")
         if not storage.delete(session_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
+        shares.revoke_for_session(session_id)
         return None
+
+    # ---- Share tokens (Phase 2) ------------------------------------------
+
+    @app.post(
+        "/api/sessions/{session_id}/share",
+        dependencies=[Depends(auth)],
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_share(session_id: str) -> dict:
+        if not is_valid_session_id(session_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid session_id")
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
+        token = shares.create(session_id)
+        return {
+            "token": token,
+            "session_id": session_id,
+            "path": f"/v/{token}/",
+        }
+
+    @app.get("/api/sessions/{session_id}/shares", dependencies=[Depends(auth)])
+    def list_shares(session_id: str) -> dict:
+        if not is_valid_session_id(session_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid session_id")
+        items = shares.list_for_session(session_id)
+        return {"count": len(items), "shares": items}
+
+    @app.delete(
+        "/api/shares/{token}",
+        dependencies=[Depends(auth)],
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def revoke_share(token: str):
+        if not _TOKEN_RE.match(token):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid token")
+        if not shares.revoke(token):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "token not found")
+        return None
+
+    # ---- Browser viewer routes (no API auth — token IS the auth) ---------
+
+    def _serve_share_path(token: str, path: str) -> FileResponse:
+        if not _TOKEN_RE.match(token):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "share not found")
+        sid = shares.resolve(token)
+        if sid is None or not storage.exists(sid):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "share not found")
+        rel = path or "viewer.html"
+        if rel.endswith("/"):
+            rel = rel + "viewer.html"
+        session_dir = storage.session_dir(sid).resolve()
+        target = (session_dir / rel).resolve()
+        # Path traversal defense.
+        try:
+            target.relative_to(session_dir)
+        except ValueError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if not target.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        # FileResponse honors Range requests, which is what mp4 seeking needs.
+        return FileResponse(target)
+
+    @app.get("/v/{token}")
+    @app.get("/v/{token}/")
+    def view_root(token: str) -> FileResponse:
+        return _serve_share_path(token, "viewer.html")
+
+    @app.get("/v/{token}/{path:path}")
+    def view_static(token: str, path: str) -> FileResponse:
+        return _serve_share_path(token, path)
 
     return app

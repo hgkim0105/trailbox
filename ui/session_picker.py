@@ -138,6 +138,10 @@ class SessionPickerDialog(QDialog):
         self.upload_btn.setEnabled(False)
         self.upload_btn.clicked.connect(self._on_upload_to_hub)
         btn_row.addWidget(self.upload_btn)
+        self.share_btn = QPushButton("공유 링크", self)
+        self.share_btn.setEnabled(False)
+        self.share_btn.clicked.connect(self._on_create_share)
+        btn_row.addWidget(self.share_btn)
         btn_row.addStretch(1)
         self.open_btn = QPushButton("뷰어 열기", self)
         self.open_btn.setEnabled(False)
@@ -172,6 +176,7 @@ class SessionPickerDialog(QDialog):
         has_row = self.table.currentRow() >= 0
         self.open_btn.setEnabled(has_row)
         self.upload_btn.setEnabled(has_row)
+        self.share_btn.setEnabled(has_row)
 
     def _on_hub_settings(self) -> None:
         from ui.hub_dialogs import open_hub_settings
@@ -183,3 +188,10 @@ class SessionPickerDialog(QDialog):
             return
         from ui.hub_dialogs import upload_session_to_hub
         upload_session_to_hub(session, self)
+
+    def _on_create_share(self) -> None:
+        session = self.selected_session()
+        if session is None:
+            return
+        from ui.hub_dialogs import create_share_for_session
+        create_share_for_session(session, self)

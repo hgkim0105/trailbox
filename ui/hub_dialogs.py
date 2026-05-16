@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -170,26 +171,32 @@ class _UploadProgressDialog(QDialog):
         return self._success
 
 
-def upload_session_to_hub(session_dir: Path, parent: QWidget | None = None) -> bool:
-    """Upload a session dir to the configured Hub. Blocks on a modal progress.
-
-    Returns True on success. If the Hub isn't configured, prompts the settings
-    dialog first; if the user cancels that, returns False.
-    """
+def _ensure_client(parent: QWidget | None) -> HubClient | None:
+    """Return a configured HubClient, walking the user through settings if needed."""
     settings = hub_config.load()
     if not settings.configured:
         QMessageBox.information(
             parent, "Hub 설정 필요", "Hub URL 이 설정되어 있지 않습니다. 먼저 설정하세요."
         )
         if not open_hub_settings(parent):
-            return False
+            return None
         settings = hub_config.load()
         if not settings.configured:
-            return False
+            return None
+    return HubClient(base_url=settings.url, token=settings.token, timeout=30.0)
+
+
+def upload_session_to_hub(session_dir: Path, parent: QWidget | None = None) -> bool:
+    """Upload a session dir to the configured Hub. Blocks on a modal progress.
+
+    Returns True on success. If the Hub isn't configured, prompts the settings
+    dialog first; if the user cancels that, returns False.
+    """
+    client = _ensure_client(parent)
+    if client is None:
+        return False
 
     session_id = Path(session_dir).name
-    client = HubClient(base_url=settings.url, token=settings.token, timeout=30.0)
-
     dlg = _UploadProgressDialog(session_id, parent)
     worker = _UploadWorker(client, session_id, Path(session_dir))
     worker.progress.connect(dlg.on_progress)
@@ -201,3 +208,88 @@ def upload_session_to_hub(session_dir: Path, parent: QWidget | None = None) -> b
     finally:
         worker.wait(2000)
     return dlg.success
+
+
+# ---- Share-link creation ---------------------------------------------------
+
+
+def _show_share_url(url: str, parent: QWidget | None) -> None:
+    """Modal showing the URL with a one-click 'copy to clipboard' button."""
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("공유 링크 생성됨")
+    dlg.resize(520, 0)
+
+    label = QLabel("아래 URL 을 공유하세요 (브라우저에서 바로 열림):", dlg)
+    edit = QLineEdit(url, dlg)
+    edit.setReadOnly(True)
+    edit.selectAll()
+
+    copy_btn = QPushButton("클립보드에 복사", dlg)
+    def _copy() -> None:
+        QGuiApplication.clipboard().setText(url)
+        copy_btn.setText("복사됨!")
+    copy_btn.clicked.connect(_copy)
+
+    close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+    close.rejected.connect(dlg.reject)
+    close.accepted.connect(dlg.accept)
+
+    root = QVBoxLayout(dlg)
+    root.addWidget(label)
+    root.addWidget(edit)
+    row = QHBoxLayout()
+    row.addWidget(copy_btn)
+    row.addStretch(1)
+    root.addLayout(row)
+    root.addWidget(close)
+
+    # Pre-copy to clipboard so the user can paste immediately even without clicking.
+    QGuiApplication.clipboard().setText(url)
+    copy_btn.setText("복사됨!  (다시 복사)")
+    dlg.exec()
+
+
+def create_share_for_session(session_dir: Path, parent: QWidget | None = None) -> bool:
+    """Create a share link for the given session.
+
+    If the session isn't on the Hub yet, prompts to upload first.
+    Returns True if a link was generated and shown.
+    """
+    client = _ensure_client(parent)
+    if client is None:
+        return False
+
+    session_id = Path(session_dir).name
+
+    def _try_share() -> dict | None:
+        try:
+            return client.create_share(session_id)
+        except HubError as e:
+            if e.status_code == 404:
+                return None
+            QMessageBox.critical(parent, "공유 링크 실패", str(e))
+            raise
+
+    try:
+        info = _try_share()
+    except HubError:
+        return False
+
+    if info is None:
+        ans = QMessageBox.question(
+            parent,
+            "허브에 없음",
+            "이 세션은 아직 허브에 업로드되어 있지 않습니다.\n지금 업로드한 뒤 공유 링크를 만들까요?",
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return False
+        if not upload_session_to_hub(session_dir, parent):
+            return False
+        try:
+            info = client.create_share(session_id)
+        except HubError as e:
+            QMessageBox.critical(parent, "공유 링크 실패", str(e))
+            return False
+
+    _show_share_url(info["url"], parent)
+    return True

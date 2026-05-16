@@ -145,6 +145,30 @@ class HubClient:
             r = c.delete(f"/api/sessions/{session_id}")
             self._raise(r)
 
+    def create_share(self, session_id: str) -> dict[str, Any]:
+        """Create an unguessable share token. Returns {token, session_id, path, url}.
+
+        ``url`` is the absolute browser URL the user can paste — built by
+        joining ``base_url`` with the server-reported relative ``path``.
+        """
+        with self._client() as c:
+            r = c.post(f"/api/sessions/{session_id}/share")
+            self._raise(r)
+            data = r.json()
+        data["url"] = f"{self.base_url}{data['path']}"
+        return data
+
+    def list_shares(self, session_id: str) -> list[dict[str, Any]]:
+        with self._client() as c:
+            r = c.get(f"/api/sessions/{session_id}/shares")
+            self._raise(r)
+            return r.json().get("shares", [])
+
+    def revoke_share(self, token: str) -> None:
+        with self._client() as c:
+            r = c.delete(f"/api/shares/{token}")
+            self._raise(r)
+
 
 # ---- Helpers ---------------------------------------------------------------
 
