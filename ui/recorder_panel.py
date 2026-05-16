@@ -1,8 +1,9 @@
 """Recorder panel: start/stop recording and show current session status."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QSettings, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -10,6 +11,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+_SETTINGS_ORG = "Trailbox"
+_SETTINGS_APP = "Trailbox"
+_AUTO_UPLOAD_KEY = "recorder/auto_upload_on_stop"
 
 
 class RecorderPanel(QWidget):
@@ -57,8 +62,32 @@ class RecorderPanel(QWidget):
         view_row.addStretch(1)
         layout.addLayout(view_row)
 
+        self.auto_upload_cb = QCheckBox("녹화 종료 시 허브 자동 업로드", self)
+        self.auto_upload_cb.setToolTip(
+            "켜져 있으면 세션 종료 후 곧바로 Hub 로 업로드합니다.\n"
+            "Hub URL 이 미설정이면 조용히 건너뜁니다 (세션은 로컬에 정상 저장됩니다)."
+        )
+        self.auto_upload_cb.setChecked(self._load_auto_upload())
+        self.auto_upload_cb.toggled.connect(self._save_auto_upload)
+        layout.addWidget(self.auto_upload_cb)
+
         root.addWidget(group)
         root.addStretch(1)
+
+    @staticmethod
+    def _load_auto_upload() -> bool:
+        s = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+        # QSettings returns str on Windows; coerce explicitly.
+        return str(s.value(_AUTO_UPLOAD_KEY, "false")).lower() in ("1", "true", "yes")
+
+    @staticmethod
+    def _save_auto_upload(checked: bool) -> None:
+        s = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+        s.setValue(_AUTO_UPLOAD_KEY, "true" if checked else "false")
+        s.sync()
+
+    def auto_upload_enabled(self) -> bool:
+        return self.auto_upload_cb.isChecked()
 
     def set_recording(self, recording: bool) -> None:
         self.start_btn.setEnabled(not recording)

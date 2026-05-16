@@ -18,7 +18,9 @@ from typing import Any, Iterator
 
 # session_id is "{safe_app_name}_{YYYYMMDD_HHMMSS}" by Trailbox convention,
 # but we accept any name that can't escape the data root.
-_VALID_ID = re.compile(r"^[A-Za-z0-9._\-]+$")
+# Leading "_" / "." is reserved for hub-internal dirs and files (_uploads,
+# _tokens.json, etc.) so listing the data root cleanly skips them.
+_VALID_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*$")
 
 
 def is_valid_session_id(sid: str) -> bool:

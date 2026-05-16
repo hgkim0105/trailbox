@@ -71,13 +71,22 @@ class HubClient:
             self._raise(r)
             return r.json().get("sessions", [])
 
+    # Files >= this threshold use resumable chunked upload; smaller ones use a
+    # single POST. The chunked path is more robust on flaky links but adds
+    # round-trip overhead per chunk, so small sessions stay single-shot.
+    CHUNKED_UPLOAD_THRESHOLD = 64 * 1024 * 1024  # 64 MB
+    CHUNK_SIZE = 4 * 1024 * 1024                  # 4 MB
+
     def upload_session(
         self,
         session_id: str,
         session_dir: Path,
         progress: Callable[[int, int], None] | None = None,
     ) -> dict[str, Any]:
-        """Zip ``session_dir`` and POST it. Returns the server's summary dict."""
+        """Zip ``session_dir`` and upload. Auto-picks chunked vs single POST.
+
+        Returns the server's session summary.
+        """
         session_dir = Path(session_dir)
         if not session_dir.is_dir():
             raise FileNotFoundError(session_dir)
@@ -85,23 +94,120 @@ class HubClient:
         zip_path = _zip_session(session_dir)
         try:
             total = zip_path.stat().st_size
-            with self._client() as c, open(zip_path, "rb") as f:
-                reader = _ProgressReader(f, total, progress)
-                files = {
-                    "file": (
-                        f"{session_id}.zip",
-                        reader,
-                        "application/zip",
-                    )
-                }
-                r = c.post(f"/api/sessions/{session_id}", files=files)
-                self._raise(r)
-                return r.json()
+            if total >= self.CHUNKED_UPLOAD_THRESHOLD:
+                return self._upload_chunked(session_id, zip_path, total, progress)
+            return self._upload_single(session_id, zip_path, total, progress)
         finally:
             try:
                 zip_path.unlink(missing_ok=True)
             except OSError:
                 pass
+
+    def _upload_single(
+        self,
+        session_id: str,
+        zip_path: Path,
+        total: int,
+        progress: Callable[[int, int], None] | None,
+    ) -> dict[str, Any]:
+        with self._client() as c, open(zip_path, "rb") as f:
+            reader = _ProgressReader(f, total, progress)
+            files = {
+                "file": (f"{session_id}.zip", reader, "application/zip")
+            }
+            r = c.post(f"/api/sessions/{session_id}", files=files)
+            self._raise(r)
+            return r.json()
+
+    def _upload_chunked(
+        self,
+        session_id: str,
+        zip_path: Path,
+        total: int,
+        progress: Callable[[int, int], None] | None,
+        max_retries_per_chunk: int = 3,
+    ) -> dict[str, Any]:
+        with self._client() as c:
+            # 1. Open the upload session.
+            r = c.post(
+                "/api/uploads",
+                json={"session_id": session_id, "total_size": total},
+            )
+            self._raise(r)
+            upload_id = r.json()["upload_id"]
+
+            try:
+                offset = 0
+                with open(zip_path, "rb") as f:
+                    while offset < total:
+                        chunk = f.read(self.CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        offset = self._put_chunk_with_retry(
+                            c, upload_id, offset, chunk, max_retries_per_chunk
+                        )
+                        if progress:
+                            try:
+                                progress(offset, total)
+                            except Exception:
+                                pass
+
+                r = c.post(f"/api/uploads/{upload_id}/complete")
+                self._raise(r)
+                return r.json()["session"]
+            except Exception:
+                # Best-effort abort so the server temp dir doesn't linger.
+                try:
+                    c.delete(f"/api/uploads/{upload_id}")
+                except Exception:
+                    pass
+                raise
+
+    def _put_chunk_with_retry(
+        self,
+        client: httpx.Client,
+        upload_id: str,
+        offset: int,
+        chunk: bytes,
+        max_retries: int,
+    ) -> int:
+        """Put a chunk, recovering from network errors and offset drift.
+
+        Returns the new server-reported byte offset after the chunk lands.
+        """
+        last_err: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                r = client.put(
+                    f"/api/uploads/{upload_id}",
+                    params={"offset": offset},
+                    content=chunk,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+                if r.status_code == 409:
+                    # Offset drifted — re-query state and either retry from the
+                    # server's current offset, or accept the chunk landed twice.
+                    sr = client.get(f"/api/uploads/{upload_id}")
+                    self._raise(sr)
+                    server_offset = int(sr.json()["bytes_received"])
+                    if server_offset == offset + len(chunk):
+                        return server_offset  # our chunk actually landed; move on
+                    if server_offset != offset:
+                        raise HubError(
+                            f"server offset {server_offset} doesn't match local {offset}",
+                            status_code=409,
+                        )
+                    # else: same offset, real conflict — retry
+                else:
+                    self._raise(r)
+                    return int(r.json()["bytes_received"])
+            except (httpx.TransportError, httpx.RemoteProtocolError) as e:
+                last_err = e
+                continue
+        raise HubError(
+            f"chunk PUT failed after {max_retries} attempts: {last_err}",
+            status_code=None,
+        )
 
     def download_session(
         self,

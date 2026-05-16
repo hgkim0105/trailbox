@@ -195,7 +195,25 @@ def upload_session_to_hub(session_dir: Path, parent: QWidget | None = None) -> b
     client = _ensure_client(parent)
     if client is None:
         return False
+    return _run_upload_with_progress(client, session_dir, parent)
 
+
+def auto_upload_session(session_dir: Path, parent: QWidget | None = None) -> bool:
+    """Same as upload_session_to_hub but silently skips when Hub isn't configured.
+
+    Used by the recorder's "auto-upload on stop" toggle — never want to nag
+    the user mid-flow if they just haven't set up the Hub.
+    """
+    settings = hub_config.load()
+    if not settings.configured:
+        return False
+    client = HubClient(base_url=settings.url, token=settings.token, timeout=30.0)
+    return _run_upload_with_progress(client, session_dir, parent)
+
+
+def _run_upload_with_progress(
+    client: HubClient, session_dir: Path, parent: QWidget | None
+) -> bool:
     session_id = Path(session_dir).name
     dlg = _UploadProgressDialog(session_id, parent)
     worker = _UploadWorker(client, session_id, Path(session_dir))

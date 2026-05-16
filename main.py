@@ -434,6 +434,11 @@ class TrailboxWindow(QMainWindow):
             QMessageBox.warning(
                 self, "Trailbox", "녹화 중 일부 오류:\n" + "\n".join(str(e) for e in errs)
             )
+
+        if self.recorder.auto_upload_enabled():
+            from ui.hub_dialogs import auto_upload_session
+            auto_upload_session(session.dir, self)
+
         self._session = None
 
     def _on_view_requested(self) -> None:
