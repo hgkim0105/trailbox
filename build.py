@@ -39,15 +39,19 @@ _GUI_FLAGS = [
     "--collect-data", "imageio_ffmpeg",
     "--collect-submodules", "comtypes",
     "--collect-submodules", "pynput",
+    # ffmpeg binary added by _run_pyinstaller for both builds.
 ]
 
-# MCP build pulls in only what the stdio server needs — much leaner.
+# MCP build pulls in only what the stdio server needs.
 # ``mcp.cli`` requires optional ``typer``; skip it via targeted submodule pulls.
+# ffmpeg is bundled so the ``get_frame_at`` tool can extract video frames
+# from screen.mp4 — that single feature is why this exe isn't 13 MB anymore.
 _MCP_FLAGS = [
     "--onefile",
     "--console",
     "--name", "Trailbox-mcp",
     "--icon", _ICON,  # file icon only (no Qt window)
+    "--collect-data", "imageio_ffmpeg",
     "--collect-submodules", "mcp_server",
     "--collect-submodules", "mcp.server",
     "--collect-submodules", "mcp.shared",
@@ -59,9 +63,9 @@ def _run_pyinstaller(
     entry: str, flags: list[str], ffmpeg_exe: Path, repo_root: Path
 ) -> Path:
     cmd = [sys.executable, "-m", "PyInstaller", *flags]
-    # ffmpeg is only useful to the GUI build; keep the MCP build minimal.
-    if "--name" in flags and flags[flags.index("--name") + 1] == "Trailbox":
-        cmd += ["--add-binary", f"{ffmpeg_exe};imageio_ffmpeg/binaries"]
+    # ffmpeg goes into both builds — GUI uses it for recording, MCP uses it
+    # for get_frame_at (single-frame extraction from screen.mp4).
+    cmd += ["--add-binary", f"{ffmpeg_exe};imageio_ffmpeg/binaries"]
     cmd += [entry]
     name = flags[flags.index("--name") + 1]
     print(f"\n=== building {name}.exe ({entry}) ===")

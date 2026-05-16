@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.utilities.types import Image
 
 
 def _output_root() -> Path:
@@ -267,6 +269,56 @@ def get_metrics(
         "summary": summary,
         "samples": samples,
     }
+
+
+@mcp.tool()
+def get_frame_at(session_id: str, t_video_s: float) -> Image:
+    """Extract a single frame from the session's ``screen.mp4`` at ``t_video_s``.
+
+    Returns a PNG image so the AI can visually inspect what was on screen at
+    that moment — useful for correlating with logs / input / metrics
+    ("what was visible when this error logged?", "what's the UI state at the
+    CPU spike?").
+
+    Uses the ffmpeg binary bundled with this build via imageio-ffmpeg.
+    """
+    session_dir = _resolve_session(session_id)
+    video = session_dir / "screen.mp4"
+    if not video.exists():
+        raise FileNotFoundError(f"screen.mp4 not in {session_dir}")
+
+    # Imported lazily so server start-up doesn't pay the cost when frame
+    # extraction isn't used.
+    from imageio_ffmpeg import get_ffmpeg_exe
+
+    t = max(0.0, float(t_video_s))
+    cmd = [
+        get_ffmpeg_exe(),
+        "-hide_banner",
+        "-loglevel", "error",
+        # -ss BEFORE -i = fast seek (keyframe-aligned) — accurate enough for QA.
+        "-ss", f"{t:.3f}",
+        "-i", str(video),
+        "-frames:v", "1",
+        "-f", "image2pipe",
+        "-vcodec", "png",
+        "-",
+    ]
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        check=False,
+        # Suppress console window flash on Windows when the binary spawns.
+        creationflags=(
+            subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        ),
+    )
+    if result.returncode != 0 or not result.stdout:
+        stderr_tail = (result.stderr or b"").decode("utf-8", errors="replace")[-200:]
+        raise RuntimeError(
+            f"ffmpeg failed to extract frame at t={t:.3f}s: {stderr_tail}"
+        )
+    return Image(data=result.stdout, format="png")
 
 
 @mcp.tool()
