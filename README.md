@@ -34,10 +34,11 @@ PyQt6 기반 단일 앱. 게임/일반 앱 모두 대상.
 
 ### A. 바이너리 (권장 — 일반 사용자)
 
-[Releases 페이지](https://github.com/hgkim0105/trailbox/releases/latest) 에서 두 파일을 받아 **같은 폴더**에 두세요:
+[Releases 페이지](https://github.com/hgkim0105/trailbox/releases/latest) 에서 필요한 파일을 받아 **같은 폴더**에 두세요:
 
-- **`Trailbox.exe`** — GUI 본체 (녹화·뷰어 생성. 약 124 MB)
-- **`Trailbox-mcp.exe`** — MCP 서버 (AI 연동용. 약 13 MB. AI에서 세션 분석할 때만 필요)
+- **`Trailbox.exe`** (~125 MB) — GUI 본체 (녹화·뷰어 생성). 항상 필요
+- **`Trailbox-mcp.exe`** (~43 MB) — MCP 서버 (AI 연동용). AI에서 세션 분석할 때만 필요
+- **`Trailbox-hub.exe`** (~43 MB) — Hub 서버 (세션 공유·원격 MCP). 세션을 다른 사람/AI 와 공유할 때만 필요. [Trailbox Hub 섹션](#trailbox-hub--세션-공유--원격-분석) 참조
 
 Python 설치 불필요. `Trailbox.exe` 더블클릭으로 GUI 실행. 첫 실행 시 PyInstaller 가 의존성을 임시 폴더에 풀어 5~10초 소요 — 이후 실행은 빠릅니다. 녹화 결과는 `Trailbox.exe` 와 같은 폴더의 `output/` 에 쌓이며, `Trailbox-mcp.exe` 가 자동으로 같은 폴더의 `output/` 을 읽습니다.
 
@@ -80,7 +81,7 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe build.py
 ```
 
-결과: `dist/Trailbox.exe` (GUI, ~124 MB), `dist/Trailbox-mcp.exe` (MCP, ~13 MB).
+결과: `dist/Trailbox.exe` (GUI, ~125 MB), `dist/Trailbox-mcp.exe` (MCP, ~43 MB), `dist/Trailbox-hub.exe` (Hub, ~43 MB).
 
 ## 출력 구조
 
@@ -139,10 +140,14 @@ output/{session_id}/
 
 ```
 main.py                       # PyQt6 진입점, 세션 라이프사이클 오케스트레이션
+hub_entry.py                  # Trailbox-hub.exe 진입점 (Qt/캡처 없는 순수 서버)
+mcp_entry.py                  # Trailbox-mcp.exe 진입점 (stdio)
 ui/
 ├── launcher_panel.py         # 캡처 대상 / 자동감지 / fps · audio · input · metrics 토글
-├── recorder_panel.py         # 녹화 시작/종료 + 세션 뷰어 열기 버튼
-└── session_picker.py         # 세션 목록 모달 (정렬·검색)
+├── recorder_panel.py         # 녹화 시작/종료 + 허브 자동 업로드 토글
+├── session_picker.py         # 로컬 세션 목록 + 허브 업로드/공유링크/가져오기 버튼
+├── hub_dialogs.py            # Hub 설정 / 업로드 진행률 / 공유링크 모달
+└── remote_session_picker.py  # Hub 원격 세션 목록 + 다운로드
 core/
 ├── session.py                # session_id, 출력 폴더, session_meta.json
 ├── screen_recorder.py        # dxcam / WGC 백엔드, ffmpeg VFR 파이프
@@ -156,14 +161,30 @@ core/
 ├── window_picker.py          # 보이는 top-level 창 열거 (psutil로 exe 보강)
 ├── window_clicker.py         # 클릭 픽업 + Ctrl+Shift+P 단축키
 ├── process_detector.py       # 로그 폴더 ↔ 프로세스 양방향 매칭 (open_files + install heuristic + parent walk)
-└── viewer_generator.py       # session 폴더로부터 viewer.html 생성
+├── viewer_generator.py       # session 폴더로부터 viewer.html 생성
+├── hub_client.py             # Hub HTTP 클라이언트 (업로드/다운로드/공유, 청크 재개)
+├── hub_config.py             # Hub URL + 토큰 QSettings 영속화
+└── frame_extractor.py        # ffmpeg 단일 프레임 JPEG 추출 (local + hub 양쪽 공유)
+hub_server/                   # FastAPI Hub 서버 (Trailbox-hub.exe)
+├── __main__.py               # uvicorn 진입점 (TRAILBOX_HUB_HOST/PORT/TOKEN 등 env)
+├── app.py                    # 라우트 — REST + /v 뷰어 + /api/uploads 청크 + /api/admin
+├── auth.py                   # X-Trailbox-Token 헤더 검증
+├── config.py                 # 환경변수 → HubConfig 데이터클래스
+├── storage.py                # hub_data/{sid}/ 디스크 저장 + zip ingest/stream
+├── shares.py                 # 공유 토큰 ↔ session_id 매핑 (atomic JSON 파일)
+├── uploads.py                # 재개 가능 청크 업로드 누산기
+├── retention.py              # TTL 기반 background sweep (1h cadence)
+└── regen_viewers.py          # 일괄 viewer.html 재생성 (운영 도구)
 mcp_server/
-└── __main__.py               # MCP 서버 (stdio) — AI용 읽기 전용 분석 도구 6종
+├── __main__.py               # MCP 서버 (stdio) — 7개 도구 등록 + 백엔드 dispatch
+└── backends/
+    ├── local.py              # output/{sid}/ 파일시스템 백엔드 (기본)
+    └── hub.py                # Hub HTTP 백엔드 (TRAILBOX_HUB_URL 설정 시)
 ```
 
 ## MCP 서버 (AI에서 세션 분석)
 
-녹화한 세션을 AI 가 직접 들여다보고 질문에 답하게 할 수 있는 MCP (Model Context Protocol) 서버가 들어 있습니다. **읽기 전용 분석 도구**가 6개 노출됩니다 (캡처 제어는 미포함).
+녹화한 세션을 AI 가 직접 들여다보고 질문에 답하게 할 수 있는 MCP (Model Context Protocol) 서버가 들어 있습니다. **읽기 전용 분석 도구**가 7개 노출됩니다 (캡처 제어는 미포함).
 
 ### 노출 도구
 
@@ -174,9 +195,21 @@ mcp_server/
 | `query_events(session_id, t_start?, t_end?, kinds?, text?, limit?)` | 로그+입력을 시간/종류/텍스트로 필터 (kinds: log/input/mouse/key) |
 | `get_metrics(session_id, t_start?, t_end?)` | CPU/RSS/threads 샘플 + 윈도우 내 cpu_max/avg, rss_min/max 요약 |
 | `search_logs(session_id, query, limit?)` | 로그 메시지 전문 검색 |
-| `get_viewer_path(session_id)` | `viewer.html` 절대경로 (브라우저 열기용) |
+| `get_frame_at(session_id, t_video_s)` | 영상에서 단일 프레임을 JPEG 로 추출 (ffmpeg seek + JPEG, 1MB 캡 자동 다운스케일) |
+| `get_viewer_path(session_id)` | `viewer.html` 경로/URL (로컬 모드: 절대경로, Hub 모드: HTTP URL) |
 
 모든 이벤트는 `t_video_s` 필드를 공유해서 AI 가 "12.3초 시점에 무슨 일?" 같이 시간축 기반으로 통합 질의 가능.
+
+### 로컬 모드 vs Hub 모드
+
+`Trailbox-mcp.exe` 는 환경변수 하나로 백엔드가 갈립니다:
+
+| 환경변수 | 동작 |
+|---|---|
+| (미설정) | **로컬 모드** — `output/{session_id}/` 파일시스템 직접 읽기 |
+| `TRAILBOX_HUB_URL` 설정 | **Hub 모드** — 원격 Hub HTTP API 로 같은 7개 도구 동작 |
+
+Hub 모드에서는 `TRAILBOX_HUB_TOKEN` 도 함께 설정해야 인증됩니다. 자세한 건 [Trailbox Hub 섹션](#trailbox-hub--세션-공유--원격-분석).
 
 ### 실행
 
@@ -227,6 +260,114 @@ AI 에 던지는 질문 예:
 - "이 세션 12~15초 사이에 무슨 입력이 있었나"
 - "logs 에서 'error' 들어간 라인만 영상 타임코드와 같이 보여줘"
 - "최근 5개 세션 중 RSS 가장 많이 늘어난 세션은?"
+
+## Trailbox Hub — 세션 공유 + 원격 분석
+
+녹화한 세션을 *링크로 공유* 하거나 *AI가 원격으로 조회* 할 수 있는 단일 파일 웹 서비스. Hub 는 옵션 — 안 깔아도 모든 기존 기능 정상 동작.
+
+### 왜 Hub가 필요한가
+
+| 시나리오 | Hub 없이 | Hub로 |
+|---|---|---|
+| 다른 사람에게 세션 보여주기 | 폴더 통째 zip → 전송 → 압축풀기 → viewer.html 더블클릭 | 「공유 링크」 버튼 → URL 복사 → 붙여넣기 |
+| AI 가 원격 세션 분석 | 불가 (로컬 파일만 봄) | `TRAILBOX_HUB_URL` 만 설정하면 동일 7개 도구 그대로 |
+| 자동 백업 / 보존 | 수동 | 녹화 종료 시 자동 업로드 + N일 만료 정책 |
+
+`viewer.html` 이 이미 *자체완결형* 이라 Hub 서버는 "세션 폴더를 HTTP 로 서빙" 만 하면 됨. 별도 백엔드 거의 없이 동작.
+
+### 빠른 시작 — 같은 PC (LAN-only)
+
+[Releases](https://github.com/hgkim0105/trailbox/releases/latest) 에서 `Trailbox-hub.exe` 추가로 받아 같은 폴더에 두기.
+
+**1. 토큰 생성** (PowerShell 한 줄):
+
+```powershell
+-join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | % {[char]$_})
+```
+
+**2. `start-hub.bat` 만들기** (Trailbox-hub.exe 옆에):
+
+```bat
+@echo off
+set TRAILBOX_HUB_TOKEN=여기에-1번에서-생성한-토큰
+set TRAILBOX_HUB_DATA=D:\trailbox\hub_data
+set TRAILBOX_HUB_HOST=127.0.0.1
+set TRAILBOX_HUB_PORT=8765
+set TRAILBOX_HUB_RETENTION_DAYS=30
+"D:\trailbox\Trailbox-hub.exe"
+pause
+```
+
+더블클릭 → `Trailbox Hub serving ... (auth=on)` 출력되면 성공. 콘솔 창은 그대로 두기 (닫으면 서버 종료). 부팅 시 자동 실행하려면 `shell:startup` 폴더에 바로가기 등록.
+
+**3. Trailbox 클라이언트 연결**:
+1. `Trailbox.exe` → **세션 뷰어 열기…** → **허브 설정** → URL `http://127.0.0.1:8765` + 토큰 입력 → **연결 테스트** 「OK」 확인
+2. 메인 화면 **「녹화 종료 시 허브 자동 업로드」** 체크 (선택)
+3. 짧게 녹화 → 자동 업로드 모달 뜨면 완료
+4. 세션 뷰어 → 세션 선택 → **공유 링크** → URL 클립보드 자동 복사 → 다른 브라우저에 붙여넣기
+
+**4. AI MCP Hub 모드** (선택, Claude Desktop):
+
+`%APPDATA%\Claude\claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "trailbox": {
+      "command": "D:\\trailbox\\Trailbox-mcp.exe",
+      "env": {
+        "TRAILBOX_HUB_URL": "http://127.0.0.1:8765",
+        "TRAILBOX_HUB_TOKEN": "위와-동일한-토큰"
+      }
+    }
+  }
+}
+```
+
+`env` 블록을 빼면 자동으로 로컬 `output/` 폴더 모드로 동작 (Hub 미사용).
+
+**다른 PC / 인터넷 / Docker / Caddy / TLS 등 자세한 배포**: [DEPLOYMENT.md](DEPLOYMENT.md)
+
+### 환경변수 (Hub 서버)
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `TRAILBOX_HUB_TOKEN` | (없음) | API 토큰. 미설정이면 인증 비활성화 + 0.0.0.0 바인드 거부 |
+| `TRAILBOX_HUB_DATA` | `hub_data` | 세션 저장 루트 |
+| `TRAILBOX_HUB_HOST` | `127.0.0.1` | 바인드 호스트. LAN 전체 노출은 `0.0.0.0` |
+| `TRAILBOX_HUB_PORT` | `8765` | 바인드 포트 |
+| `TRAILBOX_HUB_MAX_UPLOAD_MB` | `8192` | 단일 세션 업로드 캡 |
+| `TRAILBOX_HUB_RETENTION_DAYS` | `0` (영구) | N일 지난 세션 자동 삭제. background sweep 1h cadence |
+
+### REST 엔드포인트 요약
+
+| 메서드 + 경로 | 인증 | 용도 |
+|---|---|---|
+| `GET /healthz` | X | 상태 확인 |
+| `GET /api/sessions` | 토큰 | 세션 목록 |
+| `GET /api/sessions/{id}` | 토큰 | 단건 메타 |
+| `POST /api/sessions/{id}` | 토큰 | 업로드 (단일 zip) |
+| `GET /api/sessions/{id}/zip` | 토큰 | zip 다운로드 |
+| `DELETE /api/sessions/{id}` | 토큰 | 삭제 (공유 토큰도 cascade revoke) |
+| `POST /api/sessions/{id}/share` | 토큰 | 공유 토큰 발급 |
+| `GET /api/sessions/{id}/shares` | 토큰 | 활성 공유 토큰 조회 |
+| `DELETE /api/shares/{token}` | 토큰 | 공유 토큰 폐기 |
+| `GET /v/{token}/...` | 토큰이 URL | 브라우저 뷰어 (mp4 Range 지원) |
+| `POST /api/uploads` + 4개 | 토큰 | 청크 업로드 (64MB 이상 자동 분기, 4MB 청크, 재개 가능) |
+| `GET /api/sessions/{id}/files/{path}` | 토큰 | (MCP backend) 임의 파일 fetch |
+| `GET /api/sessions/{id}/frame?t=N` | 토큰 | (MCP backend) ffmpeg 단일 프레임 추출 |
+| `POST /api/admin/prune?dry_run=` | 토큰 | 만료 정책 수동 트리거 / 미리보기 |
+
+### 저장 레이아웃
+
+```
+hub_data/
+├── _tokens.json              # 공유 토큰 → session_id 매핑 (atomic write)
+├── _uploads/{upload_id}/     # 청크 누산 중인 업로드 (완료 시 ingest 후 정리)
+└── {session_id}/             # Trailbox output/ 구조 그대로 (viewer.html 포함)
+```
+
+DB 없음. **flat files + filesystem enumeration** 으로 수천 세션까지 충분. 운영 도구 `python -m hub_server.regen_viewers` 로 viewer 템플릿 변경 후 일괄 재생성 가능.
 
 ## 알려진 한계
 
