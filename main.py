@@ -8,7 +8,7 @@ stdio at import time.
 """
 from __future__ import annotations
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 import sys
 
@@ -102,6 +102,10 @@ class TrailboxWindow(QMainWindow):
         self._metrics_recorder: MetricsRecorder | None = None
         self._overlay: RecordingOverlay | None = None
         self._stop_hotkey: GlobalHotkey | None = None
+        # The PID/name MetricsRecorder is sampling — separate from
+        # session.target_pid which only records app-launcher-spawned processes.
+        self._metrics_target_pid: int | None = None
+        self._metrics_target_name: str = ""
 
         self.launcher.app_launched.connect(self._on_app_launched)
         self.recorder.start_requested.connect(self._on_start_requested)
@@ -226,6 +230,8 @@ class TrailboxWindow(QMainWindow):
                 )
 
         target_pid = self._resolve_target_pid(target)
+        self._metrics_target_pid = None
+        self._metrics_target_name = ""
         if self.launcher.metrics_enabled() and target_pid is not None:
             metrics_recorder = MetricsRecorder(
                 pid=target_pid,
@@ -236,6 +242,15 @@ class TrailboxWindow(QMainWindow):
             try:
                 metrics_recorder.start()
                 self._metrics_recorder = metrics_recorder
+                self._metrics_target_pid = target_pid
+                # Record the process name so later analysis can tell which
+                # PID was sampled (Chrome browser process vs GPU child process
+                # look very different at the metrics level).
+                try:
+                    import psutil as _ps
+                    self._metrics_target_name = _ps.Process(target_pid).name()
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception as e:  # noqa: BLE001
                 QMessageBox.warning(
                     self, "Trailbox",
@@ -374,6 +389,8 @@ class TrailboxWindow(QMainWindow):
                 "input_events": input_events,
                 "metrics_enabled": self.launcher.metrics_enabled(),
                 "metric_samples": metric_samples,
+                "metrics_target_pid": self._metrics_target_pid,
+                "metrics_target_name": self._metrics_target_name,
                 "cpu_cores": os.cpu_count(),
                 **({"screen_error": str(recorder_error)} if recorder_error else {}),
                 **({"audio_error": str(audio_error)} if audio_error else {}),
