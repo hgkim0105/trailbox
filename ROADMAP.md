@@ -4,7 +4,25 @@
 
 ---
 
-## Trailbox Hub — 세션 공유 웹 서비스
+## Trailbox Hub — v0.1 (완료)
+
+Phase 1~6 모두 구현. 코드는 `hub_server/` + `core/hub_*` + `ui/hub_dialogs.py` / `ui/remote_session_picker.py`,
+배포 아티팩트는 `Dockerfile.hub` / `docker-compose.yml` / `Caddyfile` / `DEPLOYMENT.md`,
+빌드는 `build.py` 가 `Trailbox-hub.exe` 까지 동시 생성. 자세한 결정 기록은 [DEVNOTES.md](DEVNOTES.md) 의 Hub 섹션 참조.
+
+### Hub 다음 단계 (백로그)
+
+- **재시작 가능한 업로드 — 클라이언트 측 영속화**: 현재 청크 업로드는 *세션 안* 에서만 재개. Trailbox 가 죽고 다시 켜져도 이어 받으려면 `output/{sid}/.hub_upload.json` 같은 작은 상태 파일이 필요. 청크당 round-trip 줄이려고 병렬 PUT 도 검토 가능
+- **공유 토큰 만료 / 1회용**: 현재는 영구. 만료시각/사용횟수 필드 + revoke UI 만 추가하면 됨
+- **백업 자동화**: hub_data 를 일 1회 tar.gz → S3/B2. `restic` 컨테이너 추가 권장
+- **S3/object-store 백엔드**: 현재는 디스크 only. `Storage` 인터페이스를 `LocalStorage` / `S3Storage` 로 분리하면 됨
+- **`/mcp` HTTP transport 직접 노출**: 현재는 stdio 브리지 + `TRAILBOX_HUB_URL`. MCP Streamable HTTP 가 mainstream 되면 추가
+- **클라이언트의 SessionPicker 에 `허브 상태` 컬럼**: 로컬 vs 업로드됨 vs 둘다 표시
+- **AC/Anvil 같은 거대 로그 대응**: `_iter_jsonl` 가 현재 `.read_text().splitlines()` — 100MB 로그면 메모리 폭주. 라인 단위 streaming 으로 전환
+
+---
+
+## (구) Trailbox Hub — 설계 메모 (구현 완료, 참고용)
 
 ### 목표
 

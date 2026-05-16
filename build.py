@@ -1,17 +1,17 @@
-"""Build the v0.1.1 release artifacts via PyInstaller.
+"""Build the release artifacts via PyInstaller.
 
-Produces TWO single-file binaries side by side in ``dist/``:
+Produces THREE single-file binaries side by side in ``dist/``:
 
   - ``Trailbox.exe``      — windowed GUI (no console window)
-  - ``Trailbox-mcp.exe``  — console build that runs ``main.py --mcp-server``
-                            so Claude Desktop / Claude Code can register the
-                            MCP server without a Python install.
+  - ``Trailbox-mcp.exe``  — console MCP stdio server. With env var
+                            ``TRAILBOX_HUB_URL`` it routes the 7 tools to a
+                            remote Hub; without, it reads local ``output/``.
+  - ``Trailbox-hub.exe``  — standalone Hub web server (fastapi/uvicorn).
+                            Single-file alternative to the Docker image for
+                            LAN deployments where a Linux container is overkill.
 
-Both build from the same ``main.py``; the MCP variant dispatches early in the
-entry point (before Qt is imported) when ``--mcp-server`` is in argv. The GUI
-variant uses ``--windowed`` to suppress a console window; the MCP variant is
-``--console`` because stdio transport needs stdin/stdout intact, which
-PyInstaller closes in windowed mode.
+GUI uses ``--windowed`` to suppress a console window; MCP & Hub are
+``--console`` because both need stdin/stdout (stdio transport / log output).
 
 Run from the venv:  ``.\\.venv\\Scripts\\python.exe build.py``
 """
@@ -46,6 +46,7 @@ _GUI_FLAGS = [
 # ``mcp.cli`` requires optional ``typer``; skip it via targeted submodule pulls.
 # ffmpeg is bundled so the ``get_frame_at`` tool can extract video frames
 # from screen.mp4 — that single feature is why this exe isn't 13 MB anymore.
+# httpx is needed when TRAILBOX_HUB_URL is set (HubBackend HTTP calls).
 _MCP_FLAGS = [
     "--onefile",
     "--console",
@@ -56,6 +57,21 @@ _MCP_FLAGS = [
     "--collect-submodules", "mcp.server",
     "--collect-submodules", "mcp.shared",
     "--collect-submodules", "mcp.types",
+    "--hidden-import", "httpx",
+]
+
+# Hub build is the FastAPI/uvicorn server bundled standalone. No Qt, no mcp,
+# no capture stack. ffmpeg is bundled for the /api/sessions/{id}/frame route.
+_HUB_FLAGS = [
+    "--onefile",
+    "--console",
+    "--name", "Trailbox-hub",
+    "--icon", _ICON,
+    "--collect-data", "imageio_ffmpeg",
+    "--collect-submodules", "hub_server",
+    "--collect-submodules", "uvicorn",
+    "--collect-submodules", "fastapi",
+    "--hidden-import", "python_multipart",
 ]
 
 
@@ -92,9 +108,10 @@ def main() -> int:
 
     gui_exe = _run_pyinstaller("main.py", _GUI_FLAGS, ffmpeg_exe, repo_root)
     mcp_exe = _run_pyinstaller("mcp_entry.py", _MCP_FLAGS, ffmpeg_exe, repo_root)
+    hub_exe = _run_pyinstaller("hub_entry.py", _HUB_FLAGS, ffmpeg_exe, repo_root)
 
     print("\n=== done ===")
-    for path in (gui_exe, mcp_exe):
+    for path in (gui_exe, mcp_exe, hub_exe):
         size_mb = path.stat().st_size / 1024 / 1024
         print(f"  {path}  ({size_mb:.1f} MB)")
     return 0

@@ -1,0 +1,35 @@
+# Trailbox Hub — slim Linux container.
+# Bundles only the server-side bits (no Qt / no capture). ffmpeg comes from
+# imageio-ffmpeg's vendored binary, so no apt install is needed.
+#
+# Build:   docker build -f Dockerfile.hub -t trailbox-hub .
+# Run:     docker run --rm -p 8765:8765 -v $(pwd)/hub_data:/data \
+#                     -e TRAILBOX_HUB_TOKEN=changeme trailbox-hub
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TRAILBOX_HUB_DATA=/data \
+    TRAILBOX_HUB_HOST=0.0.0.0 \
+    TRAILBOX_HUB_PORT=8765
+
+WORKDIR /app
+
+# Install Python deps first so the layer caches across code changes.
+COPY requirements-hub.txt ./
+RUN pip install --no-cache-dir -r requirements-hub.txt
+
+# Copy only the modules the server actually needs.
+COPY hub_server/ ./hub_server/
+COPY core/__init__.py core/frame_extractor.py ./core/
+COPY hub_entry.py ./
+
+# Storage volume mount point.
+RUN mkdir -p /data
+VOLUME ["/data"]
+
+EXPOSE 8765
+
+# Refuse to bind 0.0.0.0 without a token (the entrypoint enforces this).
+CMD ["python", "hub_entry.py"]

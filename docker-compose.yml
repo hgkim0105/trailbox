@@ -1,0 +1,52 @@
+# Trailbox Hub — one-command deployment.
+#
+# Quickstart:
+#   1. cp .env.example .env  (or just set TRAILBOX_HUB_TOKEN below)
+#   2. docker compose up -d
+#
+# Defaults to LAN-only on :8765. To expose publicly with TLS, uncomment the
+# caddy service and edit Caddyfile with your domain.
+
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    image: trailbox-hub
+    container_name: trailbox-hub
+    restart: unless-stopped
+    environment:
+      # REQUIRED. Trailbox clients send this as X-Trailbox-Token.
+      TRAILBOX_HUB_TOKEN: "${TRAILBOX_HUB_TOKEN:?set TRAILBOX_HUB_TOKEN in .env}"
+      # Optional retention (days). 0 = keep forever.
+      TRAILBOX_HUB_RETENTION_DAYS: "${TRAILBOX_HUB_RETENTION_DAYS:-0}"
+      # Optional upload cap (MB).
+      TRAILBOX_HUB_MAX_UPLOAD_MB: "${TRAILBOX_HUB_MAX_UPLOAD_MB:-8192}"
+    volumes:
+      - ./hub_data:/data
+    ports:
+      # LAN-only by default. Comment out when fronting with caddy.
+      - "127.0.0.1:8765:8765"
+      # Public LAN: "0.0.0.0:8765:8765"
+
+  # Uncomment to terminate TLS and front the hub with a public domain.
+  # Requires DNS for ${TRAILBOX_HUB_DOMAIN} pointing at the host.
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   container_name: trailbox-caddy
+  #   restart: unless-stopped
+  #   depends_on: [hub]
+  #   environment:
+  #     TRAILBOX_HUB_DOMAIN: "${TRAILBOX_HUB_DOMAIN}"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+
+# volumes:
+#   caddy_data:
+#   caddy_config:

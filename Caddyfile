@@ -1,0 +1,28 @@
+# Trailbox Hub — Caddy reverse-proxy with automatic Let's Encrypt TLS.
+#
+# Usage: set TRAILBOX_HUB_DOMAIN in .env, point DNS at this host, then
+#        `docker compose up -d` (with the caddy service uncommented).
+#
+# Caddy will request a cert on first request to {$TRAILBOX_HUB_DOMAIN}.
+# The /api/uploads PUT endpoint needs a generous request body cap.
+
+{$TRAILBOX_HUB_DOMAIN} {
+    encode gzip
+
+    # Allow huge upload chunks; default Caddy limit is too small for mp4s.
+    request_body {
+        max_size 10GB
+    }
+
+    reverse_proxy hub:8765 {
+        # Forward client IP for the hub's access logs.
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        # Long-lived streams (zip download, chunked upload) need bigger timeouts.
+        transport http {
+            response_header_timeout 10m
+            read_timeout 10m
+            write_timeout 10m
+        }
+    }
+}

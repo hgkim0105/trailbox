@@ -1,0 +1,8 @@
+# Server-only dependencies for Trailbox Hub.
+# A superset is already in requirements.txt — this file exists so the Docker
+# image (and any non-Windows deployment) can install just what's needed
+# without dragging PyQt6 / dxcam / soundcard / pywin32 across.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+imageio[ffmpeg]>=2.34
