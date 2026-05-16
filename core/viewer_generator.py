@@ -484,6 +484,19 @@ __TRACKS_HTML__
   render();
   updateMetricsLegend();
   applyVisibility();  // also triggers initial drawChart()
+
+  // Force every text track to 'hidden' so the side panel — built from the
+  // inlined jsonl — is the sole event view. Under file:// browsers don't
+  // even load the tracks; under HTTP (Hub viewer) they would render cues
+  // on top of the video without this. Run on both immediate and after
+  // tracks land (some browsers attach them asynchronously).
+  function forceHideOverlayTracks() {
+    const tt = video.textTracks;
+    for (let i = 0; i < tt.length; i++) tt[i].mode = 'hidden';
+  }
+  forceHideOverlayTracks();
+  video.textTracks.addEventListener &&
+    video.textTracks.addEventListener('addtrack', forceHideOverlayTracks);
 </script>
 </body>
 </html>
@@ -621,13 +634,20 @@ def generate_viewer(session_dir: Path, meta: dict[str, Any]) -> Path:
     tracks_html_lines: list[str] = []
     logs_vtt = session_dir / "logs" / "logs.vtt"
     inputs_vtt = session_dir / "inputs" / "inputs.vtt"
+    # NB: never use the `default` attribute on these tracks. Under file://
+    # Chromium silently refuses to load `<track>` files so the overlay never
+    # appears — but over HTTP (Hub viewer) `default` tells the browser to
+    # render the cues on top of the video, which clutters the playback area.
+    # The side panel (built from the inlined jsonl) is the canonical view;
+    # the VTT tracks are kept only for users who want native browser-toggled
+    # captions. The forceHideOverlayTracks() JS below also pins them hidden.
     if logs_vtt.exists() and logs_vtt.stat().st_size > 10:
         tracks_html_lines.append(
             '      <track src="logs/logs.vtt" kind="subtitles" srclang="en" label="logs">'
         )
     if inputs_vtt.exists() and inputs_vtt.stat().st_size > 10:
         tracks_html_lines.append(
-            '      <track src="inputs/inputs.vtt" kind="subtitles" srclang="en" label="inputs" default>'
+            '      <track src="inputs/inputs.vtt" kind="subtitles" srclang="en" label="inputs">'
         )
 
     metrics = _load_metrics(session_dir)
