@@ -78,7 +78,7 @@ STOP_HOTKEY_LABEL = "Ctrl+Alt+R"
 class TrailboxWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Trailbox - QA Session Recorder")
+        self.setWindowTitle("Trailbox — 세션 레코더")
         self.resize(640, 420)
 
         central = QWidget(self)
