@@ -12,7 +12,8 @@
 - 서버는 **단일 파일 실행 웹 서버** (의존성 셋업 최소)
 - 녹화 데이터는 서버의 **하위 폴더** (`hub_data/{session_id}/...`) 로 저장
 - 운영 코스트 최소화 (단일 VPS 또는 사내 LAN 에서 0원에 가깝게)
-- **공유 URL 단독 뷰** — Trailbox 설치 없는 사람도 브라우저로 viewer 페이지 열 수 있어야 함. QA 결과를 *링크로 던지는* 워크플로 지원
+- **인간용 공유 URL** — Trailbox 설치 없는 사람도 브라우저로 viewer 페이지. QA 결과를 *링크로 던지는* 워크플로
+- **AI용 MCP 접근** — 원격 세션을 AI 가 MCP 도구로 조회. 핵심 이유: **토큰 비용**. viewer.html 통째로 AI 에게 던지면 (수백 KB ~ 수 MB) 한 세션 분석에 수만~수십만 토큰 소비. MCP 로 *필요한 시간 구간 / 이벤트 종류만* 골라 받으면 1k~5k 토큰으로 끝남. 로컬에서 이미 검증된 패턴 (`Trailbox.exe`=인간 / `Trailbox-mcp.exe`=AI) 을 Hub 에 그대로 확장.
 
 ### 왜 단독 뷰가 거의 공짜인가
 
@@ -25,20 +26,34 @@
 
 ### 엔드포인트 스케치
 
+세 가지 소비자, 세 가지 인터페이스 — **같은 백엔드** 공유:
+
 ```
-# Trailbox 클라이언트 ↔ 서버 (인증 필요)
+# (1) Trailbox 클라이언트 ↔ 서버  (인증: API 토큰)
 POST   /api/sessions/{id}              # multipart 업로드 (재개 지원: chunked)
 GET    /api/sessions                   # 목록 (페이지네이션 + 메타 요약)
-GET    /api/sessions/{id}/zip          # zip 다운로드 (Trailbox 가 가져올 때)
+GET    /api/sessions/{id}/zip          # zip 다운로드
 DELETE /api/sessions/{id}              # 삭제
+POST   /api/sessions/{id}/share        # 공유 토큰 발급
 
-# 공유 뷰 (인증 분리: 단축 토큰)
-POST   /api/sessions/{id}/share        # 공유 토큰 발급 (만료시각 옵션)
-GET    /v/{token}/                     # 토큰 매핑된 세션의 viewer.html
-GET    /v/{token}/screen.mp4           # 미디어 (HTTP Range 필수, 시킹용)
-GET    /v/{token}/logs/logs.vtt        # 자막
-GET    /v/{token}/{anything}           # 그 외 세션 폴더 정적 파일 (read-only)
+# (2) 인간 reviewers — 브라우저  (인증: 토큰이 URL 일부)
+GET    /v/{token}/                     # viewer.html — full HTML, 변경 없음
+GET    /v/{token}/screen.mp4           # 미디어 (HTTP Range, 시킹용)
+GET    /v/{token}/{anything}           # 정적 서빙 (logs.vtt 등)
+
+# (3) AI clients — MCP  (인증: API 토큰)
+# Option A — HTTP transport 직접:
+GET/POST  /mcp                         # MCP Streamable HTTP endpoint
+# 7개 도구 (list_sessions, query_events, get_metrics, search_logs,
+# get_frame_at, get_session, get_viewer_path) 모두 노출
+
+# Option B — 로컬 stdio 브리지:
+# 별도 Trailbox-hub-mcp.exe (혹은 기존 Trailbox-mcp.exe 가 환경변수로 분기)
+# TRAILBOX_HUB_URL 환경변수 설정 시 같은 7개 도구가 Hub HTTP API 를 호출
+# Claude Desktop 등록 시 stdio 트랜스포트만 지원하면 이 경로
 ```
+
+**왜 같은 7개 도구를 재사용하나** — 토큰 비용 절감의 핵심은 *AI 가 데이터를 일부만 골라 받는 능력*. 로컬 MCP 서버가 이미 그 패턴을 구현해놨고 (시간 범위 / 종류 / 검색어 필터, 단일 프레임 추출 등), Hub 도 결국 같은 *질의 패턴* 으로 끝남. 백엔드만 "filesystem under output/" → "HTTP GET to hub" 로 바뀜.
 
 ### 저장 레이아웃
 
@@ -106,12 +121,13 @@ UI 추가:
 | 단계 | 내용 | 작업량 |
 |---|---|---|
 | **Phase 1** | 서버 골격 (업로드/목록/다운로드/삭제 + 정적 서빙) + Trailbox 클라이언트 수동 업로드 버튼 | 1~2일 |
-| **Phase 2** | 공유 토큰 + `/v/{token}` 단독 뷰 라우팅 + 토큰 발급 UI | 0.5일 |
-| **Phase 3** | 자동 업로드 토글 + 청크 업로드(재개) + 인증 + 만료 정책 | 1~2일 |
-| **Phase 4** | 클라이언트의 "허브에서 가져오기" + 원격 SessionPicker | 0.5일 |
-| **Phase 5** | TLS / Caddy 통합 가이드 / Docker compose 한 줄 배포 | 0.5일 |
+| **Phase 2** | 공유 토큰 + `/v/{token}` 인간용 뷰 라우팅 + 토큰 발급 UI | 0.5일 |
+| **Phase 3** | **AI MCP 통합** — 로컬 MCP 의 7개 도구를 Hub 백엔드와 연결. 환경변수 `TRAILBOX_HUB_URL` 로 분기하는 게 가장 단순 (`Trailbox-mcp.exe` 한 바이너리가 로컬/원격 둘 다 처리). 또는 별도 `Trailbox-hub-mcp.exe` | 1일 |
+| **Phase 4** | 자동 업로드 토글 + 청크 업로드(재개) + 인증 + 만료 정책 | 1~2일 |
+| **Phase 5** | 클라이언트의 "허브에서 가져오기" + 원격 SessionPicker | 0.5일 |
+| **Phase 6** | TLS / Caddy 통합 가이드 / Docker compose 한 줄 배포 | 0.5일 |
 
-총 ~5일 정도. 단일 .exe / 단일 ELF / docker-compose.yml 셋 다 제공해서 *셋업 비용을 거의 0* 으로 만드는 게 목표.
+총 ~6일. 단일 .exe / 단일 ELF / docker-compose.yml 셋 다 제공해서 *셋업 비용을 거의 0* 으로 만드는 게 목표.
 
 ### 핵심 디자인 결정 (구현 시작 시 점검)
 
@@ -121,14 +137,29 @@ UI 추가:
 - [ ] mp4 압축: 업로드 전 추가 압축? 현재 H.264 충분히 작음 → skip
 - [ ] 동시 업로드: 직렬 vs 청크 병렬
 - [ ] 객체 스토리지(S3) 백엔드: Phase 1엔 disk-only, 후에 추상화
+- [ ] **AI MCP 트랜스포트**: 서버 직접 노출 (`/mcp` HTTP) vs 로컬 stdio 브리지 vs 둘 다. Claude Desktop 현재 stdio 가 가장 보편적이라 우선은 브리지 권장. HTTP MCP 표준이 mainstream 되면 추가
+- [ ] **MCP 백엔드 분기 방식**: 기존 `Trailbox-mcp.exe` 에 `TRAILBOX_HUB_URL` 환경변수 추가 vs 별도 `Trailbox-hub-mcp.exe`. 전자가 사용자 경험 단순 (바이너리 1개), 후자가 코드 격리 깔끔. 환경변수 분기 추천
 
-### 단독 뷰가 의도대로 동작하기 위한 viewer.html 조정 사항
+### 인간 뷰 vs AI 뷰의 데이터 흐름 차이
+
+**인간 (브라우저)** — viewer.html 통째 다운로드 OK:
+- HTML 30~100 KB, 그 안에 모든 jsonl 인라인 → 브라우저는 한 번 받고 끝
+- mp4 는 Range request 로 스트리밍
+
+**AI (MCP 클라이언트)** — 통째 받기 거부:
+- 토큰 비용 ≈ HTML 크기 × 4 (대략)
+- 한 세션 분석 위해 통째 로드 → 5만~50만 토큰
+- 그래서 MCP 가 *작은 도구 호출* 단위로 분리. `query_events(t_start=10, t_end=15)` 같은 식으로 필요한 슬라이스만
+- 7개 도구로 충분히 커버됨 (`list_sessions`, `get_session`, `query_events`, `get_metrics`, `search_logs`, `get_frame_at`, `get_viewer_path`)
+
+### viewer.html / mp4 / 인프라 조정 사항
 
 거의 없음 — 현재 viewer.html 이 이미 file:// 호환 (`fetch()` 안 쓰고 인라인). HTTP 서빙 시 그대로 동작.
 
 확인할 것:
 - `<video>` 의 mp4 streaming: 서버가 **HTTP Range request** 지원해야 영상 시킹 가능. Go `http.ServeFile` / FastAPI `FileResponse` 둘 다 기본 지원.
 - 큰 mp4 (수 GB) 의 초기 메타데이터 위치: ffmpeg 인코딩 시 `-movflags +faststart` 추가하면 mp4의 moov atom 이 파일 앞쪽으로 와서 스트리밍 시 빠른 시킹. **screen_recorder.py 의 ffmpeg 호출에 추가하면 좋음** — 본 작업과 독립적으로 가능.
+- 큰 jsonl (수십만 라인) viewer 렌더링: 현재 통째 로드라 브라우저 메모리 압박. 본 작업 들어가기 전 viewer 에 가상 스크롤 도입하면 더 좋음 — 이미 백로그에 있음.
 
 ---
 
