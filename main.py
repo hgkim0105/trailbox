@@ -8,7 +8,7 @@ stdio at import time.
 """
 from __future__ import annotations
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 import sys
 
@@ -52,7 +52,20 @@ from ui.recorder_panel import RecorderPanel
 from ui.recording_overlay import RecordingOverlay
 from ui.session_picker import SessionPickerDialog
 
-OUTPUT_ROOT = Path(__file__).resolve().parent / "output"
+def _output_root() -> Path:
+    """Where sessions are written.
+
+    For PyInstaller-frozen builds, ``__file__`` is inside ``sys._MEIPASS``
+    (the temp extract dir that's wiped on exit) — so output must resolve
+    from ``sys.executable`` instead, giving ``<exe_dir>/output``. Matches
+    how ``mcp_server`` finds the same folder when frozen.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "output"
+    return Path(__file__).resolve().parent / "output"
+
+
+OUTPUT_ROOT = _output_root()
 
 VIDEO_TMP = "screen.video.mp4"
 AUDIO_TMP = "screen.audio.wav"
