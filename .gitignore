@@ -6,3 +6,10 @@ output/*/
 build/
 dist/
 *.spec
+
+# Claude Code internal state (sessions, schedules, etc.)
+.claude/
+
+# Hub server runtime data + .env
+hub_data/
+.env

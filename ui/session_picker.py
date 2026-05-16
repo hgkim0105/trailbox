@@ -105,6 +105,9 @@ class SessionPickerDialog(QDialog):
         refresh_btn = QPushButton("새로고침", self)
         refresh_btn.clicked.connect(self.refresh)
         top.addWidget(refresh_btn)
+        hub_settings_btn = QPushButton("허브 설정", self)
+        hub_settings_btn.clicked.connect(self._on_hub_settings)
+        top.addWidget(hub_settings_btn)
         root.addLayout(top)
 
         self.table = QTableWidget(self)
@@ -131,6 +134,10 @@ class SessionPickerDialog(QDialog):
         root.addWidget(self.empty_label)
 
         btn_row = QHBoxLayout()
+        self.upload_btn = QPushButton("허브 업로드", self)
+        self.upload_btn.setEnabled(False)
+        self.upload_btn.clicked.connect(self._on_upload_to_hub)
+        btn_row.addWidget(self.upload_btn)
         btn_row.addStretch(1)
         self.open_btn = QPushButton("뷰어 열기", self)
         self.open_btn.setEnabled(False)
@@ -162,4 +169,17 @@ class SessionPickerDialog(QDialog):
             self.table.setRowHidden(row, not visible)
 
     def _on_selection_changed(self) -> None:
-        self.open_btn.setEnabled(self.table.currentRow() >= 0)
+        has_row = self.table.currentRow() >= 0
+        self.open_btn.setEnabled(has_row)
+        self.upload_btn.setEnabled(has_row)
+
+    def _on_hub_settings(self) -> None:
+        from ui.hub_dialogs import open_hub_settings
+        open_hub_settings(self)
+
+    def _on_upload_to_hub(self) -> None:
+        session = self.selected_session()
+        if session is None:
+            return
+        from ui.hub_dialogs import upload_session_to_hub
+        upload_session_to_hub(session, self)

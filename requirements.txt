@@ -8,3 +8,8 @@ psutil>=5.9
 pywin32>=306
 pynput>=1.7
 watchdog>=4.0
+# Hub server + client (Phase 1)
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+httpx>=0.27
