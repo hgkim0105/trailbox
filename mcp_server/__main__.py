@@ -271,46 +271,38 @@ def get_metrics(
     }
 
 
-@mcp.tool()
-def get_frame_at(session_id: str, t_video_s: float) -> Image:
-    """Extract a single frame from the session's ``screen.mp4`` at ``t_video_s``.
+_FRAME_MAX_BYTES = 950_000   # Stay safely under Claude's 1 MB image input cap.
+_FRAME_DEFAULT_WIDTH = 1280  # Initial downscale target; auto-tunes down if needed.
+_FRAME_MIN_WIDTH = 480       # Don't degrade below this even chasing the byte cap.
 
-    Returns a PNG image so the AI can visually inspect what was on screen at
-    that moment — useful for correlating with logs / input / metrics
-    ("what was visible when this error logged?", "what's the UI state at the
-    CPU spike?").
 
-    Uses the ffmpeg binary bundled with this build via imageio-ffmpeg.
-    """
-    session_dir = _resolve_session(session_id)
-    video = session_dir / "screen.mp4"
-    if not video.exists():
-        raise FileNotFoundError(f"screen.mp4 not in {session_dir}")
-
-    # Imported lazily so server start-up doesn't pay the cost when frame
-    # extraction isn't used.
+def _extract_frame(video: Path, t: float, max_width: int, q: int) -> bytes:
+    """One ffmpeg call: seek, decode 1 frame, downscale, JPEG-encode to stdout."""
     from imageio_ffmpeg import get_ffmpeg_exe
 
-    t = max(0.0, float(t_video_s))
     cmd = [
         get_ffmpeg_exe(),
         "-hide_banner",
         "-loglevel", "error",
-        # -ss BEFORE -i = fast seek (keyframe-aligned) — accurate enough for QA.
+        # -ss BEFORE -i = fast keyframe seek; accurate enough for QA review.
         "-ss", f"{t:.3f}",
         "-i", str(video),
         "-frames:v", "1",
+        # Clamp width to max_width while preserving aspect; -2 keeps height even.
+        "-vf", f"scale='min({max_width},iw)':-2",
+        "-q:v", str(q),  # JPEG quality: 2 (best) … 31 (worst). 4–7 is sweet spot.
         "-f", "image2pipe",
-        "-vcodec", "png",
+        "-vcodec", "mjpeg",
         "-",
     ]
     result = subprocess.run(
         cmd,
         capture_output=True,
         check=False,
-        # Suppress console window flash on Windows when the binary spawns.
         creationflags=(
-            subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            subprocess.CREATE_NO_WINDOW
+            if hasattr(subprocess, "CREATE_NO_WINDOW")
+            else 0
         ),
     )
     if result.returncode != 0 or not result.stdout:
@@ -318,7 +310,42 @@ def get_frame_at(session_id: str, t_video_s: float) -> Image:
         raise RuntimeError(
             f"ffmpeg failed to extract frame at t={t:.3f}s: {stderr_tail}"
         )
-    return Image(data=result.stdout, format="png")
+    return result.stdout
+
+
+@mcp.tool()
+def get_frame_at(session_id: str, t_video_s: float) -> Image:
+    """Extract a single frame from the session's ``screen.mp4`` at ``t_video_s``.
+
+    Returns a JPEG (not PNG — 4K screenshots compress much better as JPEG and
+    must fit under Claude's ~1 MB image input limit). Auto-tunes resolution
+    and quality to stay under that cap: starts at 1280px wide, q=5; if still
+    too large (very busy frame), drops to 960px then 720px.
+
+    Useful for correlating with logs / input / metrics — e.g. "what was on
+    screen when this error logged?" or "what's the UI state at the CPU spike?".
+    """
+    session_dir = _resolve_session(session_id)
+    video = session_dir / "screen.mp4"
+    if not video.exists():
+        raise FileNotFoundError(f"screen.mp4 not in {session_dir}")
+
+    t = max(0.0, float(t_video_s))
+
+    # Try progressively cheaper outputs until we fit under the byte cap.
+    attempts = [
+        (_FRAME_DEFAULT_WIDTH, 5),
+        (960, 6),
+        (720, 7),
+        (_FRAME_MIN_WIDTH, 9),
+    ]
+    last: bytes = b""
+    for width, q in attempts:
+        last = _extract_frame(video, t, width, q)
+        if len(last) <= _FRAME_MAX_BYTES:
+            return Image(data=last, format="jpeg")
+    # All attempts > cap; return the smallest anyway so the caller can decide.
+    return Image(data=last, format="jpeg")
 
 
 @mcp.tool()
