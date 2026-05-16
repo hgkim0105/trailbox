@@ -22,6 +22,138 @@ Phase 1~6 모두 구현. 코드는 `hub_server/` + `core/hub_*` + `ui/hub_dialog
 
 ---
 
+## 모바일 확장 — Trailbox-Android (PC) + Trailbox-iOS (Mac)
+
+### 결론 (먼저)
+
+- **Android = Windows PC tethered (USB/ADB)**
+- **iOS = Mac tethered (Instruments / AVFoundation)**
+- **iOS on Windows = 영상 빼고 로그/메트릭만** (영상 필요하면 Mac 빌드 사용)
+
+데스크탑 Trailbox 의 UI / viewer.html / Hub / MCP 는 *변경 0* 으로 재사용. 디바이스 캡처 백엔드만 추가.
+
+### 왜 이렇게 갈라지는가
+
+모바일 OS 는 PC 와 정반대로 **샌드박싱이 기본**. 앱은 자기 자신만 봄. 백그라운드로 떠서 다른 게임의 화면/로그/CPU 다 캡처는 *불가능*. 그래서 두 가지 선택지:
+- 디바이스를 *컴퓨터에 tether* 해서 컴퓨터 측에서 시스템 권한으로 캡처 (Android 의 ADB, iOS 의 lockdownd/Instruments)
+- 게임에 SDK 임베드 (게임 dev 협력 필수)
+
+전자가 Trailbox 의 DNA 와 맞음. ADB / lockdownd 가 노출하는 신호가 이미 `t_video_s` 로 정렬 가능한 timestamp 를 줌 — 같은 JSONL 스키마 / 같은 viewer 그대로 흘려보내면 끝.
+
+### Android (Windows + ADB)
+
+가장 깔끔. PerfDog 가 정확히 이 방식이고 중국 시장 95%. 서구엔 무료 옵션 거의 없음 → 틈 있음.
+
+```
+[Android 폰] ───USB───> [Windows PC] ── Trailbox.exe ──> output/{sid}/ ──> Hub ──> 공유 링크
+                                              │
+                                              └── viewer.html (PC 의 브라우저)
+```
+
+신호 매핑:
+
+| Trailbox 의 신호 | Android 소스 |
+|---|---|
+| 화면 (mp4) | `adb shell screenrecord` (디바이스에서 H.264 인코딩 → USB stream) |
+| 게임 로그 | `adb logcat -v threadtime` (모든 앱의 로그) |
+| 터치 입력 | `adb shell getevent -lt` (시스템 전체) |
+| CPU/RAM per-PID | `/proc/<pid>/stat`, `/proc/<pid>/status` (`adb shell` 로) |
+| 프레임 타이밍 | `adb shell dumpsys gfxinfo <pkg> framestats` |
+| GPU per-PID | **벤더 종속** — Adreno: `dumpsys gpustats`, Mali: Streamline. v1 은 전체 GPU 만 |
+
+새로 작성:
+- `core/adb_recorder.py` — ADB 호출 래핑 + screenrecord stream → ffmpeg
+- `core/android_metrics.py` — `/proc` + gfxinfo 파싱 → `metrics/process.jsonl`
+- `ui/launcher_panel.py` 에 디바이스 선택 (`adb devices`) 1줄 추가
+
+`adb.exe` (~5MB) 는 build.py 가 Google platform-tools 에서 번들. 사용자는 USB 디버깅 ON 만 하면 됨 (게임 dev 면 익숙).
+
+**작업량: 3~5일.** 새 모듈 ~200줄, 나머지 기존 자산 그대로.
+
+### iOS (Mac + Instruments / AVFoundation)
+
+Mac 빌드가 필수. iOS 의 USB 화면 캡처 (`CoreMediaIO`) 는 macOS-only API. QuickTime "새로운 동영상 녹화 → iPhone" 의 그 메커니즘.
+
+신호 매핑:
+
+| Trailbox 의 신호 | iOS 소스 (Mac 에서) |
+|---|---|
+| 화면 (mp4) | AVFoundation / CoreMediaIO (USB 직결, 1080p+ 60fps) |
+| 게임 로그 | `idevicesyslog` 또는 Instruments os_log |
+| 터치 입력 | `idevicesyslog` 의 UIEvent 또는 Accessibility 우회 (제한적) |
+| CPU/RAM per-PID | Instruments XCTrace (`xctrace record --template "Activity Monitor"`) |
+| 프레임 타이밍 | Instruments Core Animation / GPU template |
+
+새로 작성:
+- `core/iphone_recorder.py` — pyobjc-AVFoundation 으로 device discovery + capture
+- `core/iphone_metrics.py` — xctrace 결과 파싱 (또는 libimobiledevice 의 syslog parsing)
+- Trailbox-Mac.app 빌드 (PyInstaller + py2app)
+
+**작업량: 1~2주.** Mac 빌드 환경 셋업이 절반.
+
+### iOS on Windows — 가능한 범위와 한계
+
+**가능한 것** (USBMux/lockdownd 가 안정적으로 노출):
+- syslog → `logs/logs.jsonl`
+- 크래시 로그
+- 앱 설치/제거, 파일시스템 접근
+- 기본 디바이스 정보 (모델, iOS 버전)
+
+**어려운 것** (Apple 이 의도적으로 Mac-only):
+- **시스템 화면 영상** — CMIO USB 프로토콜이 비공식. pymobiledevice3 가 일부 구현하나 iOS major 버전마다 깨짐. AirPlay 수신은 가능하지만 300~500ms 지연 + 720p — frame-accurate QA 엔 부족
+- **xctrace 동급의 통합 프로파일링** — Instruments 가 Mac-only
+
+권장 정책:
+- Windows + iOS: "Trailbox-iOS-on-Windows (logs only)" — 영상 없는 경량 모드. 로그/메트릭/크래시는 잘 됨. 영상 필요하면 Mac 빌드 안내
+- 영상도 진짜 절실하면 → 별도 작업: **Trailbox-iOS 앱 + ReplayKit Broadcast Extension** → WebRTC 로 Windows 의 Trailbox.exe 에 stream. 가장 안정적이지만 TestFlight/AppStore 셋업 + 사용자가 매 세션 Control Center 에서 시작/종료. 1~2주 추가 작업
+
+### 변화/그대로 매트릭스
+
+| 부분 | 데스크탑과 동일 | 모바일 위해 추가 |
+|---|---|---|
+| Trailbox GUI (PyQt6) | ✅ | 디바이스 선택 항목 1줄 |
+| 출력 구조 / JSONL 스키마 | ✅ | `system` 메타에 device info (모델/OS/Android 또는 iOS 버전) |
+| viewer.html | ✅ | 0줄 |
+| Hub 서버 / 업로드 / 공유 링크 | ✅ | 0줄 |
+| MCP 7개 도구 | ✅ | 0줄 |
+| Trailbox-mcp.exe / Hub backend | ✅ | 0줄 |
+| 새로 작성 (Android) | | `core/adb_recorder.py` + `core/android_metrics.py` (~200줄) |
+| 새로 작성 (iOS Mac) | | `core/iphone_recorder.py` + `core/iphone_metrics.py` + Mac 빌드 (~400줄 + 빌드 인프라) |
+
+### 구현 페이즈 제안
+
+| 단계 | 내용 | 작업량 |
+|---|---|---|
+| **A1** | Android: `adb_recorder.py` 단독 — `screenrecord` USB stream → screen.mp4 | 1~2일 |
+| **A2** | Android: logcat + getevent → 기존 log/input pipeline 연결 | 1일 |
+| **A3** | Android: `/proc` + gfxinfo → metrics/process.jsonl | 1일 |
+| **A4** | Trailbox GUI 에 디바이스 선택 + 통합 테스트 | 0.5일 |
+| **B1** | iOS-on-Windows logs-only: pymobiledevice3 wrapping → logs/logs.jsonl | 1~2일 |
+| **C1** | iOS-on-Mac: pyobjc AVFoundation 으로 화면 + xctrace 메트릭 | 1주 |
+| **C2** | Trailbox-Mac.app 빌드 + 배포 | 0.5주 |
+| **D** | (옵션) Trailbox-iOS Broadcast Extension 앱 | 1~2주 |
+
+A 페이즈만 끝나도 **Trailbox = "데스크탑 + Android" 통합 QA 툴**. iOS 는 그 다음 (또는 영원히 안 함도 OK).
+
+### 핵심 디자인 결정 (구현 시작 시 점검)
+
+- [ ] `screenrecord` 가 디바이스에서 H.264 로 인코딩하는데, 우리 ffmpeg pipeline 과 어떻게 합칠지 (passthrough vs 재인코딩)
+- [ ] `getevent` 출력이 raw event code → 키 이름 매핑 필요. Android 키맵 (KEY_VOLUMEDOWN 등) 변환 테이블
+- [ ] 멀티 디바이스 동시 녹화 지원 vs 1대씩만 (v1 은 1대로 시작 권장)
+- [ ] WiFi ADB 지원 — 셋업 마법사 만들지 (귀찮음) 아니면 USB only 로 시작
+- [ ] GPU 벤더 분기 — Adreno 우선 (점유율 최대), Mali / PowerVR 은 추후
+- [ ] iOS Mac 빌드 코드사이닝 — Apple Developer Account 필요할지
+
+### 차별화 포인트 (vs PerfDog / GameBench)
+
+- **무료 + 오픈소스** (PerfDog 는 Tencent 인증 필요 + 부분 유료)
+- **데스크탑 게임도 같은 도구로** (PerfDog 는 모바일 전용)
+- **자체완결 viewer.html** + **Hub 공유 링크** (PerfDog 는 그들의 클라우드에 가둬짐)
+- **AI MCP 통합** — Claude / GPT 가 세션을 *조각으로* 조회 (PerfDog 못 함)
+- **단일 시간축 (`t_video_s`)** — 데스크탑/모바일 가리지 않고 동일 스키마
+
+---
+
 ## (구) Trailbox Hub — 설계 메모 (구현 완료, 참고용)
 
 ### 목표
