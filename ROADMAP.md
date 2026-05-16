@@ -22,6 +22,50 @@ Phase 1~6 모두 구현. 코드는 `hub_server/` + `core/hub_*` + `ui/hub_dialog
 
 ---
 
+## Hub 관리 웹 UI
+
+Hub 가 현재 노출하는 건 REST API + 공유 토큰 뷰어 (`/v/{token}/`) 뿐. **admin 작업은 전부 API 직접 호출 또는 Trailbox 클라이언트 경유**. Trailbox 미설치 환경 (예: 사내 서버에 SSH 안 되는 매니저, 모바일에서 잠깐 확인) 에선 불편.
+
+같은 `hub_server` 안에 admin 웹 UI 추가. 별도 SPA / npm 빌드 없이 FastAPI + Jinja2 + 약간의 htmx 로 자체완결 유지.
+
+### 화면
+
+- `GET /admin` — 로그인 (admin 토큰 입력)
+- `GET /admin/sessions` — 페이지네이션 + 정렬 + 검색 + 일괄 선택 (다중 삭제)
+- `GET /admin/sessions/{id}` — 상세 (메타 + 첨부 viewer 링크 + 공유 토큰 관리)
+- `GET /admin/shares` — 활성 공유 토큰 일람 + 일괄 폐기
+- `GET /admin/stats` — 디스크 사용량 / 세션별 사이즈 분포 / 업로드 추이 차트
+- `POST /admin/prune` — 만료 정책 dry-run 결과 표시 + 확인 버튼
+- `GET /admin/uploads` — `_uploads/` 잔여물 (incomplete chunks) 확인 + 정리
+
+### 기술 스택
+
+- **서버**: FastAPI + Jinja2 (jinja2 만 추가 의존성, 30KB)
+- **CSS**: Pico.css single-file (~10KB) 또는 Tailwind CDN — 빌드 없음
+- **JS**: Vanilla + htmx (페이지네이션/필터/삭제 confirm 정도, SPA 안 함)
+- **인증**: 기존 `X-Trailbox-Token` 재사용 + 쿠키 세션 (한번 로그인하면 그 후 자동)
+
+별도 번들링 없음. viewer.html 처럼 *self-contained* 철학 유지.
+
+### 작업 페이즈
+
+| 단계 | 내용 | 작업량 |
+|---|---|---|
+| **A** | 로그인 + 세션 목록 + 상세 + 삭제 | 1~2일 |
+| **B** | 공유 토큰 관리 + audit log (누가 언제 발급/폐기) | 1일 |
+| **C** | stats 페이지 (디스크/세션 분포/업로드 추이) + retention preview/prune UI | 1~2일 |
+
+총 ~1주. A 만 끝나도 가장 자주 쓰는 작업은 커버.
+
+### 결정사항 (구현 시작 시 점검)
+
+- [ ] 인증: API 토큰 1개로 통합 vs admin 전용 비밀번호 분리 (env `TRAILBOX_HUB_ADMIN_PASSWORD`)
+- [ ] 사용자/팀 개념 도입 여부 — 현재 single-token 모델. 멀티 사용자면 audit (누가 올렸는지) 가능하지만 복잡도 ↑
+- [ ] 로그인 유지: 쿠키 세션 vs Basic auth 매 요청 (전자가 UX 우수)
+- [ ] 모바일 친화 반응형 UI 필요 여부
+
+---
+
 ## 모바일 확장 — Trailbox-Android (PC) + Trailbox-iOS (Mac)
 
 ### 결론 (먼저)
