@@ -105,6 +105,9 @@ class SessionPickerDialog(QDialog):
         refresh_btn = QPushButton("새로고침", self)
         refresh_btn.clicked.connect(self.refresh)
         top.addWidget(refresh_btn)
+        hub_fetch_btn = QPushButton("허브에서 가져오기…", self)
+        hub_fetch_btn.clicked.connect(self._on_fetch_from_hub)
+        top.addWidget(hub_fetch_btn)
         hub_settings_btn = QPushButton("허브 설정", self)
         hub_settings_btn.clicked.connect(self._on_hub_settings)
         top.addWidget(hub_settings_btn)
@@ -195,3 +198,20 @@ class SessionPickerDialog(QDialog):
             return
         from ui.hub_dialogs import create_share_for_session
         create_share_for_session(session, self)
+
+    def _on_fetch_from_hub(self) -> None:
+        from ui.remote_session_picker import RemoteSessionPickerDialog
+        dlg = RemoteSessionPickerDialog(self.output_root, self)
+        dlg.exec()
+        # Whether or not the user opened-and-accepted, refresh so any
+        # downloaded session shows up in this picker.
+        if dlg.downloaded_path:
+            self.refresh()
+            # Try to select the freshly downloaded session.
+            from pathlib import Path as _Path
+            target = _Path(dlg.downloaded_path).name
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item is not None and item.text() == target:
+                    self.table.selectRow(row)
+                    break
