@@ -10,8 +10,19 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+
+from core.frame_extractor import extract_frame_jpeg
 
 from .auth import require_token
 from .config import HubConfig, load as load_config
@@ -125,6 +136,51 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
         shares.revoke_for_session(session_id)
         return None
+
+    # ---- File + frame fetch for MCP backend (Phase 3) --------------------
+
+    def _resolve_in_session(session_id: str, rel: str) -> Path:
+        if not is_valid_session_id(session_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid session_id")
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
+        session_dir = storage.session_dir(session_id).resolve()
+        target = (session_dir / rel).resolve()
+        try:
+            target.relative_to(session_dir)
+        except ValueError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if not target.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        return target
+
+    @app.get(
+        "/api/sessions/{session_id}/files/{path:path}",
+        dependencies=[Depends(auth)],
+    )
+    def fetch_file(session_id: str, path: str) -> FileResponse:
+        """Generic file fetch within a session dir (API-token protected).
+
+        Used by the Hub-backed MCP server to pull individual jsonl/meta files.
+        """
+        return FileResponse(_resolve_in_session(session_id, path))
+
+    @app.get(
+        "/api/sessions/{session_id}/frame",
+        dependencies=[Depends(auth)],
+    )
+    def fetch_frame(session_id: str, t: float = Query(0.0, ge=0.0)) -> Response:
+        """Extract a JPEG frame from ``screen.mp4`` at ``t`` seconds.
+
+        Server-side ffmpeg avoids the MCP client having to download the whole
+        mp4. Returns image/jpeg sized to fit Claude's 1MB image cap.
+        """
+        video = _resolve_in_session(session_id, "screen.mp4")
+        try:
+            jpeg = extract_frame_jpeg(video, t)
+        except RuntimeError as e:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
+        return Response(content=jpeg, media_type="image/jpeg")
 
     # ---- Share tokens (Phase 2) ------------------------------------------
 
