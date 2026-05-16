@@ -10,6 +10,16 @@ Produces THREE single-file binaries side by side in ``dist/``:
                             Single-file alternative to the Docker image for
                             LAN deployments where a Linux container is overkill.
 
+Plus, if Inno Setup is installed, a fourth artifact:
+
+  - ``Trailbox-Setup.exe`` — installer bundling all three binaries with a
+                             component-selection wizard, Hub config page
+                             (with token generator), QSettings registry
+                             pre-population, Start-Menu shortcuts, and
+                             uninstaller. The installer step is skipped
+                             gracefully if ``ISCC.exe`` isn't on PATH (or
+                             at the default per-user install location).
+
 GUI uses ``--windowed`` to suppress a console window; MCP & Hub are
 ``--console`` because both need stdin/stdout (stdio transport / log output).
 
@@ -17,6 +27,7 @@ Run from the venv:  ``.\\.venv\\Scripts\\python.exe build.py``
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -75,6 +86,41 @@ _HUB_FLAGS = [
 ]
 
 
+def _find_iscc() -> Path | None:
+    """Locate the Inno Setup compiler. Returns None if not installed."""
+    # winget installs Inno Setup per-user under AppData\Local\Programs.
+    candidates = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
+        Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe"),
+        Path("C:/Program Files/Inno Setup 6/ISCC.exe"),
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    found = shutil.which("ISCC.exe") or shutil.which("iscc")
+    return Path(found) if found else None
+
+
+def _build_installer(repo_root: Path) -> Path | None:
+    """Compile the Inno Setup installer if ISCC.exe is available.
+
+    Requires Trailbox.exe / Trailbox-mcp.exe / Trailbox-hub.exe in dist/.
+    """
+    iscc = _find_iscc()
+    iss = repo_root / "installer" / "Trailbox-installer.iss"
+    if iscc is None or not iss.is_file():
+        print("\n=== skipping installer (ISCC.exe or .iss not found) ===")
+        return None
+
+    print(f"\n=== building Trailbox-Setup.exe ({iss.name}) ===")
+    print(f"$ {iscc} {iss}")
+    subprocess.run([str(iscc), str(iss)], check=True, cwd=iss.parent)
+    out = repo_root / "dist" / "Trailbox-Setup.exe"
+    if not out.is_file():
+        raise RuntimeError(f"Inno Setup did not produce {out}")
+    return out
+
+
 def _run_pyinstaller(
     entry: str, flags: list[str], ffmpeg_exe: Path, repo_root: Path
 ) -> Path:
@@ -110,8 +156,13 @@ def main() -> int:
     mcp_exe = _run_pyinstaller("mcp_entry.py", _MCP_FLAGS, ffmpeg_exe, repo_root)
     hub_exe = _run_pyinstaller("hub_entry.py", _HUB_FLAGS, ffmpeg_exe, repo_root)
 
+    installer_exe = _build_installer(repo_root)
+
     print("\n=== done ===")
-    for path in (gui_exe, mcp_exe, hub_exe):
+    outputs = [gui_exe, mcp_exe, hub_exe]
+    if installer_exe is not None:
+        outputs.append(installer_exe)
+    for path in outputs:
         size_mb = path.stat().st_size / 1024 / 1024
         print(f"  {path}  ({size_mb:.1f} MB)")
     return 0
