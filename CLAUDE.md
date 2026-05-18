@@ -33,12 +33,17 @@ If you spawn the GUI to test, prefer `run_in_background=true` — it's a blockin
 
 `main.py.__version__` is the source of truth for the running app — `session_info.system.trailbox_version` in `session_meta.json` (via `core/system_info.py`) and the viewer header overlay both read from it. If it lags behind the latest git tag, every session recorded with that build reports the wrong version in its own meta. This has already happened once (the v0.1.7→v0.2.3 drift) — don't let it recur.
 
+There are TWO version strings that must move together:
+
+- `main.py.__version__` — baked into the .exe by PyInstaller; surfaces in `session_meta.json` (via `core/system_info.py`) and the viewer header.
+- `MyAppVersion` in `installer/Trailbox-installer.iss` — surfaces in the Windows installer banner and "Programs & Features" entry.
+
 Release flow, in this order:
 
-1. Bump `__version__` in `main.py` to the target version (`"0.2.4"`, no `v` prefix).
-2. Commit the bump.
+1. Bump BOTH `__version__` in `main.py` and `MyAppVersion` in `installer/Trailbox-installer.iss` to the target version (`"0.2.5"`, no `v` prefix).
+2. Commit the bumps.
 3. `git tag vX.Y.Z` on that commit, push commit + tag together.
-4. `build.py` to produce `dist/Trailbox{,-mcp,-hub,-Setup}.exe` — **must run after step 1** so the bundled `main.py` carries the new version. Build artifacts created before the bump will report the old version forever.
+4. `build.py` to produce `dist/Trailbox{,-mcp,-hub,-Setup}.exe` — **must run after step 1** so the bundled `main.py` carries the new version AND the installer banner shows the new version. Build artifacts created before the bump will report the old version forever.
 5. `gh release create vX.Y.Z` attaching all 4 binaries.
 
 If you find `__version__` already lagging the latest tag, fix forward (bump + new release) rather than retroactively moving the existing tag — published .exe SHA-sums shouldn't change under a fixed tag name.

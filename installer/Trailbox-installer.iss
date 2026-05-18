@@ -11,7 +11,7 @@
 ; Output: ../dist/Trailbox-Setup.exe
 
 #define MyAppName      "Trailbox"
-#define MyAppVersion   "0.2.2"
+#define MyAppVersion   "0.2.5"
 #define MyAppPublisher "hgkim0105"
 #define MyAppURL       "https://github.com/hgkim0105/trailbox"
 #define DistDir        "..\dist"
@@ -25,6 +25,10 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\Trailbox
+; Do NOT append DefaultDirName segment to a user-picked Browse folder.
+; Without this, picking "D:\Trailbox" via Browse silently becomes
+; "D:\Trailbox\Trailbox" — the nested-folder bug from v0.2.2..v0.2.4.
+AppendDefaultDirName=no
 DefaultGroupName=Trailbox
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
