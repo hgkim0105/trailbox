@@ -84,7 +84,9 @@ Hub 가 현재 노출하는 건 REST API + 공유 토큰 뷰어 (`/v/{token}/`) 
 
 전자가 Trailbox 의 DNA 와 맞음. ADB / lockdownd 가 노출하는 신호가 이미 `t_video_s` 로 정렬 가능한 timestamp 를 줌 — 같은 JSONL 스키마 / 같은 viewer 그대로 흘려보내면 끝.
 
-### Android (Windows + ADB)
+### Android (Windows + ADB) — **확정 (구현 대기 중)**
+
+> 상세 구현 계획: **[docs/android-capture-plan.md](docs/android-capture-plan.md)**
 
 가장 깔끔. PerfDog 가 정확히 이 방식이고 중국 시장 95%. 서구엔 무료 옵션 거의 없음 → 틈 있음.
 
@@ -94,25 +96,31 @@ Hub 가 현재 노출하는 건 REST API + 공유 토큰 뷰어 (`/v/{token}/`) 
                                               └── viewer.html (PC 의 브라우저)
 ```
 
+**확정된 결정** (자세한 근거는 위 문서):
+
+- **캡처 백엔드**: scrcpy 바이너리 래핑 (`--record=- --record-format=mkv` → ffmpeg 패스스루). `adb shell screenrecord` 직접 호출은 3분 제한 + 오디오 분리 부담 때문에 탈락
+- **v1 스코프**: video + audio + logs + inputs + metrics 풀 패리티 (단계적 출시가 아니라 한 번에)
+- **바이너리 배포**: adb + scrcpy 를 installer 에 번들 (`tools/android/` → `--add-binary` → Inno Setup `[Files]`). 사용자 별도 설치 X
+- **출시 버전**: 0.3.0 (minor bump)
+
 신호 매핑:
 
 | Trailbox 의 신호 | Android 소스 |
 |---|---|
-| 화면 (mp4) | `adb shell screenrecord` (디바이스에서 H.264 인코딩 → USB stream) |
-| 게임 로그 | `adb logcat -v threadtime` (모든 앱의 로그) |
-| 터치 입력 | `adb shell getevent -lt` (시스템 전체) |
-| CPU/RAM per-PID | `/proc/<pid>/stat`, `/proc/<pid>/status` (`adb shell` 로) |
-| 프레임 타이밍 | `adb shell dumpsys gfxinfo <pkg> framestats` |
-| GPU per-PID | **벤더 종속** — Adreno: `dumpsys gpustats`, Mali: Streamline. v1 은 전체 GPU 만 |
+| 화면 (mp4) + 시스템 오디오 | **scrcpy** (`--record=- --audio-source=output`). Android 11+ 오디오; 그 이하는 `--no-audio` 자동 폴백 |
+| 게임 로그 | `adb logcat -v threadtime -T <세션 시작 ts>` |
+| 터치 입력 | `adb shell getevent -lt` + `wm size` 로 좌표 정규화 |
+| CPU/RAM per-PID | `adb shell top -n 1 -p <pid>` (`nproc` 로 cpu_pct 정규화) |
+| 프레임 타이밍 / jank | `adb shell dumpsys gfxinfo <pkg>` |
+| GPU per-PID | Android API 가 직접 노출 X → `process.gpu_pct=null`, 보조 필드 (`jank_count`, `frame_time_99p_ms`) 로 대체 |
 
 새로 작성:
-- `core/adb_recorder.py` — ADB 호출 래핑 + screenrecord stream → ffmpeg
-- `core/android_metrics.py` — `/proc` + gfxinfo 파싱 → `metrics/process.jsonl`
-- `ui/launcher_panel.py` 에 디바이스 선택 (`adb devices`) 1줄 추가
+- `core/adb.py` — adb/scrcpy path 해석 + 공용 헬퍼
+- `core/screen_recorder.py` — `AndroidDeviceTarget` 변형 + `_run_scrcpy` 분기
+- `core/android_log_collector.py` / `core/android_input_recorder.py` / `core/android_metrics_recorder.py`
+- `ui/launcher_panel.py` — `android_radio` + 디바이스 콤보 + `_DetectAndroidDevicesWorker`
 
-`adb.exe` (~5MB) 는 build.py 가 Google platform-tools 에서 번들. 사용자는 USB 디버깅 ON 만 하면 됨 (게임 dev 면 익숙).
-
-**작업량: 3~5일.** 새 모듈 ~200줄, 나머지 기존 자산 그대로.
+**작업량: 1~2주.** 풀 패리티 + 번들링 포함.
 
 ### iOS (Mac + Instruments / AVFoundation)
 
@@ -168,10 +176,7 @@ Mac 빌드가 필수. iOS 의 USB 화면 캡처 (`CoreMediaIO`) 는 macOS-only A
 
 | 단계 | 내용 | 작업량 |
 |---|---|---|
-| **A1** | Android: `adb_recorder.py` 단독 — `screenrecord` USB stream → screen.mp4 | 1~2일 |
-| **A2** | Android: logcat + getevent → 기존 log/input pipeline 연결 | 1일 |
-| **A3** | Android: `/proc` + gfxinfo → metrics/process.jsonl | 1일 |
-| **A4** | Trailbox GUI 에 디바이스 선택 + 통합 테스트 | 0.5일 |
+| **A** | Android 전체 페이즈 (Phase 1~7) — 자세한 분해는 [docs/android-capture-plan.md](docs/android-capture-plan.md) 참조 | 1~2주 |
 | **B1** | iOS-on-Windows logs-only: pymobiledevice3 wrapping → logs/logs.jsonl | 1~2일 |
 | **C1** | iOS-on-Mac: pyobjc AVFoundation 으로 화면 + xctrace 메트릭 | 1주 |
 | **C2** | Trailbox-Mac.app 빌드 + 배포 | 0.5주 |
@@ -181,12 +186,15 @@ A 페이즈만 끝나도 **Trailbox = "데스크탑 + Android" 통합 QA 툴**. 
 
 ### 핵심 디자인 결정 (구현 시작 시 점검)
 
-- [ ] `screenrecord` 가 디바이스에서 H.264 로 인코딩하는데, 우리 ffmpeg pipeline 과 어떻게 합칠지 (passthrough vs 재인코딩)
-- [ ] `getevent` 출력이 raw event code → 키 이름 매핑 필요. Android 키맵 (KEY_VOLUMEDOWN 등) 변환 테이블
-- [ ] 멀티 디바이스 동시 녹화 지원 vs 1대씩만 (v1 은 1대로 시작 권장)
-- [ ] WiFi ADB 지원 — 셋업 마법사 만들지 (귀찮음) 아니면 USB only 로 시작
-- [ ] GPU 벤더 분기 — Adreno 우선 (점유율 최대), Mali / PowerVR 은 추후
-- [ ] iOS Mac 빌드 코드사이닝 — Apple Developer Account 필요할지
+**Android (확정됨 — [상세](docs/android-capture-plan.md))**:
+- [x] 화면 캡처 경로 — **scrcpy 바이너리 래핑 + ffmpeg `-c copy` 패스스루** 채택 (screenrecord 3분 제한 회피)
+- [x] 멀티 디바이스 — **v1 1대만** (확장은 추후)
+- [x] WiFi ADB — **USB only 우선**, 사용자가 미리 페어링한 무선 디바이스는 `adb devices`로 자동 인식
+- [x] GPU per-PID — Android API 부재 → `gpu_pct=null` + `jank_count` / `frame_time_99p_ms` 보조 필드
+- [ ] `getevent` 키맵 — 구현 시 KEY_* 코드 → 이름 변환 테이블 필요 (소규모)
+
+**iOS (미정)**:
+- [ ] iOS Mac 빌드 코드사이닝 — Apple Developer Account 필요할지 (현재 비용 부담으로 보류, Android 우선)
 
 ### 차별화 포인트 (vs PerfDog / GameBench)
 
