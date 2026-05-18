@@ -51,6 +51,10 @@ _GUI_FLAGS = [
     "--collect-submodules", "comtypes",
     "--collect-submodules", "pynput",
     # ffmpeg binary added by _run_pyinstaller for both builds.
+    # Android tooling (adb + scrcpy) added by _android_binary_flags() if the
+    # files are present. Missing tools/android/ trees just skip the bundling —
+    # the resulting .exe will then fail at runtime when the user picks the
+    # Android radio, with a friendlier message from core.adb.
 ]
 
 # MCP build pulls in only what the stdio server needs.
@@ -84,6 +88,39 @@ _HUB_FLAGS = [
     "--collect-submodules", "fastapi",
     "--hidden-import", "python_multipart",
 ]
+
+
+def _android_binary_flags(repo_root: Path) -> tuple[list[str], list[Path]]:
+    """Return ``--add-binary`` args for the bundled Android tools, plus the
+    list of bundled paths (for logging).
+
+    Both subtrees are optional; if neither is present we return ([], []) and
+    the GUI build still works for monitor/window capture. Files are flattened
+    into ``bin/`` inside the bundle so ``core.adb`` resolves them with a
+    simple ``_MEIPASS/bin/<name>`` lookup.
+
+    Drop the upstream zip contents under:
+      tools/android/platform-tools/   (adb.exe + AdbWinApi.dll + AdbWinUsbApi.dll)
+      tools/android/scrcpy/           (scrcpy.exe + scrcpy-server.jar + DLLs)
+    """
+    base = repo_root / "tools" / "android"
+    flags: list[str] = []
+    bundled: list[Path] = []
+    if not base.is_dir():
+        return flags, bundled
+
+    # Flatten platform-tools/* and scrcpy/* into a single _MEIPASS/bin/ dir.
+    # Anything that isn't a regular file (e.g. nested resource dirs scrcpy
+    # ships) is skipped — scrcpy only needs the loose top-level files.
+    for sub in ("platform-tools", "scrcpy"):
+        d = base / sub
+        if not d.is_dir():
+            continue
+        for entry in d.iterdir():
+            if entry.is_file():
+                flags += ["--add-binary", f"{entry};bin"]
+                bundled.append(entry)
+    return flags, bundled
 
 
 def _find_iscc() -> Path | None:
@@ -152,7 +189,18 @@ def main() -> int:
     for spec in repo_root.glob("*.spec"):
         spec.unlink()
 
-    gui_exe = _run_pyinstaller("main.py", _GUI_FLAGS, ffmpeg_exe, repo_root)
+    android_flags, android_bundled = _android_binary_flags(repo_root)
+    if android_bundled:
+        print(f"bundling {len(android_bundled)} Android tool file(s) under bin/")
+    else:
+        print(
+            "tools/android/ not populated — Android capture will be disabled in this "
+            "build (see README for the platform-tools / scrcpy download steps)"
+        )
+
+    gui_exe = _run_pyinstaller(
+        "main.py", _GUI_FLAGS + android_flags, ffmpeg_exe, repo_root
+    )
     mcp_exe = _run_pyinstaller("mcp_entry.py", _MCP_FLAGS, ffmpeg_exe, repo_root)
     hub_exe = _run_pyinstaller("hub_entry.py", _HUB_FLAGS, ffmpeg_exe, repo_root)
 

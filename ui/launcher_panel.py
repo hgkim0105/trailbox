@@ -4,7 +4,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -20,8 +20,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import adb
+from core.adb import AdbDevice
 from core.process_detector import find_log_dir_for_pid, find_pids_for_log_dir
-from core.screen_recorder import CaptureTarget, MonitorTarget, WindowTarget
+from core.screen_recorder import (
+    AndroidDeviceTarget,
+    CaptureTarget,
+    MonitorTarget,
+    WindowTarget,
+)
 from core.window_clicker import ClickPicker, HotkeyPicker
 from core.window_picker import WindowInfo, enumerate_windows
 
@@ -60,9 +67,32 @@ class _DetectLogDirWorker(QThread):
         self.found.emit(self._pid, str(result) if result else "")
 
 
+class _DetectAndroidDevicesWorker(QThread):
+    """Run ``adb devices -l`` off the GUI thread.
+
+    Mirrors the ``_DetectWindowWorker`` pattern: a single shot scan that emits
+    the result on completion. A QTimer in the panel re-fires it every few
+    seconds so plug/unplug events show up without user action.
+    """
+
+    found = pyqtSignal(list)  # list[AdbDevice]
+
+    def run(self) -> None:
+        try:
+            devices = adb.list_devices()
+        except Exception:  # noqa: BLE001 - never crash the UI
+            devices = []
+        self.found.emit(devices)
+
+
 HOTKEY_LABEL = "Ctrl+Shift+P"
 FPS_OPTIONS = [10, 15, 24, 30, 60]
 DEFAULT_FPS = 15
+
+# How often the Android device list refreshes itself. Long enough that adb
+# isn't constantly being invoked while the user fiddles with the UI; short
+# enough that plug-in is noticed within a couple seconds.
+_ANDROID_REFRESH_MS = 3000
 
 
 class LauncherPanel(QWidget):
@@ -75,9 +105,18 @@ class LauncherPanel(QWidget):
         self._hotkey_picker: HotkeyPicker | None = None
         self._detect_thread: _DetectWindowWorker | None = None
         self._logdir_thread: _DetectLogDirWorker | None = None
+        self._android_thread: _DetectAndroidDevicesWorker | None = None
+        self._android_timer: QTimer | None = None
         self._build_ui()
         self.refresh_window_list()
         self._start_hotkey_picker()
+        # Initial Android scan + recurring poll. Fires regardless of the
+        # current radio selection so switching to Android is instant.
+        self._kick_android_refresh()
+        self._android_timer = QTimer(self)
+        self._android_timer.setInterval(_ANDROID_REFRESH_MS)
+        self._android_timer.timeout.connect(self._kick_android_refresh)
+        self._android_timer.start()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -127,10 +166,13 @@ class LauncherPanel(QWidget):
         radio_row = QHBoxLayout()
         self.monitor_radio = QRadioButton("전체 모니터", self)
         self.window_radio = QRadioButton("특정 창 (WGC)", self)
+        self.android_radio = QRadioButton("Android 디바이스 (scrcpy)", self)
         self.monitor_radio.setChecked(True)
         self.monitor_radio.toggled.connect(self._update_target_controls)
+        self.android_radio.toggled.connect(self._update_target_controls)
         radio_row.addWidget(self.monitor_radio)
         radio_row.addWidget(self.window_radio)
+        radio_row.addWidget(self.android_radio)
         radio_row.addStretch(1)
         cap_layout.addLayout(radio_row)
 
@@ -144,6 +186,21 @@ class LauncherPanel(QWidget):
         self.refresh_btn.clicked.connect(self.refresh_window_list)
         win_row.addWidget(self.refresh_btn)
         cap_layout.addLayout(win_row)
+
+        android_row = QHBoxLayout()
+        android_row.addWidget(QLabel("디바이스:"))
+        self.android_combo = QComboBox(self)
+        self.android_combo.setMinimumWidth(320)
+        android_row.addWidget(self.android_combo, 1)
+        self.android_refresh_btn = QPushButton("새로고침", self)
+        self.android_refresh_btn.clicked.connect(self._kick_android_refresh)
+        android_row.addWidget(self.android_refresh_btn)
+        cap_layout.addLayout(android_row)
+
+        # Status hint populated by the device-detect worker.
+        self.android_status = QLabel("Android: 디바이스 검색 중…", self)
+        self.android_status.setStyleSheet("QLabel { color: #666; }")
+        cap_layout.addWidget(self.android_status)
 
         pick_row = QHBoxLayout()
         self.click_pick_btn = QPushButton("🎯 창 클릭으로 선택", self)
@@ -219,10 +276,21 @@ class LauncherPanel(QWidget):
         """Return the selected capture target, or None if the picker is invalid."""
         if self.monitor_radio.isChecked():
             return MonitorTarget(index=0)
+        if self.android_radio.isChecked():
+            device = self._selected_android_device()
+            if device is None or not device.online:
+                return None
+            # capture_audio defaults to True here; main.py downgrades to
+            # --no-audio if it sees the device is on Android 10 or below.
+            return AndroidDeviceTarget(serial=device.serial)
         info = self._selected_window()
         if info is None:
             return None
         return WindowTarget(hwnd=info.hwnd, title=info.title)
+
+    def selected_android_device(self) -> AdbDevice | None:
+        """For main.py: read the picked device (model/serial for session meta)."""
+        return self._selected_android_device()
 
     def selected_window_info(self) -> WindowInfo | None:
         return self._selected_window()
@@ -281,9 +349,72 @@ class LauncherPanel(QWidget):
 
     def _update_target_controls(self) -> None:
         is_window = self.window_radio.isChecked()
+        is_android = self.android_radio.isChecked()
         self.window_combo.setEnabled(is_window)
         self.refresh_btn.setEnabled(is_window)
         self.click_pick_btn.setEnabled(is_window)
+        self.android_combo.setEnabled(is_android)
+        self.android_refresh_btn.setEnabled(is_android)
+        self.android_status.setVisible(is_android)
+
+    # ---- Android device picker -------------------------------------------
+
+    def _selected_android_device(self) -> AdbDevice | None:
+        data = self.android_combo.currentData()
+        return data if isinstance(data, AdbDevice) else None
+
+    def _kick_android_refresh(self) -> None:
+        """Spawn a worker to refresh the device combo; no-op if one is running."""
+        if self._android_thread is not None and self._android_thread.isRunning():
+            return
+        worker = _DetectAndroidDevicesWorker()
+        worker.found.connect(self._on_android_devices_found)
+        worker.finished.connect(worker.deleteLater)
+        self._android_thread = worker
+        worker.start()
+
+    def _on_android_devices_found(self, devices: list) -> None:
+        self._android_thread = None
+
+        previous_serial: str | None = None
+        prev = self._selected_android_device()
+        if prev is not None:
+            previous_serial = prev.serial
+
+        # Same pattern as refresh_window_list: clear+repopulate under
+        # blockSignals so we don't emit currentIndexChanged for transients.
+        self.android_combo.blockSignals(True)
+        try:
+            self.android_combo.clear()
+            for d in devices:
+                self.android_combo.addItem(d.label, userData=d)
+            if previous_serial is not None:
+                for i in range(self.android_combo.count()):
+                    item = self.android_combo.itemData(i)
+                    if isinstance(item, AdbDevice) and item.serial == previous_serial:
+                        self.android_combo.setCurrentIndex(i)
+                        break
+        finally:
+            self.android_combo.blockSignals(False)
+
+        if not devices:
+            self.android_status.setText(
+                "연결된 Android 디바이스가 없습니다. USB 디버깅을 켜고 케이블을 연결하세요."
+            )
+            self.android_status.setStyleSheet("QLabel { color: #c0392b; }")
+        else:
+            offline = [d for d in devices if not d.online]
+            if offline:
+                self.android_status.setText(
+                    f"{len(devices)}대 발견 · {len(offline)}대 권한/오프라인 — "
+                    "디바이스 화면의 USB 디버깅 허용 프롬프트를 확인하세요."
+                )
+                self.android_status.setStyleSheet("QLabel { color: #c0392b; }")
+            else:
+                self.android_status.setText(
+                    f"Android 디바이스 {len(devices)}대 연결됨."
+                )
+                self.android_status.setStyleSheet("QLabel { color: #2c7a2c; }")
 
     def _own_top_level_hwnds(self) -> list[int]:
         """HWNDs to exclude from picking (this app's own windows)."""
@@ -309,6 +440,9 @@ class LauncherPanel(QWidget):
         if self._hotkey_picker is not None:
             self._hotkey_picker.stop()
             self._hotkey_picker = None
+        if self._android_timer is not None:
+            self._android_timer.stop()
+            self._android_timer = None
 
     def _begin_click_pick(self) -> None:
         if self._click_picker is not None:

@@ -11,19 +11,28 @@ from pathlib import Path
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
-def _safe_app_name(exe_path: str) -> str:
+def _safe_app_name(name: str) -> str:
+    """Sanitize an arbitrary string into a filesystem-safe app-name segment."""
+    cleaned = _SAFE_NAME_RE.sub("_", name).strip("_-.")
+    return cleaned or "app"
+
+
+def _app_name_from_exe(exe_path: str) -> str:
     """Derive a filesystem-safe app name from the executable path."""
     stem = Path(exe_path).stem or "app"
-    cleaned = _SAFE_NAME_RE.sub("_", stem).strip("_-.")
-    return cleaned or "app"
+    return _safe_app_name(stem)
 
 
 @dataclass
 class Session:
-    exe_path: str
+    exe_path: str | None
     log_dir: str | None
     output_root: Path
     target_pid: int | None = None
+    # Optional explicit session-id stem. When set, used in place of the
+    # exe_path-derived name — used by the Android path where there's no
+    # local exe but we want e.g. "android_<serial>_<pkg>".
+    app_name: str | None = None
 
     session_id: str = field(init=False, default="")
     dir: Path = field(init=False, default=Path())
@@ -34,7 +43,13 @@ class Session:
         """Generate session id, create output folder, mark start time."""
         self.started_at = datetime.now()
         timestamp = self.started_at.strftime("%Y%m%d_%H%M%S")
-        self.session_id = f"{_safe_app_name(self.exe_path)}_{timestamp}"
+        if self.app_name:
+            stem = _safe_app_name(self.app_name)
+        elif self.exe_path:
+            stem = _app_name_from_exe(self.exe_path)
+        else:
+            stem = "app"
+        self.session_id = f"{stem}_{timestamp}"
         self.dir = Path(self.output_root) / self.session_id
         self.dir.mkdir(parents=True, exist_ok=True)
         return self.session_id

@@ -1,21 +1,24 @@
-"""Screen recording with two backends, VFR-driven by frame arrivals:
+"""Screen recording with three backends, all converging on a single mp4:
 
 - MonitorTarget: dxcam (DXGI Desktop Duplication) — captures an entire monitor.
+  Pulls BGRA frames into ffmpeg only on present; VFR-paced.
 - WindowTarget:  windows-capture (Windows Graphics Capture) — captures one
   HWND even if covered by other windows; works with HW-accelerated games.
+  Push model; same BGRA-into-ffmpeg pipeline.
+- AndroidDeviceTarget: scrcpy wraps the device's encoder and emits a complete
+  MKV bytestream on stdout; we pipe that into ffmpeg ``-c copy`` to remux to
+  mp4 without re-encoding. Audio is handled by scrcpy itself, so the post-mux
+  step in main.py is skipped for this path.
 
-Both pipe BGRA frames into ffmpeg ONLY when a new frame is available; ffmpeg
-stamps each frame with wallclock and writes a passthrough-paced mp4. This
-avoids the duplicate-frame judder you get from a fixed Python ticker that's
-out of phase with the source's present clock.
-
-The ``max_fps`` argument is an upper rate cap (drops frames arriving faster
-than 1/max_fps since the last write) — useful for shrinking files when the
-source presents at very high rates. Set high (e.g. 120) to keep everything.
+The ``max_fps`` argument is an upper rate cap. For dxcam/WGC it's enforced on
+the writer side (drops frames arriving faster than 1/max_fps since the last
+write). For scrcpy it's passed through as ``--max-fps``.
 """
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import threading
 import time
@@ -40,7 +43,14 @@ class WindowTarget:
     title: str = ""
 
 
-CaptureTarget = MonitorTarget | WindowTarget
+@dataclass(frozen=True)
+class AndroidDeviceTarget:
+    serial: str
+    package: str | None = None     # foreground package (best-effort)
+    capture_audio: bool = True     # Android 11+ output capture; else falls back
+
+
+CaptureTarget = MonitorTarget | WindowTarget | AndroidDeviceTarget
 
 
 class ScreenRecorder:
@@ -73,6 +83,12 @@ class ScreenRecorder:
         self._latest_frame_bytes: bytes | None = None
         self._frame_shape: tuple[int, int] | None = None  # (h, w)
         self._new_frame_event = threading.Event()
+
+        # Android (scrcpy): two cooperating subprocesses we need to tear down
+        # in a specific order on stop (scrcpy first → ffmpeg sees EOF → MP4
+        # is finalized cleanly).
+        self._scrcpy_proc: subprocess.Popen | None = None
+        self._scrcpy_stderr_log = None
 
     # ---- Public API -------------------------------------------------------
 
@@ -113,7 +129,9 @@ class ScreenRecorder:
     def _run(self) -> None:
         try:
             self._open_frame_log()
-            if isinstance(self.target, WindowTarget):
+            if isinstance(self.target, AndroidDeviceTarget):
+                self._run_scrcpy(self.target)
+            elif isinstance(self.target, WindowTarget):
                 self._run_window(self.target)
             else:
                 self._run_monitor(self.target)
@@ -122,6 +140,9 @@ class ScreenRecorder:
             self._started.set()
         finally:
             self._close_frame_log()
+            # scrcpy must close BEFORE ffmpeg: closing scrcpy lets ffmpeg see
+            # EOF on stdin and finalize the mp4 footer cleanly.
+            self._close_scrcpy()
             self._close_ffmpeg()
 
     def _open_frame_log(self) -> None:
@@ -387,3 +408,177 @@ class ScreenRecorder:
                 self._stderr_log.close()
             except OSError:
                 pass
+
+    # ---- scrcpy (Android) -------------------------------------------------
+
+    def _run_scrcpy(self, target: AndroidDeviceTarget) -> None:
+        """Pipe scrcpy's MKV output into ffmpeg ``-c copy`` to produce mp4.
+
+        scrcpy.exe ──stdout(mkv)──> ffmpeg.exe ──> screen.mp4
+
+        Lifecycle: we spawn both, signal ``_started`` once both are running,
+        block until ``_stop`` is set, then signal scrcpy to terminate. scrcpy
+        closes its stdout, ffmpeg drains and writes a finalized mp4.
+        """
+        # Local import keeps the module free of the adb dep until needed.
+        from core import adb
+
+        scrcpy_cmd = [
+            str(adb.get_scrcpy_path()),
+            f"--serial={target.serial}",
+            "--no-window",                  # headless: don't pop a mirror window
+            "--no-control",                 # we're recording, not interacting
+            "--record=-",                   # stream container to stdout
+            "--record-format=mkv",
+            f"--max-fps={self.max_fps}",
+        ]
+        if target.capture_audio:
+            # output capture is Android 11+; main.py is responsible for the
+            # version check and passing capture_audio=False when unsupported.
+            scrcpy_cmd += ["--audio-source=output", "--audio-codec=opus"]
+        else:
+            scrcpy_cmd += ["--no-audio"]
+
+        # scrcpy looks up adb via ADB env var when set; pin it to our bundled
+        # binary so it doesn't pick up some other adb from PATH.
+        env = os.environ.copy()
+        env["ADB"] = str(adb.get_adb_path())
+
+        # Process group + dedicated stderr log. CREATE_NEW_PROCESS_GROUP is
+        # required to deliver CTRL_BREAK_EVENT on stop without also killing
+        # this Python process.
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._scrcpy_stderr_log = open(
+            str(self.output_path) + ".scrcpy.log", "wb"
+        )
+        scrcpy_creationflags = 0
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            scrcpy_creationflags |= subprocess.CREATE_NO_WINDOW
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            scrcpy_creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
+        scrcpy_proc = subprocess.Popen(
+            scrcpy_cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=self._scrcpy_stderr_log,
+            bufsize=0,
+            env=env,
+            creationflags=scrcpy_creationflags,
+        )
+        self._scrcpy_proc = scrcpy_proc
+        assert scrcpy_proc.stdout is not None
+
+        try:
+            self._proc = self._spawn_ffmpeg_passthrough(scrcpy_proc.stdout)
+        except BaseException:
+            # ffmpeg failed to start: kill scrcpy before re-raising so we don't
+            # leak a recording process.
+            self._terminate_scrcpy()
+            raise
+
+        # Close our copy of scrcpy's stdout — ffmpeg now owns the read end. If
+        # we kept it open, ffmpeg wouldn't see EOF when scrcpy exits and would
+        # wait forever for more data.
+        try:
+            scrcpy_proc.stdout.close()
+        except OSError:
+            pass
+
+        self._started.set()
+
+        # Block until stop. Also bail early if either child dies on its own
+        # (device disconnected, scrcpy auth dialog dismissed, etc.).
+        while not self._stop.is_set():
+            if scrcpy_proc.poll() is not None:
+                # Promote unclean exit to a session-level error so the user
+                # sees it. Code 0 = graceful, anything else = device/auth fail.
+                if scrcpy_proc.returncode != 0:
+                    raise RuntimeError(
+                        f"scrcpy exited with code {scrcpy_proc.returncode}; "
+                        f"see {self._scrcpy_stderr_log.name}"
+                    )
+                break
+            if self._proc is not None and self._proc.poll() is not None:
+                # Same logic, ffmpeg side.
+                if self._proc.returncode != 0:
+                    raise RuntimeError(
+                        f"ffmpeg exited with code {self._proc.returncode}"
+                    )
+                break
+            if self._stop.wait(timeout=0.25):
+                break
+
+    def _spawn_ffmpeg_passthrough(self, stdin_pipe) -> subprocess.Popen:
+        """ffmpeg that copies an already-encoded container (no re-encoding).
+
+        Reads MKV from ``stdin_pipe`` (scrcpy's stdout), remuxes to mp4 with
+        ``-c copy`` + ``+faststart`` so the result plays straight from a
+        ``file://`` link in the viewer.
+        """
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Note: we share the GUI/WGC stderr log handle name pattern so users
+        # can find both ffmpeg logs the same way.
+        self._stderr_log = open(str(self.output_path) + ".ffmpeg.log", "wb")
+        cmd = [
+            get_ffmpeg_exe(),
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-y",
+            "-f", "matroska",
+            "-i", "-",
+            "-c", "copy",
+            "-movflags", "+faststart",
+            str(self.output_path),
+        ]
+        return subprocess.Popen(
+            cmd,
+            stdin=stdin_pipe,
+            stdout=subprocess.DEVNULL,
+            stderr=self._stderr_log,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW")
+                else 0
+            ),
+        )
+
+    def _terminate_scrcpy(self) -> None:
+        """Politely stop scrcpy so the MKV stream closes with a proper footer.
+
+        On Windows ``subprocess.terminate`` is a hard TerminateProcess, which
+        truncates the recording. We send CTRL_BREAK_EVENT instead — that's
+        equivalent to the user hitting Ctrl+C in a scrcpy console, and scrcpy
+        cleanly writes the EBML close + flushes its output buffer.
+        """
+        proc = self._scrcpy_proc
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            if hasattr(signal, "CTRL_BREAK_EVENT"):
+                os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+            else:
+                proc.terminate()
+        except (OSError, ValueError):
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+                proc.wait(timeout=3)
+            except OSError:
+                pass
+
+    def _close_scrcpy(self) -> None:
+        self._terminate_scrcpy()
+        self._scrcpy_proc = None
+        if self._scrcpy_stderr_log is not None:
+            try:
+                self._scrcpy_stderr_log.close()
+            except OSError:
+                pass
+            self._scrcpy_stderr_log = None

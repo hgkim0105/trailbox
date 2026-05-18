@@ -63,6 +63,20 @@ Source: "{#DistDir}\Trailbox.exe";     DestDir: "{app}"; Flags: ignoreversion; C
 Source: "{#DistDir}\Trailbox-mcp.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: mcp
 Source: "{#DistDir}\Trailbox-hub.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: hub
 
+; Android capture tooling. Files are sourced from tools/android/{platform-tools,scrcpy}/
+; relative to the repo root and flattened into {app}\bin\ so core.adb's
+; bin/<name> lookup works the same in both frozen+installed and frozen+_MEIPASS
+; modes. skipifsourcedoesntexist keeps the installer building even when the
+; developer hasn't populated tools/android/ yet (the resulting .exe just can't
+; do Android capture).
+Source: "..\tools\android\platform-tools\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gui
+Source: "..\tools\android\scrcpy\*";          DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gui
+
+; Third-party attribution for the Android tooling we bundle. Both are
+; Apache-2.0. The installer succeeds without it but produced binaries should
+; ship the NOTICE alongside.
+Source: "..\tools\android\NOTICE.txt"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist; Components: gui
+
 [Dirs]
 ; Make sure the GUI's output dir + Hub data dir exist.
 Name: "{app}\output";   Components: gui

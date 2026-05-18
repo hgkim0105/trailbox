@@ -13,3 +13,8 @@ dist/
 # Hub server runtime data + .env
 hub_data/
 .env
+
+# Bundled Android tooling (developer drops the platform-tools + scrcpy
+# release zips here before building; binaries are too large to track).
+tools/android/platform-tools/
+tools/android/scrcpy/

@@ -37,8 +37,8 @@ from PyQt6.QtWidgets import (
 # IMPORTANT: screen_recorder (dxcam/comtypes) must import before audio_recorder
 # (soundcard). soundcard initializes COM with a different threading mode, which
 # makes the later comtypes init fail with "thread mode already set".
-from core.screen_recorder import ScreenRecorder, WindowTarget
-from core.system_info import gather as gather_system_info
+from core.screen_recorder import AndroidDeviceTarget, ScreenRecorder, WindowTarget
+from core.system_info import collect_android_info, gather as gather_system_info
 from core.audio_recorder import AudioRecorder
 from core.global_hotkey import GlobalHotkey
 from core.input_recorder import InputRecorder
@@ -136,6 +136,111 @@ class TrailboxWindow(QMainWindow):
             QMessageBox.warning(self, "Trailbox", "캡처할 창을 선택하세요.")
             return
 
+        # ---- Android branch ----
+        # Resolve foreground package + audio capability up-front so the
+        # session_id reflects the actual app, and so we don't hand scrcpy a
+        # capture_audio=True target on Android <11 (which would just fail).
+        if isinstance(target, AndroidDeviceTarget):
+            from core import adb as _adb
+
+            try:
+                package = target.package or _adb.get_foreground_package(target.serial)
+            except Exception:  # noqa: BLE001 - probe is best-effort
+                package = None
+            package = package or "unknown"
+
+            try:
+                sdk = _adb.get_android_sdk(target.serial)
+            except Exception:  # noqa: BLE001
+                sdk = None
+            audio_on_request = self.launcher.audio_enabled()
+            # Android 11 == API level 30; output capture requires that.
+            capture_audio = audio_on_request and (sdk is None or sdk >= 30)
+            target = AndroidDeviceTarget(
+                serial=target.serial,
+                package=package,
+                capture_audio=capture_audio,
+            )
+
+            # Friendly session-id stem: "android_<serial>_<pkg>"; the safe-name
+            # regex in Session strips anything not [A-Za-z0-9_.-].
+            stem = f"android_{target.serial}_{package}"
+
+            session = Session(
+                exe_path=None,
+                log_dir=None,
+                output_root=OUTPUT_ROOT,
+                target_pid=None,
+                app_name=stem,
+            )
+            try:
+                session_id = session.start()
+            except OSError as e:
+                QMessageBox.critical(self, "Trailbox", f"세션 폴더 생성 실패:\n{e}")
+                return
+
+            self._session = session
+            max_fps = self.launcher.capture_fps()
+
+            # Device-side snapshot replaces the host PC profile for Android
+            # sessions; same JSON shape so the viewer stays branch-free.
+            try:
+                self._system_info = collect_android_info(target.serial)
+            except Exception:  # noqa: BLE001
+                self._system_info = {"capture": "android"}
+
+            t0_perf = time.perf_counter()
+
+            # Direct-to-FINAL_NAME because scrcpy already remuxes a single
+            # video+audio container; the post_mux step in stop is skipped
+            # naturally when VIDEO_TMP doesn't exist on disk.
+            screen_recorder = ScreenRecorder(
+                output_path=session.dir / FINAL_NAME,
+                target=target,
+                max_fps=max_fps,
+                frames_log_path=None,  # scrcpy path doesn't expose per-frame timing
+            )
+            try:
+                screen_recorder.start()
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.critical(self, "Trailbox", f"화면 녹화 시작 실패:\n{e}")
+                session.finalize(
+                    extra={"aborted": True, "error": str(e), "max_fps": max_fps}
+                )
+                self._session = None
+                return
+            self._screen_recorder = screen_recorder
+
+            # Audio/logs/inputs/metrics for Android arrive in later phases —
+            # leave them None so stop() short-circuits cleanly.
+            self._audio_recorder = None
+            self._log_collector = None
+            self._input_recorder = None
+            self._metrics_recorder = None
+            self._metrics_target_pid = None
+            self._metrics_target_name = ""
+
+            self.recorder.set_recording(True)
+            self.recorder.set_session_id(session_id)
+            audio_status = (
+                "오디오 ON (scrcpy output)"
+                if capture_audio
+                else ("오디오 OFF" if not audio_on_request else "오디오 OFF (Android 10 이하)")
+            )
+            self.statusBar().showMessage(
+                f"녹화 시작: {session.dir} (Android {target.serial} / {package}, "
+                f"max {max_fps}fps, {audio_status})",
+                5000,
+            )
+
+            self._overlay = RecordingOverlay(stop_hotkey_label=STOP_HOTKEY_LABEL)
+            self._overlay.begin()
+            self._stop_hotkey = GlobalHotkey(STOP_HOTKEY)
+            self._stop_hotkey.triggered.connect(self._on_stop_requested)
+            self._stop_hotkey.start()
+            return
+
+        # ---- Desktop (monitor / window) branch ----
         exe_path = self.launcher.exe_path()
         if not exe_path:
             info = self.launcher.selected_window_info()

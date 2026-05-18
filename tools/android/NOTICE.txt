@@ -1,0 +1,16 @@
+Trailbox bundles two third-party command-line tools to enable Android
+device capture. Both are redistributed under their original licenses.
+
+  Android Debug Bridge (adb)
+  --------------------------
+  Part of the Android SDK Platform-Tools, published by Google LLC.
+  Licensed under the Apache License, Version 2.0.
+  Source: https://developer.android.com/tools/releases/platform-tools
+  License: https://www.apache.org/licenses/LICENSE-2.0
+
+  scrcpy
+  ------
+  Copyright (C) Genymobile / Romain Vimont.
+  Licensed under the Apache License, Version 2.0.
+  Source: https://github.com/Genymobile/scrcpy
+  License: https://www.apache.org/licenses/LICENSE-2.0

@@ -53,6 +53,29 @@ $env:TRAILBOX_HUB_TOKEN = "<token>"
 
 ffmpeg 바이너리는 `imageio-ffmpeg` 가 번들 — `Trailbox.exe` 는 녹화에, `Trailbox-mcp.exe` / `Trailbox-hub.exe` 는 `get_frame_at` 프레임 추출에 사용.
 
+### Android 캡처 바이너리 번들링
+
+`Trailbox.exe` 가 Android 디바이스를 잡으려면 `adb` + `scrcpy` 바이너리가 번들되어 있어야 합니다. 빌드 전에 다음을 한 번 준비:
+
+```
+tools/android/
+├── platform-tools/      # Google platform-tools zip 의 압축 해제 내용
+│   ├── adb.exe
+│   ├── AdbWinApi.dll
+│   └── AdbWinUsbApi.dll
+└── scrcpy/              # scrcpy Windows release zip 의 압축 해제 내용
+    ├── scrcpy.exe
+    ├── scrcpy-server.jar
+    └── (그 외 동봉된 DLL 들)
+```
+
+- **platform-tools**: <https://developer.android.com/tools/releases/platform-tools>
+- **scrcpy 2.4 이상**: <https://github.com/Genymobile/scrcpy/releases> (`--record=-` 안정성 때문)
+
+두 폴더 모두 `.gitignore` 에 들어가 있으니 커밋 걱정 없음. `build.py` 가 자동으로 감지해 `--add-binary` 로 `bin/` 에 평탄화해 넣고, 인스톨러도 같은 자리에 설치합니다. `tools/android/` 가 비어 있으면 빌드는 그대로 진행되되 GUI 의 Android 라디오는 런타임에 "adb.exe not found" 에러를 띄웁니다.
+
+선택: `tools/android/NOTICE.txt` 에 두 도구의 Apache-2.0 attribution 을 적어 두면 인스톨러가 함께 배포합니다.
+
 ---
 
 ## 출력 구조
