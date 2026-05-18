@@ -362,6 +362,11 @@ class ScreenRecorder:
             stdout=subprocess.DEVNULL,
             stderr=self._stderr_log,
             bufsize=0,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW")
+                else 0
+            ),
         )
 
     def _close_ffmpeg(self) -> None:

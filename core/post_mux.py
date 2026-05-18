@@ -39,4 +39,9 @@ def mux_av(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=log,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW")
+                else 0
+            ),
         )
