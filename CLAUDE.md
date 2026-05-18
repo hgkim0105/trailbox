@@ -29,6 +29,20 @@ There is currently no test suite. Verification is via the GUI or by running a se
 
 If you spawn the GUI to test, prefer `run_in_background=true` — it's a blocking event loop. Confirm it came up with `Get-Process python | Where-Object { $_.MainWindowTitle -like "*Trailbox*" }`.
 
+## Releasing (keep `__version__`, tag, and binaries in lockstep)
+
+`main.py.__version__` is the source of truth for the running app — `session_info.system.trailbox_version` in `session_meta.json` (via `core/system_info.py`) and the viewer header overlay both read from it. If it lags behind the latest git tag, every session recorded with that build reports the wrong version in its own meta. This has already happened once (the v0.1.7→v0.2.3 drift) — don't let it recur.
+
+Release flow, in this order:
+
+1. Bump `__version__` in `main.py` to the target version (`"0.2.4"`, no `v` prefix).
+2. Commit the bump.
+3. `git tag vX.Y.Z` on that commit, push commit + tag together.
+4. `build.py` to produce `dist/Trailbox{,-mcp,-hub,-Setup}.exe` — **must run after step 1** so the bundled `main.py` carries the new version. Build artifacts created before the bump will report the old version forever.
+5. `gh release create vX.Y.Z` attaching all 4 binaries.
+
+If you find `__version__` already lagging the latest tag, fix forward (bump + new release) rather than retroactively moving the existing tag — published .exe SHA-sums shouldn't change under a fixed tag name.
+
 ## Architecture: the single rule that holds everything together
 
 **Every recorder is keyed off a single `t0_perf` captured by `TrailboxWindow._on_start_requested` and is identified to downstream tools by `t_video_s = perf_counter() - t0_perf`.**
