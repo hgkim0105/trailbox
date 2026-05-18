@@ -137,3 +137,42 @@ def gather() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     return info
+
+
+def collect_android_info(serial: str) -> dict[str, Any]:
+    """Best-effort device-side snapshot for an Android capture session.
+
+    Mirrors the shape of ``gather()`` so the viewer / MCP tools that index
+    ``system_meta.system.cpu.*`` etc. keep working without a branch. Anything
+    we can't read (root jail, permission, USB blip) becomes None / empty.
+    """
+    # Local import to keep this module's import-time deps unchanged.
+    from core import adb
+
+    out: dict[str, Any] = {"capture": "android"}
+    out["os"] = {
+        "platform": "Android",
+        "release": adb.get_android_version(serial) or "",
+        "sdk": adb.get_android_sdk(serial),
+    }
+    out["cpu"] = {
+        "name": adb.getprop(serial, "ro.product.cpu.abi") or "",
+        "logical_cores": adb.get_cpu_count(serial),
+    }
+    size = adb.get_screen_size(serial)
+    out["displays"] = (
+        [{"native_width": size[0], "native_height": size[1], "primary": True}]
+        if size
+        else []
+    )
+    out["android"] = {
+        "serial": serial,
+        "model": adb.get_device_model(serial) or "",
+        "manufacturer": adb.get_device_manufacturer(serial) or "",
+    }
+    try:
+        from main import __version__ as trailbox_version
+        out["trailbox_version"] = trailbox_version
+    except Exception:  # noqa: BLE001
+        pass
+    return out
