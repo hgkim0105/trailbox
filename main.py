@@ -159,10 +159,12 @@ class TrailboxWindow(QMainWindow):
             backend = target.backend
             # Audio: scrcpy backend on Android 11+ (API 30) captures system
             # output; screenrecord backend has no audio support at all.
-            if backend == "scrcpy":
-                capture_audio = target.capture_audio and (sdk is None or sdk >= 30)
-            else:
+            # "auto" might resolve to either at runtime — set the flag as if
+            # scrcpy will run; the screenrecord path ignores it anyway.
+            if backend == "screenrecord":
                 capture_audio = False
+            else:  # scrcpy or auto
+                capture_audio = target.capture_audio and (sdk is None or sdk >= 30)
             target = AndroidDeviceTarget(
                 serial=target.serial,
                 package=package,
@@ -294,7 +296,9 @@ class TrailboxWindow(QMainWindow):
 
             self.recorder.set_recording(True)
             self.recorder.set_session_id(session_id)
-            if capture_audio:
+            if backend == "auto":
+                audio_status = "오디오 = backend 결과에 따라 (auto)"
+            elif capture_audio:
                 audio_status = "오디오 ON (scrcpy output)"
             elif backend == "screenrecord":
                 audio_status = "오디오 OFF (screenrecord 한계)"

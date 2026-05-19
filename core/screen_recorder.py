@@ -32,6 +32,15 @@ from imageio_ffmpeg import get_ffmpeg_exe
 from windows_capture import Frame, InternalCaptureControl, WindowsCapture
 
 
+class _ScrcpyNoFramesError(RuntimeError):
+    """Raised by the auto-backend probe when scrcpy stays silent.
+
+    Distinct from a generic ``RuntimeError`` so the dispatcher only catches
+    the "scrcpy is bricked, try screenrecord" case and lets every other
+    scrcpy failure propagate normally.
+    """
+
+
 @dataclass(frozen=True)
 class MonitorTarget:
     index: int = 0
@@ -136,10 +145,7 @@ class ScreenRecorder:
         try:
             self._open_frame_log()
             if isinstance(self.target, AndroidDeviceTarget):
-                if self.target.backend == "screenrecord":
-                    self._run_screenrecord(self.target)
-                else:
-                    self._run_scrcpy(self.target)
+                self._run_android_dispatch(self.target)
             elif isinstance(self.target, WindowTarget):
                 self._run_window(self.target)
             else:
@@ -153,6 +159,71 @@ class ScreenRecorder:
             # EOF on stdin and finalize the mp4 footer cleanly.
             self._close_scrcpy()
             self._close_ffmpeg()
+
+    # ---- Android backend dispatch with auto-fallback ----------------------
+
+    # Minimum file size that proves ffmpeg has written actual video frames
+    # (not just the mp4 container box header). Empirically a few seconds of
+    # 1080p h264 lands well above this; an MP4 with header-only is ~40 B.
+    _ANDROID_FIRST_FRAME_MIN_BYTES = 4096
+    _ANDROID_FIRST_FRAME_TIMEOUT_S = 3.0
+
+    def _run_android_dispatch(self, target: AndroidDeviceTarget) -> None:
+        """Pick scrcpy vs screenrecord per ``backend``, with optional auto.
+
+        ``backend == "auto"`` resolves at runtime in two layers:
+
+        1. **SDK gate** — probe the device's API level. Android 16+ (SDK 36+)
+           is known-broken for scrcpy 4.0's hidden-API path; skip straight
+           to screenrecord so we don't burn 3 s on a guaranteed failure.
+        2. **First-frame fallback** — for any other SDK, spawn scrcpy and
+           watch the output file. If it stays empty for
+           ``_ANDROID_FIRST_FRAME_TIMEOUT_S`` seconds, tear scrcpy down and
+           retry the session with screenrecord.
+
+        Explicit ``backend == "scrcpy"`` / ``"screenrecord"`` bypass auto.
+        """
+        backend = target.backend
+        if backend == "screenrecord":
+            self._run_screenrecord(target)
+            return
+        if backend == "scrcpy":
+            # User opted out of fallback — fail loud if scrcpy can't deliver.
+            self._run_scrcpy(target)
+            return
+
+        # backend == "auto"
+        from core import adb
+
+        sdk: int | None = None
+        try:
+            sdk = adb.get_android_sdk(target.serial)
+        except Exception:  # noqa: BLE001 - probe is best-effort
+            sdk = None
+
+        if sdk is not None and sdk >= 36:
+            self._run_screenrecord(target)
+            return
+
+        # Try scrcpy first. _run_scrcpy raises if it dies hard; we also
+        # check for the silent-no-frames case via the file-size probe.
+        try:
+            self._run_scrcpy(target, first_frame_check=True)
+        except _ScrcpyNoFramesError:
+            # Reset everything scrcpy touched so screenrecord starts clean.
+            self._close_scrcpy()
+            self._close_ffmpeg()
+            self._proc = None
+            self._scrcpy_proc = None
+            self._stderr_log = None
+            # Wipe the dead-header mp4 if it exists, so screenrecord's
+            # eventual replace() doesn't fight an open handle on Windows.
+            try:
+                if self.output_path.exists():
+                    self.output_path.unlink()
+            except OSError:
+                pass
+            self._run_screenrecord(target)
 
     def _open_frame_log(self) -> None:
         if self.frames_log_path is None:
@@ -420,7 +491,12 @@ class ScreenRecorder:
 
     # ---- scrcpy (Android) -------------------------------------------------
 
-    def _run_scrcpy(self, target: AndroidDeviceTarget) -> None:
+    def _run_scrcpy(
+        self,
+        target: AndroidDeviceTarget,
+        *,
+        first_frame_check: bool = False,
+    ) -> None:
         """Pipe scrcpy's MKV output into ffmpeg ``-c copy`` to produce mp4.
 
         scrcpy.exe ──stdout(mkv)──> ffmpeg.exe ──> screen.mp4
@@ -495,6 +571,41 @@ class ScreenRecorder:
             pass
 
         self._started.set()
+
+        # Optional first-frame probe used by the "auto" backend: if ffmpeg's
+        # output file doesn't grow past the MP4 container header within the
+        # timeout, scrcpy is silently failing (Android 16 / One UI 8 case)
+        # and the caller should hot-swap to screenrecord.
+        if first_frame_check:
+            deadline = time.perf_counter() + self._ANDROID_FIRST_FRAME_TIMEOUT_S
+            while time.perf_counter() < deadline:
+                if self._stop.is_set():
+                    break
+                if scrcpy_proc.poll() is not None:
+                    # scrcpy died during the probe — not the "no frames" case,
+                    # fall through to the main loop which will surface it.
+                    break
+                try:
+                    if (
+                        self.output_path.exists()
+                        and self.output_path.stat().st_size
+                        >= self._ANDROID_FIRST_FRAME_MIN_BYTES
+                    ):
+                        first_frame_check = False  # we're good
+                        break
+                except OSError:
+                    pass
+                time.sleep(0.2)
+            if first_frame_check:
+                # Timeout fired without any real frames. Tear scrcpy down and
+                # let the dispatcher catch this so it can retry with the
+                # screenrecord backend.
+                self._terminate_scrcpy()
+                raise _ScrcpyNoFramesError(
+                    "scrcpy did not emit frames within "
+                    f"{self._ANDROID_FIRST_FRAME_TIMEOUT_S:.1f}s "
+                    "(Android 16 / OEM-blocked hidden API?)"
+                )
 
         # Block until stop. Also bail early if either child dies on its own
         # (device disconnected, scrcpy auth dialog dismissed, etc.).

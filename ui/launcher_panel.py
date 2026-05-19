@@ -206,12 +206,16 @@ class LauncherPanel(QWidget):
         backend_row = QHBoxLayout()
         backend_row.addWidget(QLabel("영상 백엔드:"))
         self.android_backend_combo = QComboBox(self)
+        self.android_backend_combo.addItem(
+            "auto (SDK 감지 + 첫 프레임 폴백)", userData="auto",
+        )
         self.android_backend_combo.addItem("scrcpy (고화질 + 오디오)", userData="scrcpy")
         self.android_backend_combo.addItem(
             "screenrecord (Android 16+ 호환, 오디오 X, 3분/청크)",
             userData="screenrecord",
         )
         self.android_backend_combo.setToolTip(
+            "auto: SDK 36+ (Android 16+) 면 즉시 screenrecord. 그 외엔 scrcpy 시도 후 3초 안에 첫 프레임 없으면 screenrecord 로 자동 전환.\n"
             "scrcpy: 활발히 업데이트되는 Genymobile 도구. 영상+오디오. 단 OEM 정책에 막힐 수 있음 (Galaxy + One UI 8 등).\n"
             "screenrecord: Android 4.4+ 에 기본 내장된 Google 도구. 시스템 API 만 사용 → 막히는 케이스 적음. 오디오 미지원."
         )
@@ -304,12 +308,14 @@ class LauncherPanel(QWidget):
             device = self._selected_android_device()
             if device is None or not device.online:
                 return None
-            backend = self.android_backend_combo.currentData() or "scrcpy"
+            backend = self.android_backend_combo.currentData() or "auto"
             # Audio capture is decided by the backend (not the PC-side audio
             # checkbox — that's loopback, which doesn't apply here).
             # screenrecord never carries audio; scrcpy on Android <11 also
-            # can't (main.py downgrades after the SDK probe).
-            capture_audio = backend == "scrcpy"
+            # can't (main.py downgrades after the SDK probe). "auto" may
+            # resolve to either at runtime, so we leave it on and the
+            # screen recorder no-ops audio if it ends up using screenrecord.
+            capture_audio = backend in ("scrcpy", "auto")
             return AndroidDeviceTarget(
                 serial=device.serial,
                 capture_audio=capture_audio,
