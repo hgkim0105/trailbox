@@ -39,6 +39,9 @@ from PyQt6.QtWidgets import (
 # makes the later comtypes init fail with "thread mode already set".
 from core.screen_recorder import AndroidDeviceTarget, ScreenRecorder, WindowTarget
 from core.system_info import collect_android_info, gather as gather_system_info
+from core.android_input_recorder import AndroidInputRecorder
+from core.android_log_collector import AndroidLogCollector
+from core.android_metrics_recorder import AndroidMetricsRecorder
 from core.audio_recorder import AudioRecorder
 from core.global_hotkey import GlobalHotkey
 from core.input_recorder import InputRecorder
@@ -218,14 +221,71 @@ class TrailboxWindow(QMainWindow):
                 return
             self._screen_recorder = screen_recorder
 
-            # Audio/logs/inputs/metrics for Android arrive in later phases —
-            # leave them None so stop() short-circuits cleanly.
+            # scrcpy already muxes audio into the same MP4, so no separate
+            # AudioRecorder on this branch.
             self._audio_recorder = None
             self._log_collector = None
             self._input_recorder = None
             self._metrics_recorder = None
             self._metrics_target_pid = None
             self._metrics_target_name = ""
+
+            # Logcat → logs.jsonl + logs.vtt. Pid-filter to package_filter to
+            # keep noise down; falls back to whole-device capture if pidof
+            # can't resolve (e.g. app not foregrounded yet). Always on for
+            # Android — there's no per-app log-folder setting to honor.
+            try:
+                log_collector = AndroidLogCollector(
+                    serial=target.serial,
+                    output_dir=session.dir / "logs",
+                    t0_perf=t0_perf,
+                    package_filter=package if package != "unknown" else None,
+                )
+                log_collector.start()
+                self._log_collector = log_collector
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(
+                    self, "Trailbox", f"Android logcat 시작 실패 (계속 진행):\n{e}"
+                )
+
+            if self.launcher.input_enabled():
+                try:
+                    from core import adb as _adb_size
+                    screen_size = _adb_size.get_screen_size(target.serial)
+                except Exception:  # noqa: BLE001
+                    screen_size = None
+                try:
+                    input_recorder = AndroidInputRecorder(
+                        serial=target.serial,
+                        output_dir=session.dir / "inputs",
+                        t0_perf=t0_perf,
+                        screen_size=screen_size,
+                    )
+                    input_recorder.start()
+                    self._input_recorder = input_recorder
+                except Exception as e:  # noqa: BLE001
+                    QMessageBox.warning(
+                        self, "Trailbox",
+                        f"Android getevent 시작 실패 (계속 진행):\n{e}",
+                    )
+
+            if self.launcher.metrics_enabled() and package != "unknown":
+                try:
+                    metrics_recorder = AndroidMetricsRecorder(
+                        serial=target.serial,
+                        package=package,
+                        output_path=session.dir / "metrics" / "process.jsonl",
+                        t0_perf=t0_perf,
+                        interval_s=1.0,
+                    )
+                    metrics_recorder.start()
+                    self._metrics_recorder = metrics_recorder
+                    self._metrics_target_name = package
+                except Exception as e:  # noqa: BLE001
+                    QMessageBox.warning(
+                        self, "Trailbox",
+                        f"Android 텔레메트리 시작 실패 (계속 진행):\n{e}",
+                    )
 
             self.recorder.set_recording(True)
             self.recorder.set_session_id(session_id)
@@ -234,9 +294,12 @@ class TrailboxWindow(QMainWindow):
                 if capture_audio
                 else ("오디오 OFF" if not audio_on_request else "오디오 OFF (Android 10 이하)")
             )
+            log_status = "로그 ON" if self._log_collector else "로그 OFF"
+            input_status = "입력 ON" if self._input_recorder else "입력 OFF"
+            metrics_status = "메트릭 ON" if self._metrics_recorder else "메트릭 OFF"
             self.statusBar().showMessage(
                 f"녹화 시작: {session.dir} (Android {target.serial} / {package}, "
-                f"max {max_fps}fps, {audio_status})",
+                f"max {max_fps}fps, {audio_status}, {log_status}, {input_status}, {metrics_status})",
                 5000,
             )
 
