@@ -8,7 +8,7 @@ stdio at import time.
 """
 from __future__ import annotations
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 import sys
 
