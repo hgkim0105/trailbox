@@ -182,6 +182,12 @@ class TrailboxWindow(QMainWindow):
             self._session = session
             max_fps = self.launcher.capture_fps()
 
+            # Same transitional UI as the PC branch — scrcpy spin-up is
+            # also a 1-2s sync blocker, so without this the button click
+            # looks like a no-op.
+            self.recorder.set_transitioning("starting")
+            QApplication.processEvents()
+
             # Device-side snapshot replaces the host PC profile for Android
             # sessions; same JSON shape so the viewer stays branch-free.
             try:
@@ -208,6 +214,7 @@ class TrailboxWindow(QMainWindow):
                     extra={"aborted": True, "error": str(e), "max_fps": max_fps}
                 )
                 self._session = None
+                self.recorder.set_recording(False)
                 return
             self._screen_recorder = screen_recorder
 
