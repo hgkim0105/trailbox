@@ -1,7 +1,7 @@
 """Recorder panel: start/stop recording and show current session status."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QSettings, pyqtSignal
+from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QGroupBox,
@@ -24,6 +24,12 @@ class RecorderPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(400)
+        self._anim_timer.timeout.connect(self._tick_transition_anim)
+        self._anim_base = ""
+        self._anim_color = "#2c3e50"
+        self._anim_step = 0
         self._build_ui()
         self.set_recording(False)
 
@@ -90,6 +96,7 @@ class RecorderPanel(QWidget):
         return self.auto_upload_cb.isChecked()
 
     def set_recording(self, recording: bool) -> None:
+        self._stop_transition_anim()
         self.start_btn.setEnabled(not recording)
         self.stop_btn.setEnabled(recording)
         if recording:
@@ -102,6 +109,41 @@ class RecorderPanel(QWidget):
             self.status_label.setStyleSheet(
                 "QLabel { padding: 8px; font-weight: bold; color: #2c3e50; }"
             )
+
+    def set_transitioning(self, kind: str) -> None:
+        # "starting" / "stopping": disable both buttons, show an animated
+        # in-progress label so the user knows the click registered even
+        # though the actual start/stop (esp. post-mux on stop) is slow.
+        # The dot animation also keeps ticking while QTimer fires, giving
+        # a heartbeat unless the event loop is fully blocked (e.g. mid-mux).
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
+        if kind == "starting":
+            self._anim_base = "🟡 준비 중"
+            self._anim_color = "#d68910"
+        else:
+            self._anim_base = "⏳ 마무리 중 (영상 인코딩)"
+            self._anim_color = "#d68910"
+        self._anim_step = 0
+        self._render_transition_frame()
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+
+    def _tick_transition_anim(self) -> None:
+        self._anim_step = (self._anim_step + 1) % 4
+        self._render_transition_frame()
+
+    def _render_transition_frame(self) -> None:
+        dots = "·" * self._anim_step
+        # Pad to a fixed width so the label doesn't jitter as dots grow.
+        self.status_label.setText(f"{self._anim_base}{dots:<3}")
+        self.status_label.setStyleSheet(
+            f"QLabel {{ padding: 8px; font-weight: bold; color: {self._anim_color}; }}"
+        )
+
+    def _stop_transition_anim(self) -> None:
+        if self._anim_timer.isActive():
+            self._anim_timer.stop()
 
     def set_session_id(self, session_id: str | None) -> None:
         self.session_label.setText(f"세션 ID: {session_id}" if session_id else "")

@@ -86,7 +86,9 @@ Name: "{app}\hub_data"; Components: hub
 Name: "{group}\Trailbox";       Filename: "{app}\Trailbox.exe";       Components: gui
 Name: "{group}\Trailbox Hub";   Filename: "{app}\start-hub.bat";      WorkingDir: "{app}"; IconFilename: "{app}\Trailbox-hub.exe"; Components: hub
 Name: "{group}\Uninstall Trailbox"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\Trailbox"; Filename: "{app}\Trailbox.exe"; Tasks: desktopicon; Components: gui
+; {autodesktop} = {userdesktop} under lowest privileges, {commondesktop} when elevated.
+; Hardcoding {commondesktop} fails silently for non-admin installs (the v0.2.5 desktop-shortcut bug).
+Name: "{autodesktop}\Trailbox"; Filename: "{app}\Trailbox.exe"; Tasks: desktopicon; Components: gui
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut for Trailbox"; GroupDescription: "Additional shortcuts:"; Components: gui

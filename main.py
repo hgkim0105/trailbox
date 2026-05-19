@@ -268,6 +268,12 @@ class TrailboxWindow(QMainWindow):
         max_fps = self.launcher.capture_fps()
         audio_on = self.launcher.audio_enabled()
 
+        # Show transitional UI ("🟡 준비 중…") + flush the repaint before the
+        # synchronous recorder spin-up runs. Without processEvents the button
+        # press appears to do nothing for ~1-2s until set_recording(True) below.
+        self.recorder.set_transitioning("starting")
+        QApplication.processEvents()
+
         # Snapshot host PC profile once at start (OS/CPU/RAM/GPU/displays).
         # Stashed on self so finalize can include it in the meta JSON.
         self._system_info = gather_system_info()
@@ -291,6 +297,8 @@ class TrailboxWindow(QMainWindow):
                 extra={"aborted": True, "error": str(e), "max_fps": max_fps}
             )
             self._session = None
+            # Roll the panel back from "준비 중…" to "대기 중".
+            self.recorder.set_recording(False)
             return
         self._screen_recorder = screen_recorder
 
@@ -387,6 +395,13 @@ class TrailboxWindow(QMainWindow):
             self.recorder.set_recording(False)
             return
 
+        # "⏳ 마무리 중…" before the recorder teardown + post-mux begins.
+        # processEvents flushes the repaint; the dot animation will tick
+        # in the gaps between sync steps below (it freezes during mux_av,
+        # but the static label is enough to tell the user we're working).
+        self.recorder.set_transitioning("stopping")
+        QApplication.processEvents()
+
         # Immediately tear down the overlay + hotkey so the user gets visual
         # feedback before the (potentially multi-second) mux/finalize chain.
         if self._overlay is not None:
@@ -459,6 +474,10 @@ class TrailboxWindow(QMainWindow):
         video_tmp = session.dir / VIDEO_TMP
         audio_tmp = session.dir / AUDIO_TMP
         final = session.dir / FINAL_NAME
+
+        # Pump events so the "⏳ 마무리 중…" animation advances a frame
+        # before ffmpeg blocks the event loop during mux_av.
+        QApplication.processEvents()
 
         if video_tmp.exists():
             if audio_tmp.exists() and audio_error is None:

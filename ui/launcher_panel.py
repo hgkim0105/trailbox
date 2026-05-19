@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -466,7 +467,14 @@ class LauncherPanel(QWidget):
     def _on_click_picked(self, hwnd: int) -> None:
         self._restore_after_pick()
         if not self.select_hwnd(hwnd):
-            QMessageBox.warning(self, "Trailbox", "선택한 창을 캡처 대상으로 등록할 수 없습니다.")
+            self._warn_on_top(
+                "선택한 창을 캡처 대상으로 등록할 수 없습니다.\n\n"
+                "다음 중 하나일 수 있어요:\n"
+                "• 관리자 권한으로 실행된 창 (Trailbox 도 관리자 권한으로 재실행 필요)\n"
+                "• 보호 모드 / DRM 콘텐츠 창 (Netflix, 일부 보안 SW)\n"
+                "• 자식 창이거나 타이틀이 없는 창 (목록 필터에서 제외됨)\n\n"
+                "다시 시도하거나 «모니터 캡처» 모드를 사용하세요."
+            )
 
     def _on_click_cancelled(self) -> None:
         self._restore_after_pick()
@@ -485,12 +493,43 @@ class LauncherPanel(QWidget):
             self._click_picker = None
         top = self.window()
         if top is not None:
-            top.showNormal()
-            top.activateWindow()
+            # After the picker click went to a foreign window, that window
+            # owns the foreground. Windows' no-steal-focus rule means a
+            # bare showNormal()+activateWindow() can leave Trailbox behind
+            # the picked app — including any QMessageBox we open next.
+            # setWindowState clears the Minimized bit + asserts Active in
+            # one shot; QApplication.alert flashes the taskbar as a fallback
+            # when Windows still refuses focus transfer.
+            top.setWindowState(
+                (top.windowState() & ~Qt.WindowState.WindowMinimized)
+                | Qt.WindowState.WindowActive
+            )
+            top.show()
             top.raise_()
+            top.activateWindow()
+            QApplication.alert(top)
         self.pick_status.setText(f"(또는 단축키 {HOTKEY_LABEL})")
         self.pick_status.setStyleSheet("QLabel { color: #666; }")
         self.click_pick_btn.setEnabled(self.window_radio.isChecked())
+
+    def _warn_on_top(self, text: str) -> None:
+        """Show a warning that surfaces above other windows.
+
+        Used after the click-picker path because Trailbox often can't take
+        foreground from the freshly-clicked target app, and a normal
+        QMessageBox would open behind that app (or behind a still-minimized
+        Trailbox) — the user would perceive the click as a no-op.
+        """
+        top = self.window() or self
+        box = QMessageBox(
+            QMessageBox.Icon.Warning,
+            "Trailbox",
+            text,
+            QMessageBox.StandardButton.Ok,
+            top,
+        )
+        box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        box.exec()
 
     def _browse_exe(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
