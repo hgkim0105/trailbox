@@ -75,68 +75,76 @@ def _parse_pidof(out: str) -> int | None:
         return None
 
 
-_TOP_HEADER_RE = re.compile(r"^\s*PID\s+", re.IGNORECASE)
+# Memory-shaped token: digits (+ optional decimal) + optional K/M/G suffix.
+_MEM_RE = re.compile(r"^(\d+(?:\.\d+)?)([KMG])?$", re.IGNORECASE)
+# Process status from `top` is always a single capital letter from this set.
+_STATUS_TOKENS = frozenset({"S", "R", "D", "T", "Z", "I"})
+
+
+def _mem_to_mb(token: str) -> float | None:
+    """Parse a `top`-style memory token (e.g. ``26G``, ``482M``, ``1024`` -> KB)
+    into megabytes. Returns None if the token isn't memory-shaped."""
+    m = _MEM_RE.match(token)
+    if not m:
+        return None
+    val = float(m.group(1))
+    suffix = (m.group(2) or "K").upper()
+    if suffix == "K":
+        return val / 1024.0
+    if suffix == "M":
+        return val
+    return val * 1024.0  # G
 
 
 def _parse_top_row(out: str, pid: int) -> tuple[float, float] | None:
-    """Return (cpu_pct_per_core, rss_mb) for ``pid`` in toybox-top output.
+    """Return ``(cpu_pct_per_core, rss_mb)`` for ``pid`` in toybox-top output.
 
-    Android's toybox ``top -p <pid> -n 1 -b`` prints a header line, then
-    one row per process. Columns vary slightly between OEMs but the layout
-    matches busybox/toybox conventions: PID USER PR NI VIRT RES SHR S %CPU
-    %MEM TIME+ ARGS. Some builds elide PR/NI; we anchor on the PID column
-    and pick %CPU as "the first percent-shaped number" and RES as the
-    SI-suffixed memory column right before it.
+    Layout we expect (toybox / busybox, with or without the ``-q`` header
+    suppression flag):
+
+        PID USER PR NI VIRT RES SHR  S  %CPU %MEM   TIME+  ARGS
+        22932 u0_a254 0 -20 26G 482M 271M S  0.0   6.2   0:52.52  com...
+
+    Picking the right RES is the tricky part — the row also has VIRT and
+    SHR that match the same memory regex. We anchor on the **status
+    column** (single letter S/R/D/T/Z/I): RES is the LAST memory token
+    BEFORE status, %CPU is the FIRST float AFTER status. That ordering
+    constraint is stable across the OEM variants we've seen.
+
+    No header lookup — works equally with ``top -b -q`` (data-only) and
+    plain ``top -b`` (header + data).
     """
-    lines = out.splitlines() if out else []
-    header_idx: int | None = None
-    for i, ln in enumerate(lines):
-        if _TOP_HEADER_RE.match(ln):
-            header_idx = i
-            break
-    if header_idx is None:
+    if not out:
         return None
-
-    for ln in lines[header_idx + 1:]:
+    for ln in out.splitlines():
         parts = ln.split()
         if not parts:
             continue
         try:
-            row_pid = int(parts[0])
+            if int(parts[0]) != pid:
+                continue
         except ValueError:
             continue
-        if row_pid != pid:
+
+        # Anchor on the STATUS column (single letter). In toybox top the
+        # surrounding columns are fixed: ... VIRT RES SHR <S> %CPU %MEM ...
+        # so RES = parts[status_idx-2] and %CPU = parts[status_idx+1]. We
+        # don't trust an absolute index because PR/NI are sometimes elided.
+        status_idx: int | None = None
+        for i, tok in enumerate(parts):
+            if tok in _STATUS_TOKENS and i >= 3:
+                status_idx = i
+                break
+        if status_idx is None or status_idx + 1 >= len(parts):
             continue
-        # Walk the row to pick out RES (with k/m/g suffix) + %CPU.
-        rss_mb: float | None = None
-        cpu_pct: float | None = None
-        for tok in parts[1:]:
-            if rss_mb is None:
-                m = re.match(r"^(\d+(?:\.\d+)?)([KMG])?$", tok, re.IGNORECASE)
-                if m:
-                    val = float(m.group(1))
-                    suffix = (m.group(2) or "K").upper()
-                    if suffix == "K":
-                        candidate = val / 1024.0
-                    elif suffix == "M":
-                        candidate = val
-                    else:
-                        candidate = val * 1024.0
-                    # Heuristic: ignore tiny ints that are PR/NI/SHR (< ~32 K).
-                    # Real RES is usually ≥ a few MB for Android apps.
-                    if candidate >= 0.5:
-                        rss_mb = candidate
-                    continue
-            if cpu_pct is None:
-                try:
-                    f = float(tok)
-                except ValueError:
-                    continue
-                # %CPU usually shows up as a float column right after the
-                # status char. Bound-check so we don't grab %MEM by accident.
-                if 0.0 <= f <= 4000.0:
-                    cpu_pct = f
-        if cpu_pct is None or rss_mb is None:
+
+        rss_mb = _mem_to_mb(parts[status_idx - 2]) if status_idx >= 2 else None
+        try:
+            cpu_pct = float(parts[status_idx + 1])
+        except ValueError:
+            cpu_pct = None
+
+        if rss_mb is None or cpu_pct is None:
             return None
         return cpu_pct, rss_mb
     return None

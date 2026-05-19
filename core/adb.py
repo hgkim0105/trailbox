@@ -197,24 +197,46 @@ def _shell(serial: str, command: str, timeout: float = _PROBE_TIMEOUT_S) -> str 
 
 
 _FOCUS_RE = re.compile(r"[uU]=\d+\s+([^\s/]+)/")
+_RESUMED_RE = re.compile(r"ResumedActivity[:=].*?\bu\d+\s+([^\s/]+)/", re.IGNORECASE)
 
 
 def get_foreground_package(serial: str) -> str | None:
-    """Best-effort foreground package name via ``dumpsys window``.
+    """Best-effort foreground package via three fallback strategies.
 
-    Looks for ``mCurrentFocus`` / ``mFocusedApp`` lines; both formats include
-    a ``<package>/<activity>`` token we can carve. Returns None if neither
-    is parseable (locked screen, no focused app, permission denied).
+    Tried in order, returning the first non-empty hit:
+
+    1. ``dumpsys activity activities`` — yields ``topResumedActivity=...
+       <pkg>/<activity>`` on Android 10+. Most reliable in modern AOSP.
+    2. ``dumpsys window`` (no ``windows`` subarg) — Samsung One UI 8 / 16+
+       returns ``mCurrentFocus`` here but NOT under ``dumpsys window
+       windows``, which is why the previous single-source query was empty
+       on Galaxy Tab S9 / One UI 8.
+    3. ``dumpsys window windows`` — legacy AOSP path, kept as last resort
+       for older or stripped Android variants.
+
+    Returns None only if every probe failed.
     """
-    out = _shell(serial, "dumpsys window windows")
-    if not out:
-        return None
-    for line in out.splitlines():
-        s = line.strip()
-        if "mCurrentFocus" in s or "mFocusedApp" in s:
-            m = _FOCUS_RE.search(s)
-            if m:
-                return m.group(1)
+    out = _shell(serial, "dumpsys activity activities")
+    if out:
+        for line in out.splitlines():
+            if "ResumedActivity" in line or "topResumedActivity" in line:
+                m = _RESUMED_RE.search(line)
+                if m:
+                    return m.group(1)
+                m = _FOCUS_RE.search(line)
+                if m:
+                    return m.group(1)
+
+    for cmd in ("dumpsys window", "dumpsys window windows"):
+        out = _shell(serial, cmd)
+        if not out:
+            continue
+        for line in out.splitlines():
+            s = line.strip()
+            if "mCurrentFocus" in s or "mFocusedApp" in s:
+                m = _FOCUS_RE.search(s)
+                if m:
+                    return m.group(1)
     return None
 
 

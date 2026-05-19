@@ -597,7 +597,14 @@ class TrailboxWindow(QMainWindow):
                 "metric_samples": metric_samples,
                 "metrics_target_pid": self._metrics_target_pid,
                 "metrics_target_name": self._metrics_target_name,
-                "cpu_cores": os.cpu_count(),
+                # For Android sessions the cores belong to the *device*, not
+                # the host PC running Trailbox. Source from the system_info
+                # snapshot (which is device-side on Android, host on PC) so
+                # the viewer header reflects whichever was actually captured.
+                "cpu_cores": (
+                    (self._system_info.get("cpu") or {}).get("logical_cores")
+                    or os.cpu_count()
+                ),
                 **({"screen_error": str(recorder_error)} if recorder_error else {}),
                 **({"audio_error": str(audio_error)} if audio_error else {}),
                 **({"mux_error": str(mux_error)} if mux_error else {}),
