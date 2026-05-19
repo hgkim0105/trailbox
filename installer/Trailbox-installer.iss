@@ -11,7 +11,7 @@
 ; Output: ../dist/Trailbox-Setup.exe
 
 #define MyAppName      "Trailbox"
-#define MyAppVersion   "0.2.5"
+#define MyAppVersion   "0.2.6"
 #define MyAppPublisher "hgkim0105"
 #define MyAppURL       "https://github.com/hgkim0105/trailbox"
 #define DistDir        "..\dist"
