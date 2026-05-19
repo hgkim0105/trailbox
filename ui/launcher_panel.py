@@ -230,14 +230,22 @@ class LauncherPanel(QWidget):
         cap_layout.addLayout(audio_row)
 
         input_row = QHBoxLayout()
-        self.input_check = QCheckBox("키보드/마우스 입력 기록", self)
+        self.input_check = QCheckBox("입력 기록", self)
+        self.input_check.setToolTip(
+            "PC: 키보드/마우스 (pynput)\n"
+            "Android: 터치 + 볼륨/전원 키 (adb getevent)"
+        )
         self.input_check.setChecked(True)
         input_row.addWidget(self.input_check)
         input_row.addStretch(1)
         cap_layout.addLayout(input_row)
 
         metrics_row = QHBoxLayout()
-        self.metrics_check = QCheckBox("프로세스 텔레메트리 (CPU/메모리/스레드)", self)
+        self.metrics_check = QCheckBox("프로세스 텔레메트리", self)
+        self.metrics_check.setToolTip(
+            "PC: CPU/메모리/스레드/GPU (psutil + PDH)\n"
+            "Android: CPU/RSS + jank 카운트 + 프레임 타임 95/99p (adb top + dumpsys gfxinfo)"
+        )
         self.metrics_check.setChecked(True)
         metrics_row.addWidget(self.metrics_check)
         metrics_row.addStretch(1)
