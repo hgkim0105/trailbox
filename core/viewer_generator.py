@@ -209,6 +209,7 @@ __TRACKS_HTML__
   const specsGrid = document.getElementById('specs-grid');
   const specsDetails = document.getElementById('specs-details');
   const sys = meta.system || {};
+  const isAndroid = sys.capture === 'android' || !!sys.android;
   if (!Object.keys(sys).length) {
     specsDetails.style.display = 'none';
   } else {
@@ -218,13 +219,35 @@ __TRACKS_HTML__
       const v = document.createElement('span'); v.className = 'v'; v.textContent = String(value);
       specsGrid.appendChild(k); specsGrid.appendChild(v);
     }
+    // Lead row: "what was captured" so the user instantly sees this is an
+    // Android session vs a PC session vs a window-only PC session.
+    if (isAndroid && sys.android) {
+      const a = sys.android;
+      const parts = [];
+      if (a.manufacturer) parts.push(a.manufacturer);
+      if (a.model) parts.push(a.model);
+      if (a.serial) parts.push(`(serial ${a.serial})`);
+      addSpec('Device', parts.join(' ') || 'Android device');
+    } else {
+      addSpec('Device', 'PC (host capture)');
+    }
     if (sys.os) {
       const o = sys.os;
-      addSpec('OS', `${o.release || ''} (build ${o.build || '?'})`.trim());
+      if (isAndroid) {
+        // "Android 16 (SDK 36)" — platform is the literal string "Android".
+        const sdk = o.sdk != null ? ` (SDK ${o.sdk})` : '';
+        addSpec('OS', `${o.platform || 'Android'} ${o.release || ''}${sdk}`.trim());
+      } else {
+        // "Windows 11 (build 10.0.26200)" — platform string is too long to show whole.
+        addSpec('OS', `${o.platform ? o.platform.split('-').slice(0,2).join(' ') : ''} (build ${o.build || '?'})`.trim());
+      }
     }
     if (sys.cpu) {
       const c = sys.cpu;
-      const cores = `${c.physical_cores || '?'}P / ${c.logical_cores || '?'}L`;
+      // Android doesn't expose physical core count; omit the P/L split there.
+      const cores = isAndroid
+        ? `${c.logical_cores || '?'} cores`
+        : `${c.physical_cores || '?'}P / ${c.logical_cores || '?'}L`;
       const mhz = c.max_mhz ? ` @ ${(c.max_mhz / 1000).toFixed(2)} GHz` : '';
       addSpec('CPU', `${c.name || '?'} — ${cores}${mhz}`);
     }
@@ -239,9 +262,10 @@ __TRACKS_HTML__
       const d = sys.displays.map(s => {
         const nw = s.native_width || s.width;
         const nh = s.native_height || s.height;
+        const refresh = s.refresh_hz ? `@${s.refresh_hz}Hz` : '';
         const scale = s.device_pixel_ratio && s.device_pixel_ratio !== 1
           ? ` (${Math.round(s.device_pixel_ratio * 100)}% scale)` : '';
-        return `${nw}×${nh}@${s.refresh_hz}Hz${scale}${s.primary ? ' (primary)' : ''}`;
+        return `${nw}×${nh}${refresh}${scale}${s.primary ? ' (primary)' : ''}`;
       }).join(' · ');
       addSpec('Display', d);
     }
