@@ -194,7 +194,7 @@ def main() -> int:
         print(f"bundling {len(android_bundled)} Android tool file(s) under bin/")
     else:
         print(
-            "tools/android/ not populated — Android capture will be disabled in this "
+            "tools/android/ not populated - Android capture will be disabled in this "
             "build (see README for the platform-tools / scrcpy download steps)"
         )
 
