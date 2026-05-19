@@ -40,6 +40,10 @@ from core import adb
 
 _ECS_VERSION = "8.11"
 _ADB_TIMEOUT_S = 4.0
+# Re-resolve foreground package this often when follow_foreground=True. Less
+# frequent than the 1 Hz tick because dumpsys is the heaviest adb call we
+# make and the user typically doesn't switch apps faster than this.
+_FOREGROUND_RECHECK_S = 4.0
 
 _CREATIONFLAGS = (
     subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
@@ -182,12 +186,18 @@ class AndroidMetricsRecorder:
         output_path: Path,
         t0_perf: float,
         interval_s: float = 1.0,
+        follow_foreground: bool = False,
     ) -> None:
         self.serial = str(serial)
         self.package = str(package)
         self.output_path = Path(output_path)
         self.t0_perf = float(t0_perf)
         self.interval_s = float(interval_s)
+        # When True, every _FOREGROUND_RECHECK_S we re-probe the device's
+        # foreground package and switch the metric target on the fly. Lets
+        # us follow the user's actual workflow (Launcher → YouTube → Maps)
+        # instead of locking onto whatever was on screen at session start.
+        self.follow_foreground = bool(follow_foreground)
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -195,6 +205,7 @@ class AndroidMetricsRecorder:
         self._samples_written = 0
         self._error: BaseException | None = None
         self._cpu_count: int | None = None
+        self._last_foreground_check: float = 0.0
 
     def start(self) -> None:
         # Probe CPU count once for cpu_pct normalization. If it fails we just
@@ -229,6 +240,16 @@ class AndroidMetricsRecorder:
     def samples_written(self) -> int:
         return self._samples_written
 
+    def current_package(self) -> str:
+        """The package currently being sampled.
+
+        For ``follow_foreground=True`` recorders this drifts over a session;
+        ``main.py`` reads it at finalize time so ``metrics_target_name`` in
+        the meta reflects the LAST tracked package rather than whatever
+        ``__init__`` saw.
+        """
+        return self.package
+
     # ---- Loop -------------------------------------------------------------
 
     def _run(self) -> None:
@@ -242,7 +263,25 @@ class AndroidMetricsRecorder:
         except BaseException as e:  # noqa: BLE001
             self._error = e
 
+    def _maybe_update_foreground(self) -> None:
+        """Re-probe the foreground package, but no more than every
+        ``_FOREGROUND_RECHECK_S``. No-op if ``follow_foreground`` is off."""
+        if not self.follow_foreground:
+            return
+        now = time.perf_counter()
+        if now - self._last_foreground_check < _FOREGROUND_RECHECK_S:
+            return
+        self._last_foreground_check = now
+        try:
+            pkg = adb.get_foreground_package(self.serial)
+        except Exception:  # noqa: BLE001
+            pkg = None
+        if pkg and pkg != self.package:
+            self.package = pkg
+
     def _sample_once(self) -> None:
+        self._maybe_update_foreground()
+
         pid_out = _adb_shell(self.serial, f"pidof {self.package}")
         pid = _parse_pidof(pid_out) if pid_out is not None else None
 
@@ -272,6 +311,11 @@ class AndroidMetricsRecorder:
 
         if android_extras:
             payload["android"] = android_extras
+
+        # Stamp the package on every sample so a follow_foreground recording
+        # remains interpretable — without this the downstream reader can't
+        # tell when the metric target switched apps.
+        payload["package"] = self.package
 
         # gpu_pct stays None on Android - jank metrics carry the equivalent
         # signal and the viewer is already nullable-safe here.

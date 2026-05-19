@@ -276,14 +276,19 @@ class TrailboxWindow(QMainWindow):
                         f"Android getevent 시작 실패 (계속 진행):\n{e}",
                     )
 
-            if self.launcher.metrics_enabled() and package != "unknown":
+            if self.launcher.metrics_enabled():
                 try:
                     metrics_recorder = AndroidMetricsRecorder(
                         serial=target.serial,
-                        package=package,
+                        package=package,  # initial guess; follow_foreground updates
                         output_path=session.dir / "metrics" / "process.jsonl",
                         t0_perf=t0_perf,
                         interval_s=1.0,
+                        # Always follow on Android: the user typically starts
+                        # recording from the launcher and then opens an app.
+                        # Locking to whatever was foreground at start would
+                        # miss the real target every time.
+                        follow_foreground=True,
                     )
                     metrics_recorder.start()
                     self._metrics_recorder = metrics_recorder
@@ -548,6 +553,14 @@ class TrailboxWindow(QMainWindow):
             try:
                 self._metrics_recorder.stop()
                 metric_samples = self._metrics_recorder.samples_written()
+                # For Android follow_foreground sessions the target package
+                # drifts during the recording. Read the last-tracked value
+                # so session_meta.metrics_target_name reflects what was
+                # actually sampled at the end, not what __init__ saw.
+                if hasattr(self._metrics_recorder, "current_package"):
+                    last_pkg = self._metrics_recorder.current_package()
+                    if last_pkg:
+                        self._metrics_target_name = last_pkg
             except Exception as e:  # noqa: BLE001
                 metric_error = e
             self._metrics_recorder = None
