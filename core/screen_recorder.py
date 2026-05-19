@@ -48,6 +48,12 @@ class AndroidDeviceTarget:
     serial: str
     package: str | None = None     # foreground package (best-effort)
     capture_audio: bool = True     # Android 11+ output capture; else falls back
+    # Video backend. "scrcpy" wraps Genymobile/scrcpy (high quality, audio
+    # support, but blocked on Android 16 / One UI 8 because scrcpy 4.0 still
+    # relies on the legacy DisplayManager hidden API). "screenrecord" shells
+    # out to the OS-builtin tool which uses public APIs only — wider
+    # compatibility, no audio, capped at 3 min per chunk.
+    backend: str = "scrcpy"
 
 
 CaptureTarget = MonitorTarget | WindowTarget | AndroidDeviceTarget
@@ -130,7 +136,10 @@ class ScreenRecorder:
         try:
             self._open_frame_log()
             if isinstance(self.target, AndroidDeviceTarget):
-                self._run_scrcpy(self.target)
+                if self.target.backend == "screenrecord":
+                    self._run_screenrecord(self.target)
+                else:
+                    self._run_scrcpy(self.target)
             elif isinstance(self.target, WindowTarget):
                 self._run_window(self.target)
             else:
@@ -508,6 +517,220 @@ class ScreenRecorder:
                 break
             if self._stop.wait(timeout=0.25):
                 break
+
+    # ---- Android via OS-builtin screenrecord ------------------------------
+
+    def _run_screenrecord(self, target: AndroidDeviceTarget) -> None:
+        """Capture by shelling out to the Android-builtin ``screenrecord``.
+
+        Used when scrcpy fails on the device (Android 16 / One UI 8 currently
+        block scrcpy 4.0's hidden-API path), or when the user explicitly
+        chose this backend in the UI.
+
+        Trade-offs:
+        - No system audio (the OS tool doesn't surface it).
+        - 180s per chunk (toolchain hard cap); we loop and concat at stop.
+        - No per-frame timing; ``frames.jsonl`` is left empty.
+
+        Chunk lifecycle:
+        1. Spawn ``adb shell screenrecord --time-limit=180 <device path>``.
+        2. Wait for stop signal OR for the 180s cap to elapse naturally.
+        3. Terminating the adb client sends SIGHUP through the shell to
+           ``screenrecord``, which finalizes the MP4 cleanly.
+        4. After stop: ``adb pull`` each chunk, ffmpeg concat to
+           ``output_path``, then delete device-side + local intermediates.
+        """
+        from core import adb
+
+        adb_path = adb.get_adb_path()
+        chunks_dir = self.output_path.parent / "_screenrecord_chunks"
+        chunks_dir.mkdir(parents=True, exist_ok=True)
+
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._stderr_log = open(str(self.output_path) + ".screenrecord.log", "wb")
+
+        creationflags = 0
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags |= subprocess.CREATE_NO_WINDOW
+        if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
+        # Timestamp-prefix the chunk so concurrent/aborted sessions don't
+        # collide on the device's /sdcard.
+        device_prefix = f"/sdcard/trailbox_sr_{int(time.time())}_chunk"
+        chunk_count = 0
+
+        # Bitrate keeps file size reasonable for QA review while still
+        # capturing fine detail. 8 Mbps ≈ ~60 MB / minute at 1080p.
+        bitrate_arg = "--bit-rate=8000000"
+
+        self._started.set()
+
+        try:
+            while not self._stop.is_set():
+                chunk_count += 1
+                device_path = f"{device_prefix}_{chunk_count:03d}.mp4"
+                cmd = [
+                    str(adb_path), "-s", target.serial, "shell",
+                    "screenrecord",
+                    "--time-limit=180",
+                    bitrate_arg,
+                    device_path,
+                ]
+                current = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=self._stderr_log,
+                    creationflags=creationflags,
+                )
+                self._scrcpy_proc = current  # reuse slot for shared teardown
+
+                # Poll for stop OR natural 180s exit. Short sleep — we want to
+                # spawn the next chunk promptly when 180s elapses.
+                while current.poll() is None and not self._stop.is_set():
+                    if self._stop.wait(timeout=0.5):
+                        break
+
+                if self._stop.is_set() and current.poll() is None:
+                    # SIGINT to the device-side process is the only reliable
+                    # way to get a finalized MP4 — TerminateProcess on the
+                    # adb client is too abrupt and the shell's SIGHUP often
+                    # doesn't reach screenrecord in time. Once screenrecord
+                    # exits, the adb client follows naturally.
+                    try:
+                        subprocess.run(
+                            [str(adb_path), "-s", target.serial, "shell",
+                             "killall", "-SIGINT", "screenrecord"],
+                            capture_output=True,
+                            timeout=5,
+                            creationflags=(
+                                subprocess.CREATE_NO_WINDOW
+                                if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+                            ),
+                        )
+                    except (subprocess.TimeoutExpired, OSError):
+                        pass
+                    try:
+                        current.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            current.kill()
+                        except OSError:
+                            pass
+                    break  # no further chunks once user stopped
+
+            # Pull + concat after loop ends (stop OR final-180s rollover).
+            self._screenrecord_concat(
+                adb_path=adb_path,
+                serial=target.serial,
+                device_prefix=device_prefix,
+                chunk_count=chunk_count,
+                chunks_dir=chunks_dir,
+            )
+        finally:
+            # Clean up device-side chunks even if we crashed mid-concat.
+            for i in range(1, chunk_count + 1):
+                try:
+                    subprocess.run(
+                        [str(adb_path), "-s", target.serial, "shell",
+                         "rm", "-f", f"{device_prefix}_{i:03d}.mp4"],
+                        capture_output=True,
+                        timeout=5,
+                        creationflags=(
+                            subprocess.CREATE_NO_WINDOW
+                            if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+                        ),
+                    )
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+            # Local chunks too (we wrote final mp4 elsewhere).
+            try:
+                for p in chunks_dir.glob("*.mp4"):
+                    p.unlink(missing_ok=True)
+                chunks_dir.rmdir()
+            except OSError:
+                pass
+
+    def _screenrecord_concat(
+        self,
+        adb_path: Path,
+        serial: str,
+        device_prefix: str,
+        chunk_count: int,
+        chunks_dir: Path,
+    ) -> None:
+        """Pull each chunk and concat into ``self.output_path``.
+
+        Single-chunk sessions skip ffmpeg entirely (just adb pull straight
+        to the final path). Multi-chunk uses ffmpeg's concat demuxer with
+        ``-c copy`` — no re-encoding, ~instant for QA-length sessions.
+        """
+        if chunk_count == 0:
+            raise RuntimeError("screenrecord produced no chunks")
+
+        # Pull each chunk locally first.
+        local_chunks: list[Path] = []
+        for i in range(1, chunk_count + 1):
+            local = chunks_dir / f"chunk_{i:03d}.mp4"
+            device_path = f"{device_prefix}_{i:03d}.mp4"
+            pull = subprocess.run(
+                [str(adb_path), "-s", serial, "pull", device_path, str(local)],
+                capture_output=True,
+                timeout=120,
+                creationflags=(
+                    subprocess.CREATE_NO_WINDOW
+                    if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+                ),
+            )
+            if pull.returncode == 0 and local.exists() and local.stat().st_size > 0:
+                local_chunks.append(local)
+
+        if not local_chunks:
+            raise RuntimeError(
+                "screenrecord chunks could not be pulled — "
+                "device may have run out of /sdcard space"
+            )
+
+        # Single chunk: skip concat, just move.
+        if len(local_chunks) == 1:
+            local_chunks[0].replace(self.output_path)
+            self._frames_written = 1  # placeholder so the meta isn't 0
+            return
+
+        # Multi-chunk: ffmpeg concat demuxer needs a temp filelist.
+        filelist = chunks_dir / "concat.txt"
+        # ffmpeg concat demuxer wants forward slashes + 'file' prefix per line.
+        filelist.write_text(
+            "\n".join(f"file '{p.as_posix()}'" for p in local_chunks),
+            encoding="utf-8",
+        )
+        cmd = [
+            get_ffmpeg_exe(),
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(filelist),
+            "-c", "copy",
+            "-movflags", "+faststart",
+            str(self.output_path),
+        ]
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            ),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg concat failed: {result.stderr.decode('utf-8', errors='replace')[:500]}"
+            )
+        # Same placeholder reasoning as single-chunk path.
+        self._frames_written = len(local_chunks)
 
     def _spawn_ffmpeg_passthrough(self, stdin_pipe) -> subprocess.Popen:
         """ffmpeg that copies an already-encoded container (no re-encoding).

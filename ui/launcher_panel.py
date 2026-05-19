@@ -203,6 +203,21 @@ class LauncherPanel(QWidget):
         self.android_status.setStyleSheet("QLabel { color: #666; }")
         cap_layout.addWidget(self.android_status)
 
+        backend_row = QHBoxLayout()
+        backend_row.addWidget(QLabel("영상 백엔드:"))
+        self.android_backend_combo = QComboBox(self)
+        self.android_backend_combo.addItem("scrcpy (고화질 + 오디오)", userData="scrcpy")
+        self.android_backend_combo.addItem(
+            "screenrecord (Android 16+ 호환, 오디오 X, 3분/청크)",
+            userData="screenrecord",
+        )
+        self.android_backend_combo.setToolTip(
+            "scrcpy: 활발히 업데이트되는 Genymobile 도구. 영상+오디오. 단 OEM 정책에 막힐 수 있음 (Galaxy + One UI 8 등).\n"
+            "screenrecord: Android 4.4+ 에 기본 내장된 Google 도구. 시스템 API 만 사용 → 막히는 케이스 적음. 오디오 미지원."
+        )
+        backend_row.addWidget(self.android_backend_combo, 1)
+        cap_layout.addLayout(backend_row)
+
         pick_row = QHBoxLayout()
         self.click_pick_btn = QPushButton("🎯 창 클릭으로 선택", self)
         self.click_pick_btn.clicked.connect(self._begin_click_pick)
@@ -289,9 +304,17 @@ class LauncherPanel(QWidget):
             device = self._selected_android_device()
             if device is None or not device.online:
                 return None
-            # capture_audio defaults to True here; main.py downgrades to
-            # --no-audio if it sees the device is on Android 10 or below.
-            return AndroidDeviceTarget(serial=device.serial)
+            backend = self.android_backend_combo.currentData() or "scrcpy"
+            # Audio capture is decided by the backend (not the PC-side audio
+            # checkbox — that's loopback, which doesn't apply here).
+            # screenrecord never carries audio; scrcpy on Android <11 also
+            # can't (main.py downgrades after the SDK probe).
+            capture_audio = backend == "scrcpy"
+            return AndroidDeviceTarget(
+                serial=device.serial,
+                capture_audio=capture_audio,
+                backend=backend,
+            )
         info = self._selected_window()
         if info is None:
             return None
@@ -365,6 +388,20 @@ class LauncherPanel(QWidget):
         self.android_combo.setEnabled(is_android)
         self.android_refresh_btn.setEnabled(is_android)
         self.android_status.setVisible(is_android)
+        self.android_backend_combo.setEnabled(is_android)
+        # PC-side WASAPI loopback doesn't apply to Android sessions. Grey
+        # the box out but leave its check state alone so flipping back to
+        # PC mode restores the user's prior preference automatically.
+        self.audio_check.setEnabled(not is_android)
+        if is_android:
+            self.audio_check.setToolTip(
+                "Android 캡처는 별도 토글 없음:\n"
+                "• scrcpy + Android 11+ → 시스템 오디오 자동 캡처\n"
+                "• scrcpy + Android 10 이하 → 영상만\n"
+                "• screenrecord 백엔드 → 영상만 (API 한계)"
+            )
+        else:
+            self.audio_check.setToolTip("")
 
     # ---- Android device picker -------------------------------------------
 

@@ -156,13 +156,18 @@ class TrailboxWindow(QMainWindow):
                 sdk = _adb.get_android_sdk(target.serial)
             except Exception:  # noqa: BLE001
                 sdk = None
-            audio_on_request = self.launcher.audio_enabled()
-            # Android 11 == API level 30; output capture requires that.
-            capture_audio = audio_on_request and (sdk is None or sdk >= 30)
+            backend = target.backend
+            # Audio: scrcpy backend on Android 11+ (API 30) captures system
+            # output; screenrecord backend has no audio support at all.
+            if backend == "scrcpy":
+                capture_audio = target.capture_audio and (sdk is None or sdk >= 30)
+            else:
+                capture_audio = False
             target = AndroidDeviceTarget(
                 serial=target.serial,
                 package=package,
                 capture_audio=capture_audio,
+                backend=backend,
             )
 
             # Friendly session-id stem: "android_<serial>_<pkg>"; the safe-name
@@ -289,16 +294,19 @@ class TrailboxWindow(QMainWindow):
 
             self.recorder.set_recording(True)
             self.recorder.set_session_id(session_id)
-            audio_status = (
-                "오디오 ON (scrcpy output)"
-                if capture_audio
-                else ("오디오 OFF" if not audio_on_request else "오디오 OFF (Android 10 이하)")
-            )
+            if capture_audio:
+                audio_status = "오디오 ON (scrcpy output)"
+            elif backend == "screenrecord":
+                audio_status = "오디오 OFF (screenrecord 한계)"
+            elif sdk is not None and sdk < 30:
+                audio_status = "오디오 OFF (Android 10 이하)"
+            else:
+                audio_status = "오디오 OFF"
             log_status = "로그 ON" if self._log_collector else "로그 OFF"
             input_status = "입력 ON" if self._input_recorder else "입력 OFF"
             metrics_status = "메트릭 ON" if self._metrics_recorder else "메트릭 OFF"
             self.statusBar().showMessage(
-                f"녹화 시작: {session.dir} (Android {target.serial} / {package}, "
+                f"녹화 시작: {session.dir} (Android {target.serial} / {package} / {backend}, "
                 f"max {max_fps}fps, {audio_status}, {log_status}, {input_status}, {metrics_status})",
                 5000,
             )
