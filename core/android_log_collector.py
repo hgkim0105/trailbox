@@ -144,11 +144,15 @@ class AndroidLogCollector:
 
     def start(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Separate filenames from the PC LogCollector so an Android session
+        # can also capture PC-side log folders (e.g. a server log share)
+        # without two writers racing on the same file. viewer_generator and
+        # the MCP backends glob logs/*.jsonl so both sources surface together.
         self._jsonl_fh = open(
-            self.output_dir / "logs.jsonl", "w", encoding="utf-8", newline="\n"
+            self.output_dir / "logcat.jsonl", "w", encoding="utf-8", newline="\n"
         )
         self._vtt_fh = open(
-            self.output_dir / "logs.vtt", "w", encoding="utf-8", newline="\n"
+            self.output_dir / "logcat.vtt", "w", encoding="utf-8", newline="\n"
         )
         self._vtt_fh.write("WEBVTT\n\n")
 
@@ -252,6 +256,11 @@ class AndroidLogCollector:
             payload = {}
             message = line
             vtt_text = line
+
+        # Stable source label so the viewer's source filter can group all
+        # logcat events together and toggle them independently of PC log
+        # folders watched in the same session.
+        payload["source"] = {"name": "logcat"}
 
         record = {
             "@timestamp": ts_utc,

@@ -41,6 +41,20 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
             continue
 
 
+def _iter_log_records(session_dir: Path) -> Iterator[dict[str, Any]]:
+    """Iterate every jsonl record under ``session_dir/logs/``.
+
+    The PC LogCollector writes ``logs.jsonl`` and the Android logcat collector
+    writes ``logcat.jsonl``; a session may contain both. Globbing keeps the
+    backend agnostic to which collectors ran.
+    """
+    logs_dir = session_dir / "logs"
+    if not logs_dir.is_dir():
+        return
+    for p in sorted(logs_dir.glob("*.jsonl")):
+        yield from _iter_jsonl(p)
+
+
 def _matches_kind(event: dict, kind_set: set[str]) -> bool:
     if not kind_set:
         return True
@@ -96,10 +110,20 @@ class LocalBackend:
     def get_session(self, session_id: str) -> dict[str, Any]:
         d = self._resolve(session_id)
         meta = _load_meta(d)
+        logs_dir = d / "logs"
+        log_files = (
+            [str(p.resolve()) for p in sorted(logs_dir.glob("*.jsonl"))]
+            if logs_dir.is_dir()
+            else []
+        )
         files = {
             "screen_mp4": str((d / "screen.mp4").resolve()),
-            "logs_jsonl": str((d / "logs" / "logs.jsonl").resolve()),
-            "logs_vtt": str((d / "logs" / "logs.vtt").resolve()),
+            # logs_jsonl kept for legacy clients; points at the PC LogCollector
+            # output specifically. Android-only sessions use logcat.jsonl —
+            # callers should prefer log_files for the complete picture.
+            "logs_jsonl": str((logs_dir / "logs.jsonl").resolve()),
+            "logs_vtt": str((logs_dir / "logs.vtt").resolve()),
+            "log_files": log_files,
             "inputs_jsonl": str((d / "inputs" / "inputs.jsonl").resolve()),
             "inputs_vtt": str((d / "inputs" / "inputs.vtt").resolve()),
             "metrics_jsonl": str((d / "metrics" / "process.jsonl").resolve()),
@@ -127,7 +151,7 @@ class LocalBackend:
         text_lo = text.lower() if text else None
         matched: list[dict[str, Any]] = []
 
-        for rec in _iter_jsonl(d / "logs" / "logs.jsonl"):
+        for rec in _iter_log_records(d):
             t = float(rec.get("t_video_s", 0.0))
             if t_start is not None and t < t_start:
                 continue
@@ -210,7 +234,7 @@ class LocalBackend:
         d = self._resolve(session_id)
         q_lo = query.lower()
         hits: list[dict[str, Any]] = []
-        for rec in _iter_jsonl(d / "logs" / "logs.jsonl"):
+        for rec in _iter_log_records(d):
             msg = rec.get("message", "")
             if q_lo in msg.lower():
                 hits.append(rec)

@@ -8,7 +8,7 @@ stdio at import time.
 """
 from __future__ import annotations
 
-__version__ = "0.3.3"
+__version__ = "0.4.0"
 
 import sys
 
@@ -100,7 +100,11 @@ class TrailboxWindow(QMainWindow):
         self._system_info: dict = {}
         self._screen_recorder: ScreenRecorder | None = None
         self._audio_recorder: AudioRecorder | None = None
-        self._log_collector: LogCollector | None = None
+        # A session may carry several log collectors at once: an Android
+        # logcat tail PLUS one or more PC LogCollectors watching server/log
+        # folders. Each writes to its own *.jsonl under logs/, and the
+        # viewer/MCP merge them by globbing.
+        self._log_collectors: list = []
         self._input_recorder: InputRecorder | None = None
         self._metrics_recorder: MetricsRecorder | None = None
         self._overlay: RecordingOverlay | None = None
@@ -231,29 +235,50 @@ class TrailboxWindow(QMainWindow):
             # scrcpy already muxes audio into the same MP4, so no separate
             # AudioRecorder on this branch.
             self._audio_recorder = None
-            self._log_collector = None
+            self._log_collectors = []
             self._input_recorder = None
             self._metrics_recorder = None
             self._metrics_target_pid = None
             self._metrics_target_name = ""
 
-            # Logcat → logs.jsonl + logs.vtt. Pid-filter to package_filter to
-            # keep noise down; falls back to whole-device capture if pidof
+            # Logcat → logcat.jsonl + logcat.vtt. Pid-filter to package_filter
+            # to keep noise down; falls back to whole-device capture if pidof
             # can't resolve (e.g. app not foregrounded yet). Always on for
             # Android — there's no per-app log-folder setting to honor.
             try:
-                log_collector = AndroidLogCollector(
+                logcat_collector = AndroidLogCollector(
                     serial=target.serial,
                     output_dir=session.dir / "logs",
                     t0_perf=t0_perf,
                     package_filter=package if package != "unknown" else None,
                 )
-                log_collector.start()
-                self._log_collector = log_collector
+                logcat_collector.start()
+                self._log_collectors.append(logcat_collector)
             except Exception as e:  # noqa: BLE001
                 QMessageBox.warning(
                     self, "Trailbox", f"Android logcat 시작 실패 (계속 진행):\n{e}"
                 )
+
+            # Additionally watch any PC-side log folders the user added (e.g.
+            # a server log share). Writes to logs.jsonl alongside logcat.jsonl
+            # — the viewer source filter keeps them togglable separately.
+            android_log_dirs = [Path(p) for p in self.launcher.log_dirs()]
+            if android_log_dirs:
+                pc_log_collector = LogCollector(
+                    log_dirs=android_log_dirs,
+                    output_dir=session.dir / "logs",
+                    t0_perf=t0_perf,
+                    recursive=self.launcher.log_recursive(),
+                    extensions=self.launcher.log_extensions(),
+                )
+                try:
+                    pc_log_collector.start()
+                    self._log_collectors.append(pc_log_collector)
+                except Exception as e:  # noqa: BLE001
+                    QMessageBox.warning(
+                        self, "Trailbox",
+                        f"PC 로그 폴더 수집 시작 실패 (계속 진행):\n{e}",
+                    )
 
             if self.launcher.input_enabled():
                 try:
@@ -311,7 +336,7 @@ class TrailboxWindow(QMainWindow):
                 audio_status = "오디오 OFF (Android 10 이하)"
             else:
                 audio_status = "오디오 OFF"
-            log_status = "로그 ON" if self._log_collector else "로그 OFF"
+            log_status = f"로그 {len(self._log_collectors)}개" if self._log_collectors else "로그 OFF"
             input_status = "입력 ON" if self._input_recorder else "입력 OFF"
             metrics_status = "메트릭 ON" if self._metrics_recorder else "메트릭 OFF"
             self.statusBar().showMessage(
@@ -399,16 +424,18 @@ class TrailboxWindow(QMainWindow):
                     self, "Trailbox", f"오디오 녹음 실패 (계속 진행):\n{e}"
                 )
 
-        log_dir = self.launcher.log_dir()
-        if log_dir:
+        log_dirs = [Path(p) for p in self.launcher.log_dirs()]
+        if log_dirs:
             log_collector = LogCollector(
-                log_dir=Path(log_dir),
+                log_dirs=log_dirs,
                 output_dir=session.dir / "logs",
                 t0_perf=t0_perf,
+                recursive=self.launcher.log_recursive(),
+                extensions=self.launcher.log_extensions(),
             )
             try:
                 log_collector.start()
-                self._log_collector = log_collector
+                self._log_collectors.append(log_collector)
             except Exception as e:  # noqa: BLE001
                 QMessageBox.warning(
                     self, "Trailbox", f"로그 수집 시작 실패 (계속 진행):\n{e}"
@@ -529,13 +556,19 @@ class TrailboxWindow(QMainWindow):
 
         log_lines = 0
         log_error: Exception | None = None
-        if self._log_collector is not None:
+        # Stop every collector even if one of them raises — we don't want a
+        # crashed logcat to leave a PC LogCollector running, or vice versa.
+        for coll in self._log_collectors:
             try:
-                self._log_collector.stop()
-                log_lines = self._log_collector.lines_written()
+                coll.stop()
+                log_lines += coll.lines_written()
             except Exception as e:  # noqa: BLE001
-                log_error = e
-            self._log_collector = None
+                # Keep the first error for surfacing; later ones we just log
+                # silently (the partial files we already wrote are still
+                # usable, and the warning dialog only shows one anyway).
+                if log_error is None:
+                    log_error = e
+        self._log_collectors = []
 
         input_events = 0
         input_error: Exception | None = None
@@ -604,6 +637,9 @@ class TrailboxWindow(QMainWindow):
                 "audio_device": audio_device,
                 "audio_seconds": round(audio_seconds, 2),
                 "log_lines": log_lines,
+                "log_dirs": self.launcher.log_dirs(),
+                "log_recursive": self.launcher.log_recursive(),
+                "log_extensions": sorted(self.launcher.log_extensions()) or ["*"],
                 "input_enabled": self.launcher.input_enabled(),
                 "input_events": input_events,
                 "metrics_enabled": self.launcher.metrics_enabled(),
@@ -709,11 +745,12 @@ class TrailboxWindow(QMainWindow):
                 self._audio_recorder.stop()
             except Exception:  # noqa: BLE001
                 pass
-        if self._log_collector is not None:
+        for coll in self._log_collectors:
             try:
-                self._log_collector.stop()
+                coll.stop()
             except Exception:  # noqa: BLE001
                 pass
+        self._log_collectors = []
         if self._input_recorder is not None:
             try:
                 self._input_recorder.stop()

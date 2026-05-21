@@ -168,6 +168,12 @@ __TRACKS_HTML__
       <label><input type="checkbox" data-filter="key" checked> 키</label>
       <input type="search" id="q" placeholder="검색…">
     </div>
+    <div class="filters source-filters" id="source-filters" style="display:none">
+      <span style="color: var(--text-dim);">로그 소스:</span>
+      <span id="source-filter-list"></span>
+      <a href="#" id="source-filter-all" style="color: var(--text-dim); font-size: 11px;">전체</a>
+      <a href="#" id="source-filter-none" style="color: var(--text-dim); font-size: 11px;">해제</a>
+    </div>
     <ul id="timeline"></ul>
     <footer><span id="counts"></span></footer>
   </aside>
@@ -187,7 +193,50 @@ __TRACKS_HTML__
   const counts = document.getElementById('counts');
   const metaSummary = document.getElementById('meta-summary');
   const searchInput = document.getElementById('q');
-  const filterChecks = Array.from(document.querySelectorAll('.filters input[type=checkbox]'));
+  const filterChecks = Array.from(document.querySelectorAll('.filters input[type=checkbox][data-filter]'));
+
+  // ---- Log source filter (only visible when 2+ sources exist) -----------
+  // Each log event carries a `source` label set by LogCollector (the watched
+  // root's folder name, disambiguated when leaves collide). We render one
+  // checkbox per unique source so the user can toggle a whole folder's
+  // worth of logs without losing the others. Sessions with a single source
+  // (or Android logcat sessions with no source) skip this UI.
+  const sourceSet = new Set();
+  for (const ev of events) {
+    if (ev.kind === 'log' && ev.source) sourceSet.add(ev.source);
+  }
+  const sourceList = Array.from(sourceSet).sort();
+  const sourceChecks = new Map();  // source -> checkbox element
+  if (sourceList.length >= 2) {
+    const wrap = document.getElementById('source-filters');
+    const listEl = document.getElementById('source-filter-list');
+    wrap.style.display = '';
+    for (const src of sourceList) {
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.dataset.sourceFilter = src;
+      cb.addEventListener('change', render);
+      const text = document.createTextNode(' ' + src);
+      label.appendChild(cb);
+      label.appendChild(text);
+      label.title = src;
+      listEl.appendChild(label);
+      listEl.appendChild(document.createTextNode(' '));
+      sourceChecks.set(src, cb);
+    }
+    document.getElementById('source-filter-all').addEventListener('click', (e) => {
+      e.preventDefault();
+      for (const cb of sourceChecks.values()) cb.checked = true;
+      render();
+    });
+    document.getElementById('source-filter-none').addEventListener('click', (e) => {
+      e.preventDefault();
+      for (const cb of sourceChecks.values()) cb.checked = false;
+      render();
+    });
+  }
 
   const fs = meta.frame_stats || {};
   metaSummary.textContent = [
@@ -291,9 +340,16 @@ __TRACKS_HTML__
         if (c && !c.checked) return false;
       }
     }
+    if (ev.kind === 'log' && ev.source && sourceChecks.size > 0) {
+      const c = sourceChecks.get(ev.source);
+      if (c && !c.checked) return false;
+    }
     const q = searchInput.value.trim().toLowerCase();
-    if (q && !ev.text.toLowerCase().includes(q) && !ev.subtype.toLowerCase().includes(q)) {
-      return false;
+    if (q) {
+      const inText = ev.text.toLowerCase().includes(q);
+      const inSubtype = ev.subtype.toLowerCase().includes(q);
+      const inSource = ev.source && ev.source.toLowerCase().includes(q);
+      if (!inText && !inSubtype && !inSource) return false;
     }
     return true;
   }
@@ -310,7 +366,11 @@ __TRACKS_HTML__
       li.className = ev.kind;
       li.dataset.idx = String(i);
       const t = document.createElement('span'); t.className = 't'; t.textContent = fmtTime(ev.t);
-      const k = document.createElement('span'); k.className = 'kind'; k.textContent = ev.subtype;
+      const k = document.createElement('span'); k.className = 'kind';
+      k.textContent = (ev.kind === 'log' && ev.source && sourceList.length >= 2)
+        ? `${ev.source}/${ev.subtype}`
+        : ev.subtype;
+      if (ev.kind === 'log' && ev.source) k.title = `${ev.source} · ${ev.subtype}`;
       const b = document.createElement('span'); b.className = 'body'; b.textContent = ev.text;
       li.appendChild(t); li.appendChild(k); li.appendChild(b);
       li.addEventListener('click', () => {
@@ -619,22 +679,33 @@ def _load_events(session_dir: Path) -> list[dict[str, Any]]:
                 }
             )
 
-    logs_path = session_dir / "logs" / "logs.jsonl"
-    if logs_path.exists():
-        for line in logs_path.read_text(encoding="utf-8").splitlines():
-            try:
-                rec = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
-                continue
-            log_file = rec.get("log", {}).get("file", {}).get("path", "?")
-            events.append(
-                {
-                    "t": float(rec.get("t_video_s", 0.0)),
-                    "kind": "log",
-                    "subtype": log_file,
-                    "text": rec.get("message", ""),
-                }
-            )
+    # Glob every jsonl under logs/ so PC LogCollector output (logs.jsonl) and
+    # AndroidLogCollector output (logcat.jsonl) — and any future writers — are
+    # merged into the same timeline without the viewer caring which collector
+    # produced what.
+    logs_dir = session_dir / "logs"
+    if logs_dir.is_dir():
+        for logs_path in sorted(logs_dir.glob("*.jsonl")):
+            for line in logs_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                log_rec = rec.get("log", {}) or {}
+                log_file = (log_rec.get("file") or {}).get("path", "?")
+                # Source label comes from the collector. Records without one
+                # (pre-v0.4 sessions) fall back to the jsonl filename stem so
+                # they still group sensibly in the source filter.
+                source = (log_rec.get("source") or {}).get("name", "") or logs_path.stem
+                events.append(
+                    {
+                        "t": float(rec.get("t_video_s", 0.0)),
+                        "kind": "log",
+                        "subtype": log_file,
+                        "source": source,
+                        "text": rec.get("message", ""),
+                    }
+                )
 
     events.sort(key=lambda e: e["t"])
     return events
@@ -656,7 +727,7 @@ def generate_viewer(session_dir: Path, meta: dict[str, Any]) -> Path:
     events = _load_events(session_dir)
 
     tracks_html_lines: list[str] = []
-    logs_vtt = session_dir / "logs" / "logs.vtt"
+    logs_dir = session_dir / "logs"
     inputs_vtt = session_dir / "inputs" / "inputs.vtt"
     # NB: never use the `default` attribute on these tracks. Under file://
     # Chromium silently refuses to load `<track>` files so the overlay never
@@ -665,10 +736,14 @@ def generate_viewer(session_dir: Path, meta: dict[str, Any]) -> Path:
     # The side panel (built from the inlined jsonl) is the canonical view;
     # the VTT tracks are kept only for users who want native browser-toggled
     # captions. The forceHideOverlayTracks() JS below also pins them hidden.
-    if logs_vtt.exists() and logs_vtt.stat().st_size > 10:
-        tracks_html_lines.append(
-            '      <track src="logs/logs.vtt" kind="subtitles" srclang="en" label="logs">'
-        )
+    if logs_dir.is_dir():
+        for vtt_path in sorted(logs_dir.glob("*.vtt")):
+            if vtt_path.stat().st_size <= 10:
+                continue
+            label = vtt_path.stem  # "logs", "logcat", ...
+            tracks_html_lines.append(
+                f'      <track src="logs/{vtt_path.name}" kind="subtitles" srclang="en" label="{label}">'
+            )
     if inputs_vtt.exists() and inputs_vtt.stat().st_size > 10:
         tracks_html_lines.append(
             '      <track src="inputs/inputs.vtt" kind="subtitles" srclang="en" label="inputs">'

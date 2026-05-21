@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QPushButton,
     QRadioButton,
@@ -151,6 +152,52 @@ class LauncherPanel(QWidget):
         log_row.addWidget(self.detect_btn)
         app_layout.addLayout(log_row)
 
+        # Extra log folders: a list + +/- buttons so users can mirror e.g. a
+        # server log share alongside the client's local log dir. Kept compact
+        # — height-limited so it doesn't dominate the panel until needed.
+        extra_row = QHBoxLayout()
+        extra_row.addWidget(QLabel("추가 로그 폴더:"))
+        extra_row.addStretch(1)
+        self.extra_log_add_btn = QPushButton("+ 폴더 추가", self)
+        self.extra_log_add_btn.clicked.connect(self._add_extra_log_dir)
+        extra_row.addWidget(self.extra_log_add_btn)
+        self.extra_log_remove_btn = QPushButton("− 제거", self)
+        self.extra_log_remove_btn.clicked.connect(self._remove_extra_log_dir)
+        extra_row.addWidget(self.extra_log_remove_btn)
+        app_layout.addLayout(extra_row)
+
+        self.extra_log_list = QListWidget(self)
+        self.extra_log_list.setMaximumHeight(72)
+        self.extra_log_list.setToolTip(
+            "기본 로그 폴더 외에 추가로 감시할 폴더 (예: 서버 로그 공유 폴더).\n"
+            "녹화 시작 시점 EOF부터 새 라인만 기록됩니다."
+        )
+        app_layout.addWidget(self.extra_log_list)
+
+        recursive_row = QHBoxLayout()
+        self.log_recursive_check = QCheckBox("하위 폴더까지 스캔", self)
+        self.log_recursive_check.setChecked(True)
+        self.log_recursive_check.setToolTip(
+            "켜져 있으면 각 로그 폴더의 하위 폴더 내 파일도 자동으로 따라잡습니다."
+        )
+        recursive_row.addWidget(self.log_recursive_check)
+        recursive_row.addSpacing(12)
+        recursive_row.addWidget(QLabel("확장자:"))
+        self.log_extensions_edit = QLineEdit(self)
+        self.log_extensions_edit.setText("log, txt")
+        self.log_extensions_edit.setPlaceholderText("log, txt")
+        self.log_extensions_edit.setToolTip(
+            "캡처할 파일 확장자 (쉼표 또는 공백 구분).\n"
+            "예: log, txt, json, out, err\n"
+            "비우거나 *를 입력하면 모든 파일을 캡처합니다.\n"
+            "(와일드카드 모드에서도 .exe / .png / .zip 등 잘 알려진 바이너리,\n"
+            " 그리고 NUL 바이트로 시작하는 파일은 자동으로 제외됩니다.)"
+        )
+        self.log_extensions_edit.setMaximumWidth(220)
+        recursive_row.addWidget(self.log_extensions_edit)
+        recursive_row.addStretch(1)
+        app_layout.addLayout(recursive_row)
+
         launch_row = QHBoxLayout()
         launch_row.addStretch(1)
         self.launch_btn = QPushButton("앱 실행", self)
@@ -281,6 +328,55 @@ class LauncherPanel(QWidget):
 
     def log_dir(self) -> str:
         return self.log_edit.text().strip()
+
+    def extra_log_dirs(self) -> list[str]:
+        """Additional log directories the user added via the list widget."""
+        result: list[str] = []
+        for i in range(self.extra_log_list.count()):
+            text = self.extra_log_list.item(i).text().strip()
+            if text:
+                result.append(text)
+        return result
+
+    def log_dirs(self) -> list[str]:
+        """Primary log dir + extras, deduped (case-insensitive on Windows),
+        skipping empty entries. Order: primary first, then extras as added.
+        """
+        result: list[str] = []
+        seen: set[str] = set()
+        for path in [self.log_dir(), *self.extra_log_dirs()]:
+            if not path:
+                continue
+            key = path.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
+
+    def log_recursive(self) -> bool:
+        return self.log_recursive_check.isChecked()
+
+    def log_extensions(self) -> frozenset[str]:
+        """Parse the user's extension input into a normalized frozenset.
+
+        Empty input or ``*`` means "all files" (LogCollector treats an empty
+        set that way). Accepts ``log``, ``.log``, or ``*.log``; case-insensitive.
+        """
+        text = self.log_extensions_edit.text().strip()
+        if not text or text == "*":
+            return frozenset()
+        out: set[str] = set()
+        # Allow either commas or whitespace as separators so users can type
+        # "log, txt" or "log txt json" — both feel natural.
+        for raw in text.replace(",", " ").split():
+            piece = raw.strip().lower().lstrip("*").lstrip(".")
+            if piece:
+                out.add("." + piece)
+        # All-garbage input ("***", ",,,") falls back to "all files" rather
+        # than capturing nothing — failing silent capture would be worse than
+        # capturing too much.
+        return frozenset(out) if out else frozenset()
 
     def launched_pid(self) -> int | None:
         if self._launched_process and self._launched_process.poll() is None:
@@ -595,6 +691,22 @@ class LauncherPanel(QWidget):
             self.log_edit.setText(path)
             # editingFinished only fires on focus loss; trigger detection now.
             self._on_log_dir_changed()
+
+    def _add_extra_log_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "추가 로그 폴더 선택", "")
+        if not path:
+            return
+        # Dedupe against the primary field + already-added entries (case
+        # insensitive on Windows). Silent no-op if duplicate — the user
+        # wouldn't see a difference between "added" and "already there".
+        existing = {self.log_dir().lower()} | {p.lower() for p in self.extra_log_dirs()}
+        if path.lower() in existing:
+            return
+        self.extra_log_list.addItem(path)
+
+    def _remove_extra_log_dir(self) -> None:
+        for item in self.extra_log_list.selectedItems():
+            self.extra_log_list.takeItem(self.extra_log_list.row(item))
 
     def _on_window_changed(self, _index: int = -1) -> None:
         """Auto-fill exe and (asynchronously) log_dir from the selected window."""

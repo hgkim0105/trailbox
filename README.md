@@ -31,7 +31,7 @@ PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처�
 | 화면 (모니터 전체) | `dxcam` (DXGI Desktop Duplication) | `screen.mp4` |
 | 화면 (특정 창) | `windows-capture` (WGC) — 가려진 창·HW 가속 앱 OK | `screen.mp4` |
 | 시스템 오디오 | `soundcard` (WASAPI loopback) | `screen.mp4` 내 AAC |
-| 앱 로그 (어느 폴더든) | `watchdog` + tail-follow | `logs/logs.jsonl`, `logs/logs.vtt`, `logs/raw/` |
+| 앱 로그 (다중 폴더 · 재귀 · 확장자 설정 · 바이너리 자동 제외) | `watchdog` + tail-follow + 2초 rescan 안전망 | `logs/logs.jsonl`, `logs/logs.vtt`, `logs/raw/<root>/` |
 | 키보드 + 마우스 | `pynput` 글로벌 리스너 | `inputs/inputs.jsonl`, `inputs/inputs.vtt` |
 | 프로세스 텔레메트리 (CPU + GPU + RAM + VRAM + threads) | `psutil` + Windows PDH 1Hz 샘플 | `metrics/process.jsonl` |
 | 프레임 타이밍 | 매 프레임 인스턴트 fps + Δ | `metrics/frames.jsonl` |
@@ -43,7 +43,8 @@ PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처�
 |---|---|---|
 | 화면 + 오디오 (scrcpy 가능 디바이스) | scrcpy 4.0 wrap (헤드리스, MKV→mp4 무재인코딩) | `screen.mp4` (H.264 + Opus/AAC) |
 | 화면 (screenrecord 폴백) | `adb shell screenrecord` 청크 회전 → ffmpeg `-c copy` concat | `screen.mp4` (오디오 없음) |
-| 시스템 로그 | `adb logcat -v threadtime` (디바이스 시각 `-T` 필터 + 옵션 `--pid` 패키지 좁힘) | `logs/logs.jsonl` + `logs.vtt` |
+| 시스템 로그 (logcat) | `adb logcat -v threadtime` (디바이스 시각 `-T` 필터 + 옵션 `--pid` 패키지 좁힘) | `logs/logcat.jsonl` + `logcat.vtt` |
+| **PC 측 보조 로그 폴더** (선택) | 같은 다중 폴더 / 재귀 / 확장자 설정 — Android 세션에서도 그대로 동작 | `logs/logs.jsonl` (logcat 과 분리, 뷰어에서 소스별 토글) |
 | 터치 + 키 입력 | `adb getevent -lt` (멀티터치 protocol B + ABS_MT 정규화) | `inputs/inputs.jsonl` + `inputs.vtt` |
 | 텔레메트리 (CPU + RSS + jank + 프레임 시간 p95/p99) | `adb top + dumpsys gfxinfo` 1Hz, **포어그라운드 자동 추적 (4초 간격 재해상)** | `metrics/process.jsonl` |
 | 디바이스 사양 스냅샷 | Android 버전 / SDK / model / manufacturer / 디스플레이 해상도 / abi | `session_meta.json` 의 `system` |
@@ -64,6 +65,9 @@ PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처�
 
 1. **캡처 대상** — `전체 모니터` 또는 `특정 창 (WGC)`. 창은 콤보박스에서 고르거나, `🎯 창 클릭으로 선택` 또는 풀스크린 앱 안에서 `Ctrl+Shift+P` 단축키로 잡을 수 있음 (게임 풀스크린 안에서도 작동)
 2. (선택) **실행 파일** + **로그 폴더** — 둘 중 하나만 입력해도 다른 쪽을 자동 추론. 대상 앱이 로그를 *쓰는 폴더만 알면* (UE/Unity의 `Saved/Logs`, Electron 앱의 `%APPDATA%`, 일반 데스크탑 앱의 `%LOCALAPPDATA%/.../logs` 등) 자동 tail. 디스크 로깅이 없는 앱이면 부모 프로세스 (런처/IDE/터미널) 로그가 잡힙니다
+   - **추가 로그 폴더** (`+ 폴더 추가`): 서버 로그 공유 폴더 / 별도 컴포넌트 로그 등 보조 경로를 N개 더 추가. 뷰어에서 폴더별로 보기/감추기 토글
+   - **하위 폴더까지 스캔** (기본 ON): 각 로그 폴더 안의 하위 폴더 내 파일까지 재귀로 따라잡음. 새로 만들어지는 하위 폴더도 자동 감지
+   - **확장자** (기본 `log, txt`): 캡처할 파일 형식. `json, out, err` 등 자유롭게 추가 가능. 비우거나 `*` 입력 시 와일드카드 모드 — `.exe / .png / .zip` 등 잘 알려진 바이너리 + NUL 바이트로 시작하는 파일은 자동으로 제외
 3. **시스템 사운드 녹음** / **입력 기록** / **프로세스 텔레메트리** 토글 (기본 모두 ON)
 4. **최대 fps** 선택 (10/15/24/30/60). VFR이라 실제 fps는 소스 따라 변함
 5. **녹화 시작** → 작업 진행 → **녹화 종료**
@@ -80,6 +84,8 @@ PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처�
 
 Android 세션은 시스템 사운드 토글이 자동 비활성됨 (loopback 의미 없음). scrcpy 백엔드 + Android 11+ 디바이스면 시스템 오디오가 자동 캡처됨, screenrecord 경로면 영상만.
 
+**Android 세션에서 PC 측 로그 폴더 같이 캡처**: 위 PC 화면 캡처의 step 2 와 동일하게 「로그 폴더」 / 「추가 로그 폴더」 를 입력하면 logcat 과 함께 PC 폴더 로그도 잡힘. 두 출처는 `logs/logcat.jsonl` / `logs/logs.jsonl` 로 분리 저장되고 뷰어 타임라인에서는 소스별로 토글 가능. 서버 로그 공유 폴더와 모바일 클라이언트를 동시 분석할 때 유용.
+
 ### 공통
 
 녹화 결과는 `output/{session_id}/` 폴더에 저장. **다른 PC 로 폴더 통째 압축해 보내도 viewer.html 더블클릭으로 그대로 재생** 됩니다 (자체완결 HTML).
@@ -92,7 +98,7 @@ Android 세션은 시스템 사운드 토글이 자동 비활성됨 (loopback �
 
 - **좌측**: HTML5 비디오 (mp4 + AAC 사운드)
 - **우측 상단**: CPU / GPU / RSS / VRAM / fps 5라인 차트 + 영상 playhead 수직선 (Android 세션은 GPU/VRAM 미수집, jank/frame_time 은 별도 행)
-- **우측 중간**: logs + inputs 통합 타임라인 — 필터 / 검색 / 행 클릭 → 그 시점으로 점프
+- **우측 중간**: logs + inputs 통합 타임라인 — 종류/마우스/키 필터 + **로그 소스별 토글** (다중 폴더 캡처 또는 Android logcat + PC 로그 동시 캡처 시 자동 표시, 「전체 / 해제」 단축 링크 포함) + 검색 (메시지·파일경로·소스명까지 매칭) + 행 클릭 → 그 시점으로 점프
 - **헤더**: 이벤트 카운트 / duration / frames / Δ avg/p99 / cores 등 한눈 요약
 - **사양 ▶**: 캡처 대상에 맞춰 표시 — PC 세션은 OS / CPU(P/L) / RAM / GPU / Display + Python · Trailbox 버전. Android 세션은 **Device** (model + serial) / **OS** (Android N · SDK) / **CPU** (abi · N cores) / **Display** (해상도) / Trailbox 버전
 
@@ -188,6 +194,7 @@ Claude Desktop 재시작 후 채팅에서 활용:
 - **풀스크린 Exclusive 앱**: 일부 게임/미디어 플레이어는 백버퍼 접근 제한. Borderless 모드 권장
 - **자체 로그를 안 남기는 앱**: tail 할 파일이 없으면 로그 트랙은 빔. 부모 프로세스 (런처/터미널/IDE) 로그가 *대체로* 잡히긴 함. UE / Unity / Electron / Java 앱은 보통 풍부
 - **마이크 / 외부 입력 오디오**: WASAPI loopback 은 *시스템 출력* 만 잡음. 마이크는 OBS 보조 또는 추후 옵션
+- **와일드카드 로그 캡처 + UTF-16 LE 텍스트 로그**: 와일드카드 모드의 바이너리 sniff 가 UTF-16 의 NUL 바이트를 바이너리 신호로 오인해 해당 파일을 제외함. 해당 형식을 캡처해야 하면 확장자 입력에 명시적으로 추가 (예: `log, txt, etl`) — 명시 모드에서는 sniff 안 함
 
 ### Android 캡처
 - **scrcpy 백엔드 + 일부 OEM 펌웨어 비호환**: Galaxy + One UI 8 / Android 16 같은 최신 조합은 scrcpy 4.0 의 hidden-API 경로가 막힘. «auto» 백엔드가 자동으로 screenrecord 로 폴백

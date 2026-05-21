@@ -58,6 +58,31 @@ class HubBackend:
                     except (json.JSONDecodeError, ValueError):
                         continue
 
+    def _log_jsonl_paths(self, session_id: str) -> list[str]:
+        """Discover every ``logs/*.jsonl`` path in this remote session.
+
+        ``session_meta.json`` carries the full file list, so we read that once
+        and filter — avoids needing a directory-listing HTTP endpoint and
+        works for both PC sessions (``logs/logs.jsonl``) and Android sessions
+        (``logs/logcat.jsonl``) and sessions that carry both.
+        """
+        try:
+            meta = self._get_json(
+                f"/api/sessions/{session_id}/files/session_meta.json"
+            )
+        except httpx.HTTPError:
+            return ["logs/logs.jsonl"]  # legacy fallback
+        files = meta.get("files") or []
+        rels = [
+            f for f in files
+            if isinstance(f, str) and f.startswith("logs/") and f.endswith(".jsonl")
+        ]
+        return sorted(rels) or ["logs/logs.jsonl"]
+
+    def _iter_log_records(self, session_id: str) -> Iterator[dict[str, Any]]:
+        for rel in self._log_jsonl_paths(session_id):
+            yield from self._iter_jsonl(session_id, rel)
+
     @staticmethod
     def _matches_kind(event: dict, kind_set: set[str]) -> bool:
         if not kind_set:
@@ -101,10 +126,18 @@ class HubBackend:
         summary = self._get_json(f"/api/sessions/{session_id}")
         meta = self._get_json(f"/api/sessions/{session_id}/files/session_meta.json")
         base = f"{self.base_url}/api/sessions/{session_id}/files"
+        meta_files = meta.get("files") or []
+        log_files = [
+            f"{base}/{f}" for f in meta_files
+            if isinstance(f, str) and f.startswith("logs/") and f.endswith(".jsonl")
+        ]
         files = {
             "screen_mp4": f"{base}/screen.mp4",
+            # logs_jsonl kept for legacy clients; Android-only sessions may
+            # 404 this URL and should use log_files instead.
             "logs_jsonl": f"{base}/logs/logs.jsonl",
             "logs_vtt": f"{base}/logs/logs.vtt",
+            "log_files": log_files,
             "inputs_jsonl": f"{base}/inputs/inputs.jsonl",
             "inputs_vtt": f"{base}/inputs/inputs.vtt",
             "metrics_jsonl": f"{base}/metrics/process.jsonl",
@@ -133,7 +166,7 @@ class HubBackend:
         text_lo = text.lower() if text else None
         matched: list[dict[str, Any]] = []
 
-        for rec in self._iter_jsonl(session_id, "logs/logs.jsonl"):
+        for rec in self._iter_log_records(session_id):
             t = float(rec.get("t_video_s", 0.0))
             if t_start is not None and t < t_start:
                 continue
@@ -214,7 +247,7 @@ class HubBackend:
     ) -> dict[str, Any]:
         q_lo = query.lower()
         hits: list[dict[str, Any]] = []
-        for rec in self._iter_jsonl(session_id, "logs/logs.jsonl"):
+        for rec in self._iter_log_records(session_id):
             msg = rec.get("message", "")
             if q_lo in msg.lower():
                 hits.append(rec)
