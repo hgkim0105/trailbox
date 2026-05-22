@@ -23,6 +23,10 @@ py -3.11 -m venv .venv
 
 # Build a single-file Trailbox.exe (~120 MB) into dist/
 .\.venv\Scripts\python.exe build.py
+
+# Hub maintenance — reset a user's password without going through the web UI.
+# Runs against the local hub.db; works even when the Hub server is down.
+.\dist\Trailbox-hub.exe reset-password -u <username>
 ```
 
 There is currently no test suite. Verification is via the GUI or by running a session and inspecting `output/{session_id}/`.
@@ -47,6 +51,12 @@ Release flow, in this order:
 5. `gh release create vX.Y.Z` attaching all 4 binaries.
 
 If you find `__version__` already lagging the latest tag, fix forward (bump + new release) rather than retroactively moving the existing tag — published .exe SHA-sums shouldn't change under a fixed tag name.
+
+Hub-specific release notes:
+
+- When the release touches `hub_server/db.py`, bump `_LATEST_VERSION` and add a new branch to `migrate()`. Existing `hub.db` files in the wild auto-upgrade on next boot.
+- Existing deployments may still be running the legacy `TRAILBOX_HUB_TOKEN` shared-token model — they keep working as the first admin's service-token after upgrade, so don't remove that compat path without a deprecation cycle.
+- The installer's «Hub 관리자 계정» page writes `hub.env` next to the .exe; `hub_entry.py` consumes + deletes it on first boot. If you ever change the env-var contract for first-admin bootstrap, update both `installer/Trailbox-installer.iss` and `hub_entry.py:_consume_hub_env`.
 
 ## Architecture: the single rule that holds everything together
 
@@ -99,6 +109,23 @@ The template uses `__SESSION_ID__` / `__EVENTS_JSON__` / `__META_JSON__` / `__ME
 `mcp_server/__main__.py` is a FastMCP stdio server exposing 6 read-only tools that operate against the same `output/{session_id}/` tree. Tools are intentionally simple readers — they don't decode the video or anything heavy. The output root resolves via the `TRAILBOX_OUTPUT` env var, falling back to `../output` relative to the module.
 
 Capture control via MCP (start/stop a session from an AI) is deliberately NOT in v0.1.0. Adding it requires either a headless recording mode or IPC to a running Trailbox — both are nontrivial.
+
+## Hub: auth + DB (v0.5.0+)
+
+`hub_server/` is a separate FastAPI app that hosts uploaded sessions, exposes them to the MCP server, and serves a small Jinja2 web UI. As of v0.8.0 it carries its own SQLite metadata layer at `{data_root}/hub.db` — accounts, per-user API tokens, web sessions, session ownership, and an append-only audit log.
+
+The session payload on disk (mp4/jsonl/meta) is **untouched** by all of this — the contract in "Output convention" still holds. Ownership is a server-side mapping (`session_owners` table), not a field in `session_meta.json`, so the meta stays portable.
+
+Auth dependencies (`hub_server/auth.py`):
+
+- `require_user` / `require_admin` — resolve the caller via cookie session → per-user API token (`X-Trailbox-Token`) → legacy service token (`TRAILBOX_HUB_TOKEN`, maps to first admin for back-compat).
+- `require_user_active` / `require_admin_active` — same as above plus a `must_change_password` gate. Use these by default; the relaxed variants exist only for `/api/auth/me` and `/api/auth/password` so a force-reset user can still self-recover.
+
+DB schema lives in `hub_server/db.py` with a `user_version`-based migration ladder (v1 created all tables, v2 added `must_change_password`). The migration helper is idempotent — second boot on the same DB is a no-op. **Add new schema versions by appending to the `if version < N` ladder, never by editing prior steps.**
+
+Web UI templates are at `hub_server/templates/` and bundled into `Trailbox-hub.exe` via `--add-data` in `build.py`. Both `hub_server/app.py` and `hub_server/routes/web.py` resolve their directories via a `_MEIPASS` fallback so the same code works in source and frozen.
+
+CLI: `Trailbox-hub.exe reset-password` (see Commands) is the escape hatch when a single-admin install loses its password. The web UI's «reset password» button on `/admin/users` handles the multi-admin case but explicitly refuses to act on the caller (self-reset must go through `/account/password`).
 
 ## CPU% normalization
 

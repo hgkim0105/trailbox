@@ -4,6 +4,39 @@
 
 ---
 
+## 구현 상태 (v0.8.0 릴리스 완료)
+
+원안의 4단계 phase (0.5.0 ~ 0.8.0)는 모두 단일 릴리스 `v0.8.0` 로 구현 완료. 구현 중 원안에서 변경된 항목과, 원안에 없었으나 추가된 항목:
+
+**원안에서 변경됨**
+
+| 항목 | 원안 | 실제 구현 |
+|---|---|---|
+| 비밀번호 최소 길이 | 12자 | **8자** (사용성 트레이드오프, deny-list/username 포함 금지는 유지) |
+
+**원안에 없던 추가 사항** (현장 검증 중 필요성 확인되어 추가)
+
+- `users.must_change_password` 컬럼 (DB v2 마이그레이션) — admin force-reset 시 사용자가 다음 로그인 때 반드시 비밀번호를 변경하도록 강제
+- `require_user_active` / `require_admin_active` 의존성 — API 단에서도 must_change 가드 (안 그러면 force-reset 직후 사용자가 그대로 토큰 재발급해서 우회 가능)
+- 서버 생성 임시 비번 (`POST /api/admin/users/{id}/password` body 비우면 12자 base64 토큰 생성, 평문 1회 노출)
+- 본인 비밀번호 변경: `POST /api/auth/password` (API) + `/account/password` (웹)
+- `Trailbox-hub.exe reset-password` CLI 서브커맨드 — admin 1명 install 에서 비번 분실 시 호스트 디스크 접근만으로 복구 가능. `hub_server/cli.py`.
+- 웹 `/admin/users` 의 «reset password» 버튼 — 같은 페이지에 임시 비번 1회 노출
+- `_MUST_CHANGE_ALLOW` 가드 — must_change=True 사용자는 `/account/password` `/logout` `/static/*` 외 모든 페이지에서 강제 리다이렉트
+
+**원안 그대로 유지**
+
+- SQLite + stdlib `sqlite3` (Alembic/SQLAlchemy 미사용)
+- argon2-cffi (argon2id) / itsdangerous 쿠키 서명 / Jinja2 서버 렌더
+- share-link 발급 = 공개 의사 표시 (별도 boolean 토글 없음)
+- 익명 Hub `/api/*` 접근 없음, `/v/{token}/*` 만 익명 허용
+- 레거시 `TRAILBOX_HUB_TOKEN` 은 admin service-token 으로 강등 (back-compat)
+- 4 phase 가 각각 단독 빌드/배포 가능하도록 설계 (실제로는 한 번에 릴리스됨)
+
+릴리스: <https://github.com/hgkim0105/trailbox/releases/tag/v0.8.0>
+
+---
+
 ## 결정사항 (확정)
 
 | 항목 | 결정 |
