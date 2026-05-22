@@ -20,7 +20,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 
 from ..audit import AuditLog
-from ..auth import AuthContext, require_user
+from ..auth import AuthContext, require_user, require_user_active
 from ..lockout import LoginLockout
 from ..settings_store import SettingsStore
 from ..tokens import ApiTokenStore
@@ -39,7 +39,12 @@ def build_router(
     lockout: LoginLockout,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/auth", tags=["auth"])
-    user_dep = require_user(auth_ctx)
+    # Two flavors:
+    #   user_dep        — must_change=True users are blocked (default).
+    #   user_dep_relaxed — used by /me and /password so a force-reset user
+    #                     can still detect their state and fix it.
+    user_dep = require_user_active(auth_ctx)
+    user_dep_relaxed = require_user(auth_ctx)
 
     def _user_public(u: User) -> dict:
         return {
@@ -50,6 +55,9 @@ def build_router(
             "status": u.status,
             "created_at": u.created_at,
             "approved_at": u.approved_at,
+            # Surface the must_change flag so clients (GUI, scripts) can
+            # branch into a "change password first" UX after login.
+            "must_change_password": u.must_change_password,
         }
 
     def _set_session_cookie(resp: Response, sid: str) -> None:
@@ -157,7 +165,9 @@ def build_router(
         return {"ok": True}
 
     @router.get("/me")
-    def me(user: User = Depends(user_dep)) -> dict:
+    def me(user: User = Depends(user_dep_relaxed)) -> dict:
+        # Relaxed: must_change=True users need this to confirm they should
+        # be sent through /api/auth/password before retrying.
         return {"user": _user_public(user)}
 
     # ---- API tokens ------------------------------------------------------
@@ -210,7 +220,7 @@ def build_router(
     @router.post("/password")
     def change_own_password(
         payload: dict = Body(...),
-        user: User = Depends(user_dep),
+        user: User = Depends(user_dep_relaxed),
     ) -> dict:
         """Authenticated user changes their own password.
 

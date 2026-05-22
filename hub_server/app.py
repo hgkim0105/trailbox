@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from core.frame_extractor import extract_frame_jpeg
 
 from .audit import AuditLog
-from .auth import AuthContext, require_admin, require_user
+from .auth import AuthContext, require_admin_active, require_user_active
 from .bootstrap import bootstrap
 from .config import HubConfig, load as load_config
 from .db import Database
@@ -91,8 +91,11 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
     bootstrap(cfg, db, users, settings, storage, owners)
 
     auth_ctx = AuthContext(cfg=cfg, users=users, tokens=tokens, sessions=web_sessions)
-    user_dep = require_user(auth_ctx)
-    admin_dep = require_admin(auth_ctx)
+    # *_active variants reject users whose admin force-reset set
+    # must_change_password=True. They must hit /api/auth/password (or the
+    # /account/password web form) before doing anything else.
+    user_dep = require_user_active(auth_ctx)
+    admin_dep = require_admin_active(auth_ctx)
 
     app = FastAPI(
         title="Trailbox Hub",

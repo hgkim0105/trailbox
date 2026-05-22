@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from ..audit import AuditLog
-from ..auth import AuthContext, require_admin
+from ..auth import AuthContext, require_admin_active
 from ..bootstrap import consume_setup_token
 from ..config import HubConfig
 from ..session_owners import SessionOwnerStore
@@ -44,7 +44,7 @@ def build_router(
     storage: Storage,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["admin"])
-    admin_dep = require_admin(auth_ctx)
+    admin_dep = require_admin_active(auth_ctx)
 
     def _user_public(u: User) -> dict:
         return {
@@ -56,6 +56,7 @@ def build_router(
             "created_at": u.created_at,
             "approved_at": u.approved_at,
             "approved_by": u.approved_by,
+            "must_change_password": u.must_change_password,
         }
 
     # ---- users -----------------------------------------------------------

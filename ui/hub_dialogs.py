@@ -43,6 +43,105 @@ def _default_token_label() -> str:
     return f"trailbox-{name}" if name else "trailbox-client"
 
 
+class _PasswordChangeDialog(QDialog):
+    """Modal shown when login returns ``must_change_password=True``.
+
+    The user types the current (temp) password again plus a new one. On
+    success we call ``POST /api/auth/password`` and the parent flow
+    continues (token issue, save, close).
+
+    We deliberately re-prompt for the current password rather than
+    reusing the value typed at login. It both confirms intent and protects
+    against the case where the parent widget cleared the field between
+    calls.
+    """
+
+    def __init__(
+        self,
+        client: HubClient,
+        cookies,
+        username: str,
+        prefilled_current: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("비밀번호 변경 필요")
+        self.setModal(True)
+        self.resize(420, 0)
+        self._client = client
+        self._cookies = cookies
+        self._username = username
+
+        intro = QLabel(
+            "관리자가 비밀번호를 재설정했습니다.\n"
+            "계속 사용하려면 새 비밀번호를 설정해야 합니다.",
+            self,
+        )
+        intro.setWordWrap(True)
+
+        form = QFormLayout()
+        self.current_edit = QLineEdit(prefilled_current, self)
+        self.current_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.new_edit = QLineEdit(self)
+        self.new_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.new2_edit = QLineEdit(self)
+        self.new2_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("현재 (임시) 비밀번호", self.current_edit)
+        form.addRow("새 비밀번호 (최소 8자)", self.new_edit)
+        form.addRow("새 비밀번호 (확인)", self.new2_edit)
+
+        self.status_label = QLabel("", self)
+        self.status_label.setWordWrap(True)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+
+        root = QVBoxLayout(self)
+        root.addWidget(intro)
+        root.addLayout(form)
+        root.addWidget(self.status_label)
+        root.addWidget(buttons)
+
+    def _on_accept(self) -> None:
+        cur = self.current_edit.text()
+        new = self.new_edit.text()
+        new2 = self.new2_edit.text()
+        if not cur or not new:
+            self.status_label.setText("모든 항목을 입력하세요")
+            return
+        if new != new2:
+            self.status_label.setText("새 비밀번호 확인이 일치하지 않습니다")
+            return
+        self.status_label.setText("변경 중…")
+        try:
+            # The /api/auth/password endpoint takes cookies (we logged in
+            # but never issued a token).
+            with self._client._client() as c:
+                # Inject cookies into the per-call client. HubClient
+                # exposes a private _client() factory; we mirror what
+                # issue_token() / me() do.
+                for k, v in (self._cookies or {}).items():
+                    c.cookies.set(k, v)
+                r = c.post(
+                    "/api/auth/password",
+                    json={"current_password": cur, "new_password": new},
+                )
+                if r.status_code != 200:
+                    try:
+                        detail = r.json().get("detail", r.text)
+                    except Exception:  # noqa: BLE001
+                        detail = r.text
+                    self.status_label.setText(f"실패: {detail}")
+                    return
+        except Exception as e:  # noqa: BLE001
+            self.status_label.setText(f"오류: {e}")
+            return
+        self.accept()
+
+
 class HubSettingsDialog(QDialog):
     """Three-tab dialog: Login / Register / Advanced (manual token).
 
@@ -154,16 +253,42 @@ class HubSettingsDialog(QDialog):
         self.login_btn.setEnabled(False)
         self._set_status("로그인 중…")
         try:
-            _info, cookies = client.login(username, password)
-            tok = client.issue_token(label=_default_token_label(), cookies=cookies)
+            info, cookies = client.login(username, password)
         except HubError as e:
             self._set_status(f"로그인 실패: {e}", ok=False)
+            self.login_btn.setEnabled(True)
             return
         except Exception as e:  # noqa: BLE001
             self._set_status(f"오류: {e}", ok=False)
-            return
-        finally:
             self.login_btn.setEnabled(True)
+            return
+
+        # If admin reset this account, the server flags must_change_password
+        # and blocks /api/auth/tokens until the user picks a new one. Pop
+        # the change dialog inline before continuing — otherwise issue_token
+        # would 403 with no feedback the user can act on.
+        user_info = info.get("user", {}) if isinstance(info, dict) else {}
+        if user_info.get("must_change_password"):
+            self._set_status("비밀번호 변경 필요 — 다이얼로그를 따라 진행하세요")
+            dlg = _PasswordChangeDialog(
+                client, cookies, username, prefilled_current=password, parent=self
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                self._set_status("비밀번호 변경 취소됨", ok=False)
+                self.login_btn.setEnabled(True)
+                return
+
+        try:
+            tok = client.issue_token(label=_default_token_label(), cookies=cookies)
+        except HubError as e:
+            self._set_status(f"토큰 발급 실패: {e}", ok=False)
+            self.login_btn.setEnabled(True)
+            return
+        except Exception as e:  # noqa: BLE001
+            self._set_status(f"오류: {e}", ok=False)
+            self.login_btn.setEnabled(True)
+            return
+        self.login_btn.setEnabled(True)
         self._set_status("토큰 발급 완료 — 저장 후 닫는 중…", ok=True)
         self._save_and_close(tok["token"], username)
 
@@ -246,7 +371,7 @@ class HubSettingsDialog(QDialog):
         if client is None:
             return
         try:
-            _info, cookies = client.login(username, password)
+            info, cookies = client.login(username, password)
         except HubError as e:
             if e.status_code == 403:
                 # Still pending — keep polling.
@@ -258,6 +383,20 @@ class HubSettingsDialog(QDialog):
         except Exception as e:  # noqa: BLE001
             self.reg_status.setText(f"오류: {e}")
             return
+
+        # Unlikely on first-time registration (admin can't reset before
+        # the user even exists), but handle defensively.
+        user_info = info.get("user", {}) if isinstance(info, dict) else {}
+        if user_info.get("must_change_password"):
+            self._poll_timer.stop()
+            dlg = _PasswordChangeDialog(
+                client, cookies, username, prefilled_current=password, parent=self
+            )
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                self.reg_status.setText("비밀번호 변경이 취소되어 가입을 완료하지 못했습니다.")
+                self.reg_btn.setEnabled(True)
+                return
+
         try:
             tok = client.issue_token(label=_default_token_label(), cookies=cookies)
         except HubError as e:

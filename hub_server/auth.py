@@ -111,6 +111,56 @@ def require_admin(ctx: AuthContext):
     return _dep
 
 
+_MUST_CHANGE_DETAIL = (
+    "password change required: POST /api/auth/password before using this endpoint"
+)
+
+
+def require_user_active(ctx: AuthContext):
+    """Like ``require_user`` but rejects users with ``must_change_password=True``.
+
+    This is the default user dependency for everything except the
+    password-change flow itself (``/api/auth/me``, ``/api/auth/password``).
+    Without this guard, an admin force-reset wouldn't actually force
+    anything for API callers — they could just keep using the API after
+    reissuing a token.
+    """
+    base = require_user(ctx)
+
+    def _dep(
+        request: Request,
+        x_trailbox_token: Optional[str] = Header(default=None),
+    ) -> User:
+        user = base(request=request, x_trailbox_token=x_trailbox_token)
+        if user.must_change_password:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=_MUST_CHANGE_DETAIL,
+            )
+        return user
+
+    return _dep
+
+
+def require_admin_active(ctx: AuthContext):
+    """Admin + active (must_change_password=False) gate."""
+    base = require_admin(ctx)
+
+    def _dep(
+        request: Request,
+        x_trailbox_token: Optional[str] = Header(default=None),
+    ) -> User:
+        user = base(request=request, x_trailbox_token=x_trailbox_token)
+        if user.must_change_password:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=_MUST_CHANGE_DETAIL,
+            )
+        return user
+
+    return _dep
+
+
 def require_token(ctx: AuthContext):
     """Back-compat shim for routes that just want auth, not the User object.
 
