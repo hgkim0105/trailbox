@@ -12,6 +12,7 @@ dist/
 
 # Hub server runtime data + .env
 hub_data/
+hub_data_*/
 .env
 
 # Bundled Android tooling (developer drops the platform-tools + scrcpy

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}내 계정 · Trailbox Hub{% endblock %}
+{% block content %}
+<h1>내 계정</h1>
+
+<dl class="kv">
+  <dt>Username</dt><dd>{{ current_user.username }}</dd>
+  <dt>Email</dt><dd>{{ current_user.email or '—' }}</dd>
+  <dt>Role</dt><dd>{{ current_user.role }}</dd>
+  <dt>Status</dt><dd>{{ current_user.status }}</dd>
+</dl>
+
+<p><a class="button" href="/account/password">비밀번호 변경</a></p>
+
+<section class="card">
+  <h2>API 토큰</h2>
+  <p class="muted">Trailbox 클라이언트 / MCP 백엔드가 X-Trailbox-Token 헤더에 실어 보내는 값입니다.</p>
+
+  {% if new_token %}
+    <p class="success">
+      새 토큰이 발급되었습니다. 아래 값은 <strong>다시 표시되지 않습니다</strong> — 지금 복사해두세요.<br />
+      <code class="block">{{ new_token }}</code>
+    </p>
+  {% endif %}
+
+  {% if tokens %}
+    <table class="data">
+      <thead><tr><th>ID</th><th>Label</th><th>발급</th><th>마지막 사용</th><th>상태</th><th></th></tr></thead>
+      <tbody>
+        {% for t in tokens %}
+        <tr>
+          <td>{{ t.id }}</td>
+          <td>{{ t.label or '—' }}</td>
+          <td>{{ t.created_at }}</td>
+          <td>{{ t.last_used or '—' }}</td>
+          <td>{% if t.revoked_at %}<span class="muted">revoked</span>{% else %}active{% endif %}</td>
+          <td>
+            {% if not t.revoked_at %}
+            <form action="/account/tokens/{{ t.id }}/revoke" method="post" class="inline-form">
+              <button type="submit" class="danger link-btn">revoke</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">아직 발급된 토큰이 없습니다.</p>
+  {% endif %}
+
+  <form action="/account/tokens" method="post" class="row">
+    <input name="label" placeholder="라벨 (예: laptop-qa1)" />
+    <button type="submit" class="primary">새 토큰 발급</button>
+  </form>
+</section>
+{% endblock %}

@@ -133,15 +133,19 @@ Hub 는 옵션입니다. 안 깔아도 위 기능 다 동작. 다음 시나리�
 
 ### 셋업 (같은 PC, LAN-only)
 
-인스톨러에서 **Full** 선택 + **Hub Configuration** 페이지의 **Generate** 버튼 → 자동으로 토큰 생성 + 레지스트리 + `start-hub.bat` 모두 채워짐.
+인스톨러에서 **Full** 선택 → «Hub 관리자 계정» 페이지에서 admin username + password 입력 →
+첫 부팅 시 Hub 가 이 계정을 자동 생성합니다 (`hub.env` 는 즉시 삭제).
 
-설치 끝나면 시작 메뉴 **「Trailbox Hub」** 한 번 실행 (콘솔 창 유지). Trailbox 의 「허브 설정」 다이얼로그는 이미 자동 입력됨.
+설치 끝나면 시작 메뉴 **「Trailbox Hub」** 한 번 실행 (콘솔 창 유지). 그 다음 Trailbox 의
+「허브 설정」 다이얼로그에서 «로그인» 탭으로 로그인하면 클라이언트용 토큰이 자동 발급됩니다.
 
 ### 팀원 (다른 PC) 추가
 
-1. Admin 이 자기 PC 의 `hub-token.txt` 또는 클립보드의 토큰을 메신저로 전달
-2. 팀원은 인스톨러에서 **Client only** 선택 + Hub Configuration 페이지에 admin URL + 토큰 붙여넣기
-3. 끝 — 첫 실행에 자동으로 Hub 연결됨
+1. 팀원이 자기 PC 의 Trailbox 에서 «허브 설정» → «회원가입» 탭 → username/password 신청
+2. Admin 이 브라우저로 `http://<hub-host>:8765/admin/users` → pending 사용자 «승인»
+3. 팀원의 다이얼로그가 폴링으로 승인을 감지 → 자동 토큰 발급/저장 → 끝
+
+자동 승인이 켜져 있으면(`/admin/settings`) 2번 단계가 생략됩니다.
 
 ### 세션 공유 흐름 (Trailbox 의 「세션 뷰어 열기」 다이얼로그)
 
@@ -166,7 +170,7 @@ Trailbox MCP 가 설치되어 있으면 Claude Desktop 에 등록할 수 있습�
       "command": "C:\\Program Files\\Trailbox\\Trailbox-mcp.exe",
       "env": {
         "TRAILBOX_HUB_URL": "http://127.0.0.1:8765",
-        "TRAILBOX_HUB_TOKEN": "<인스톨러에서-받은-토큰>"
+        "TRAILBOX_HUB_TOKEN": "<내-계정-페이지에서-발급한-per-user-token>"
       }
     }
   }

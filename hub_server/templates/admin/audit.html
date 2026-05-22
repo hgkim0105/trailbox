@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}감사 로그 · Trailbox Hub{% endblock %}
+{% block content %}
+<h1>감사 로그</h1>
+<p class="muted">최근 {{ entries|length }}개</p>
+
+<table class="data">
+  <thead>
+    <tr><th>시각</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    {% for e in entries %}
+    <tr>
+      <td>{{ e.ts }}</td>
+      <td>{{ usernames.get(e.actor_id, e.actor_id) or '—' }}</td>
+      <td><code>{{ e.action }}</code></td>
+      <td>{{ e.target or '—' }}</td>
+      <td><code>{{ e.detail or '' }}</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

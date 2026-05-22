@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QThread, pyqtSignal
+import socket
+
+from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QDialog,
@@ -20,6 +22,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -31,72 +34,292 @@ from core.hub_client import HubClient, HubError
 # ---- Settings dialog -------------------------------------------------------
 
 
+def _default_token_label() -> str:
+    name = ""
+    try:
+        name = socket.gethostname() or ""
+    except OSError:
+        pass
+    return f"trailbox-{name}" if name else "trailbox-client"
+
+
 class HubSettingsDialog(QDialog):
+    """Three-tab dialog: Login / Register / Advanced (manual token).
+
+    Login and Register both end the same way: the client receives a per-user
+    API token (via /api/auth/tokens) and persists it. Advanced exists for
+    operators using the legacy service-token compatibility path.
+    """
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Trailbox Hub — 설정")
-        self.resize(440, 0)
+        self.resize(480, 0)
         current = hub_config.load()
 
-        form = QFormLayout()
+        # URL is shared across all tabs.
         self.url_edit = QLineEdit(current.url, self)
         self.url_edit.setPlaceholderText("http://hub.local:8765")
-        self.token_edit = QLineEdit(current.token, self)
-        self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.token_edit.setPlaceholderText("X-Trailbox-Token (서버와 동일)")
-        form.addRow("Hub URL", self.url_edit)
-        form.addRow("API Token", self.token_edit)
+        top = QFormLayout()
+        top.addRow("Hub URL", self.url_edit)
 
-        test_row = QHBoxLayout()
-        self.test_btn = QPushButton("연결 테스트", self)
-        self.test_btn.clicked.connect(self._on_test)
-        self.test_label = QLabel("", self)
-        test_row.addWidget(self.test_btn)
-        test_row.addWidget(self.test_label, 1)
+        self.tabs = QTabWidget(self)
+        self.tabs.addTab(self._build_login_tab(current), "로그인")
+        self.tabs.addTab(self._build_register_tab(), "회원가입")
+        self.tabs.addTab(self._build_advanced_tab(current), "고급 (수동 토큰)")
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
+        # Open on whichever tab makes sense based on current state.
+        if current.token:
+            self.tabs.setCurrentIndex(0)  # already logged in — show Login (with username pre-filled)
+
+        self.status_label = QLabel("", self)
+        self.status_label.setWordWrap(True)
+
+        close_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        close_btn.rejected.connect(self.reject)
 
         root = QVBoxLayout(self)
-        root.addLayout(form)
-        root.addLayout(test_row)
-        root.addWidget(buttons)
+        root.addLayout(top)
+        root.addWidget(self.tabs)
+        root.addWidget(self.status_label)
+        root.addWidget(close_btn)
 
-    def _current_client(self) -> HubClient | None:
-        url = self.url_edit.text().strip()
+        # Poll timer used by the post-register "waiting for approval" flow.
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(5000)
+        self._poll_timer.timeout.connect(self._poll_pending)
+        self._pending_creds: tuple[str, str] | None = None
+
+    # ---- helpers ----------------------------------------------------------
+
+    def _current_url(self) -> str:
+        return self.url_edit.text().strip()
+
+    def _client(self, token: str = "") -> HubClient | None:
+        url = self._current_url()
         if not url:
             return None
-        return HubClient(base_url=url, token=self.token_edit.text().strip(), timeout=5.0)
+        return HubClient(base_url=url, token=token, timeout=10.0)
 
-    def _on_test(self) -> None:
-        client = self._current_client()
-        if client is None:
-            self.test_label.setText("Hub URL 을 먼저 입력하세요")
-            return
-        self.test_label.setText("연결 중…")
-        self.test_btn.setEnabled(False)
-        try:
-            info = client.healthz()
-            auth = "on" if info.get("auth_enabled") else "OFF"
-            self.test_label.setText(f"OK · data_root={info.get('data_root')} · auth={auth}")
-        except HubError as e:
-            self.test_label.setText(f"실패: {e}")
-        except Exception as e:  # noqa: BLE001 - surface any error to UI
-            self.test_label.setText(f"실패: {e}")
-        finally:
-            self.test_btn.setEnabled(True)
+    def _set_status(self, text: str, ok: bool | None = None) -> None:
+        color = ""
+        if ok is True:
+            color = "color: #1b7a1b;"
+        elif ok is False:
+            color = "color: #b00020;"
+        self.status_label.setStyleSheet(color)
+        self.status_label.setText(text)
 
-    def _on_accept(self) -> None:
+    def _save_and_close(self, token: str, username: str) -> None:
         hub_config.save(
             hub_config.HubSettings(
-                url=self.url_edit.text().strip(),
-                token=self.token_edit.text().strip(),
+                url=self._current_url(),
+                token=token,
+                username=username,
             )
         )
+        self._poll_timer.stop()
         self.accept()
+
+    # ---- Login tab --------------------------------------------------------
+
+    def _build_login_tab(self, current: hub_config.HubSettings) -> QWidget:
+        page = QWidget(self)
+        form = QFormLayout()
+        self.login_user = QLineEdit(current.username, page)
+        self.login_pass = QLineEdit(page)
+        self.login_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("Username", self.login_user)
+        form.addRow("Password", self.login_pass)
+
+        self.login_btn = QPushButton("로그인 + 토큰 발급", page)
+        self.login_btn.clicked.connect(self._on_login)
+
+        root = QVBoxLayout(page)
+        root.addLayout(form)
+        root.addWidget(self.login_btn)
+        root.addStretch(1)
+        return page
+
+    def _on_login(self) -> None:
+        client = self._client()
+        if client is None:
+            self._set_status("Hub URL 을 먼저 입력하세요", ok=False)
+            return
+        username = self.login_user.text().strip()
+        password = self.login_pass.text()
+        if not username or not password:
+            self._set_status("Username/Password 모두 입력하세요", ok=False)
+            return
+        self.login_btn.setEnabled(False)
+        self._set_status("로그인 중…")
+        try:
+            _info, cookies = client.login(username, password)
+            tok = client.issue_token(label=_default_token_label(), cookies=cookies)
+        except HubError as e:
+            self._set_status(f"로그인 실패: {e}", ok=False)
+            return
+        except Exception as e:  # noqa: BLE001
+            self._set_status(f"오류: {e}", ok=False)
+            return
+        finally:
+            self.login_btn.setEnabled(True)
+        self._set_status("토큰 발급 완료 — 저장 후 닫는 중…", ok=True)
+        self._save_and_close(tok["token"], username)
+
+    # ---- Register tab -----------------------------------------------------
+
+    def _build_register_tab(self) -> QWidget:
+        page = QWidget(self)
+        form = QFormLayout()
+        self.reg_user = QLineEdit(page)
+        self.reg_email = QLineEdit(page)
+        self.reg_email.setPlaceholderText("(선택) 운영자에게 전달용")
+        self.reg_pass = QLineEdit(page)
+        self.reg_pass.setEchoMode(QLineEdit.EchoMode.Password)
+        self.reg_pass.setPlaceholderText("최소 12자")
+        form.addRow("Username", self.reg_user)
+        form.addRow("Email", self.reg_email)
+        form.addRow("Password", self.reg_pass)
+
+        self.reg_btn = QPushButton("회원가입 신청", page)
+        self.reg_btn.clicked.connect(self._on_register)
+
+        self.reg_status = QLabel("", page)
+        self.reg_status.setWordWrap(True)
+
+        root = QVBoxLayout(page)
+        root.addLayout(form)
+        root.addWidget(self.reg_btn)
+        root.addWidget(self.reg_status)
+        root.addStretch(1)
+        return page
+
+    def _on_register(self) -> None:
+        client = self._client()
+        if client is None:
+            self._set_status("Hub URL 을 먼저 입력하세요", ok=False)
+            return
+        username = self.reg_user.text().strip()
+        password = self.reg_pass.text()
+        email = self.reg_email.text().strip() or None
+        if not username or not password:
+            self._set_status("Username/Password 모두 입력하세요", ok=False)
+            return
+        self.reg_btn.setEnabled(False)
+        self._set_status("가입 신청 중…")
+        try:
+            result = client.register(username, password, email=email)
+        except HubError as e:
+            self._set_status(f"가입 실패: {e}", ok=False)
+            self.reg_btn.setEnabled(True)
+            return
+        except Exception as e:  # noqa: BLE001
+            self._set_status(f"오류: {e}", ok=False)
+            self.reg_btn.setEnabled(True)
+            return
+
+        if result.get("auto_approved") or result.get("status") == "active":
+            # Auto-approve: log in immediately and finish.
+            try:
+                _info, cookies = client.login(username, password)
+                tok = client.issue_token(label=_default_token_label(), cookies=cookies)
+            except HubError as e:
+                self._set_status(f"가입은 됐지만 로그인 실패: {e}", ok=False)
+                self.reg_btn.setEnabled(True)
+                return
+            self._save_and_close(tok["token"], username)
+            return
+
+        # Pending: park here and poll until admin approves.
+        self.reg_status.setText("관리자 승인 대기 중… (자동으로 새로고침)")
+        self.reg_btn.setEnabled(False)
+        self._pending_creds = (username, password)
+        self._poll_timer.start()
+
+    def _poll_pending(self) -> None:
+        if self._pending_creds is None:
+            self._poll_timer.stop()
+            return
+        username, password = self._pending_creds
+        client = self._client()
+        if client is None:
+            return
+        try:
+            _info, cookies = client.login(username, password)
+        except HubError as e:
+            if e.status_code == 403:
+                # Still pending — keep polling.
+                return
+            self.reg_status.setText(f"확인 실패: {e}")
+            self._poll_timer.stop()
+            self.reg_btn.setEnabled(True)
+            return
+        except Exception as e:  # noqa: BLE001
+            self.reg_status.setText(f"오류: {e}")
+            return
+        try:
+            tok = client.issue_token(label=_default_token_label(), cookies=cookies)
+        except HubError as e:
+            self.reg_status.setText(f"토큰 발급 실패: {e}")
+            self._poll_timer.stop()
+            self.reg_btn.setEnabled(True)
+            return
+        self._save_and_close(tok["token"], username)
+
+    # ---- Advanced tab -----------------------------------------------------
+
+    def _build_advanced_tab(self, current: hub_config.HubSettings) -> QWidget:
+        page = QWidget(self)
+        form = QFormLayout()
+        self.adv_token = QLineEdit(current.token, page)
+        self.adv_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.adv_token.setPlaceholderText("기존 토큰 또는 운영자 service-token")
+        form.addRow("API Token", self.adv_token)
+
+        self.adv_test_btn = QPushButton("연결 테스트", page)
+        self.adv_test_btn.clicked.connect(self._on_adv_test)
+        self.adv_save_btn = QPushButton("저장", page)
+        self.adv_save_btn.clicked.connect(self._on_adv_save)
+        self.adv_status = QLabel("", page)
+        self.adv_status.setWordWrap(True)
+
+        row = QHBoxLayout()
+        row.addWidget(self.adv_test_btn)
+        row.addWidget(self.adv_save_btn)
+        row.addStretch(1)
+
+        root = QVBoxLayout(page)
+        root.addLayout(form)
+        root.addLayout(row)
+        root.addWidget(self.adv_status)
+        root.addStretch(1)
+        return page
+
+    def _on_adv_test(self) -> None:
+        client = self._client(token=self.adv_token.text().strip())
+        if client is None:
+            self.adv_status.setText("Hub URL 을 먼저 입력하세요")
+            return
+        self.adv_status.setText("연결 중…")
+        try:
+            info = client.healthz()
+            self.adv_status.setText(
+                f"OK · data_root={info.get('data_root')} · admins={info.get('admin_count')}"
+            )
+        except HubError as e:
+            self.adv_status.setText(f"실패: {e}")
+        except Exception as e:  # noqa: BLE001
+            self.adv_status.setText(f"실패: {e}")
+
+    def _on_adv_save(self) -> None:
+        token = self.adv_token.text().strip()
+        if not self._current_url():
+            self.adv_status.setText("Hub URL 을 먼저 입력하세요")
+            return
+        # Keep the existing username (advanced mode doesn't change identity).
+        prev = hub_config.load()
+        self._save_and_close(token, prev.username)
 
 
 def open_hub_settings(parent: QWidget | None = None) -> bool:

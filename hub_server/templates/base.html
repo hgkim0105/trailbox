@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Trailbox Hub{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <a href="/" class="brand">Trailbox Hub</a>
+    <nav>
+      {% if current_user %}
+        <a href="/sessions">세션</a>
+        {% if current_user.role == 'admin' %}
+          <a href="/admin/users">사용자</a>
+          <a href="/admin/settings">설정</a>
+          <a href="/admin/audit">감사</a>
+        {% endif %}
+        <a href="/account">{{ current_user.username }}</a>
+        <form action="/logout" method="post" class="inline-form">
+          <button type="submit" class="link-btn">로그아웃</button>
+        </form>
+      {% else %}
+        <a href="/login">로그인</a>
+        <a href="/register">회원가입</a>
+      {% endif %}
+    </nav>
+  </header>
+
+  {% if flash %}
+    <div class="flash flash-{{ flash.level }}">{{ flash.message }}</div>
+  {% endif %}
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <small>Trailbox Hub · v{{ hub_version }}</small>
+  </footer>
+
+  <script src="{{ url_for('static', path='app.js') }}" defer></script>
+</body>
+</html>

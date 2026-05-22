@@ -275,6 +275,65 @@ class HubClient:
             r = c.delete(f"/api/shares/{token}")
             self._raise(r)
 
+    # ---- Auth (Phase 0.6.0) ----------------------------------------------
+    #
+    # These talk to /api/auth/* and use an internal cookie jar so the
+    # login → me → issue_token flow can run without ever holding a per-user
+    # API token. The token issued at the end is what gets stored in
+    # HubSettings for future X-Trailbox-Token requests.
+
+    def register(
+        self,
+        username: str,
+        password: str,
+        email: str | None = None,
+    ) -> dict[str, Any]:
+        with self._client() as c:
+            r = c.post(
+                "/api/auth/register",
+                json={"username": username, "password": password, "email": email},
+            )
+            self._raise(r)
+            return r.json()
+
+    def login(self, username: str, password: str) -> tuple[dict[str, Any], httpx.Cookies]:
+        """Log in and return ``(user_info, cookies)``.
+
+        The caller persists the cookie jar between subsequent auth-only calls
+        like ``me`` / ``issue_token``. This client doesn't keep state across
+        ``_client()`` contexts because every call opens a fresh httpx.Client.
+        """
+        with self._client() as c:
+            r = c.post(
+                "/api/auth/login",
+                json={"username": username, "password": password},
+            )
+            self._raise(r)
+            return r.json(), c.cookies
+
+    def me(self, cookies: httpx.Cookies | None = None) -> dict[str, Any]:
+        with self._client() as c:
+            if cookies is not None:
+                for k, v in cookies.items():
+                    c.cookies.set(k, v)
+            r = c.get("/api/auth/me")
+            self._raise(r)
+            return r.json()["user"]
+
+    def issue_token(
+        self,
+        label: str | None = None,
+        cookies: httpx.Cookies | None = None,
+    ) -> dict[str, Any]:
+        """Issue a new per-user API token. Returns ``{id, token, label, created_at}``."""
+        with self._client() as c:
+            if cookies is not None:
+                for k, v in cookies.items():
+                    c.cookies.set(k, v)
+            r = c.post("/api/auth/tokens", json={"label": label})
+            self._raise(r)
+            return r.json()
+
 
 # ---- Helpers ---------------------------------------------------------------
 

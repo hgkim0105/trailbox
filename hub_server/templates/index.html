@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Trailbox Hub{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>Trailbox Hub</h1>
+  <p class="muted">Trailbox QA 세션 공유 백엔드.</p>
+  {% if current_user %}
+    <p><a class="button primary" href="/sessions">내 세션 보기</a></p>
+  {% else %}
+    <p>
+      <a class="button primary" href="/login">로그인</a>
+      <a class="button" href="/register">회원가입</a>
+    </p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}최초 관리자 설정 · Trailbox Hub{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>최초 관리자 설정</h1>
+  {% if done %}
+    <p class="success">관리자가 생성되었습니다. <a href="/login">로그인</a>하세요.</p>
+  {% else %}
+    <p class="muted">
+      이 페이지는 Hub에 관리자 계정이 하나도 없을 때만 표시됩니다.
+      서버 첫 실행 시 콘솔에 출력된 setup token을 사용하세요
+      (또는 <code>{{ data_root }}/.setup_token</code>).
+    </p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form action="/setup" method="post" class="stack">
+      <label>Setup Token
+        <input name="setup_token" required autofocus autocomplete="off" />
+      </label>
+      <label>Admin Username
+        <input name="username" required />
+      </label>
+      <label>Password <span class="muted">(최소 8자)</span>
+        <input name="password" type="password" required minlength="8" />
+      </label>
+      <button type="submit" class="primary">관리자 생성</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

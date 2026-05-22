@@ -14,7 +14,10 @@ import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
+
+if TYPE_CHECKING:
+    from .session_owners import SessionOwnerStore  # noqa: F401
 
 # session_id is "{safe_app_name}_{YYYYMMDD_HHMMSS}" by Trailbox convention,
 # but we accept any name that can't escape the data root.
@@ -42,8 +45,9 @@ class SessionSummary:
 
 
 class Storage:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, owners: "SessionOwnerStore | None" = None) -> None:
         self.root = root
+        self.owners = owners
         self.root.mkdir(parents=True, exist_ok=True)
 
     # ---- Lookups ----------------------------------------------------------
@@ -73,11 +77,20 @@ class Storage:
 
     # ---- Mutations --------------------------------------------------------
 
-    def ingest_zip(self, sid: str, zip_path: Path) -> SessionSummary:
+    def ingest_zip(
+        self,
+        sid: str,
+        zip_path: Path,
+        owner_id: int | None = None,
+    ) -> SessionSummary:
         """Extract ``zip_path`` into a fresh session dir, replacing any prior copy.
 
         The zip may either contain the session files at its root, or wrap them
         in a single top-level directory (we'll strip that prefix).
+
+        If an ``owners`` store was provided to ``Storage`` and ``owner_id`` is
+        given, the session's ownership is recorded (or updated) once the disk
+        extraction succeeds.
         """
         target = self.session_dir(sid)
         if target.exists():
@@ -99,6 +112,8 @@ class Storage:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(member, "r") as src, open(dest, "wb") as dst:
                     shutil.copyfileobj(src, dst)
+        if owner_id is not None and self.owners is not None:
+            self.owners.set(sid, owner_id)
         return self._summarize(target)
 
     def delete(self, sid: str) -> bool:
@@ -106,6 +121,8 @@ class Storage:
         if not target.is_dir():
             return False
         shutil.rmtree(target)
+        if self.owners is not None:
+            self.owners.delete(sid)
         return True
 
     # ---- Streaming downloads ---------------------------------------------

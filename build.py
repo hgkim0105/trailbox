@@ -87,6 +87,19 @@ _HUB_FLAGS = [
     "--collect-submodules", "uvicorn",
     "--collect-submodules", "fastapi",
     "--hidden-import", "python_multipart",
+    # Phase 0.7.0: Jinja2 templates + CSS/JS for the web UI. Bundled at
+    # hub_server/{templates,static}/ inside the .exe; hub_server.app /
+    # hub_server.routes.web resolve them via sys._MEIPASS at runtime.
+    "--add-data", "hub_server/templates" + os.pathsep + "hub_server/templates",
+    "--add-data", "hub_server/static" + os.pathsep + "hub_server/static",
+    # Phase 0.5.0+ auth dependencies — PyInstaller doesn't always pick these
+    # up via static analysis because they're imported lazily.
+    "--hidden-import", "argon2",
+    "--hidden-import", "argon2.exceptions",
+    "--hidden-import", "argon2_cffi_bindings",
+    "--hidden-import", "itsdangerous",
+    "--hidden-import", "itsdangerous.url_safe",
+    "--collect-submodules", "jinja2",
 ]
 
 

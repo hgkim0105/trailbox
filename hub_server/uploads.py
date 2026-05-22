@@ -33,6 +33,10 @@ class UploadState:
     bytes_received: int
     created_at: str
     completed: bool = False
+    # owner_id: id of the user who opened the upload (Phase 0.5.0). Optional
+    # for backward compat — uploads opened before owner tracking landed have
+    # this as None on disk.
+    owner_id: int | None = None
 
 
 class UploadStore:
@@ -80,7 +84,12 @@ class UploadStore:
 
     # ---- Public API -------------------------------------------------------
 
-    def create(self, session_id: str, total_size: int) -> UploadState:
+    def create(
+        self,
+        session_id: str,
+        total_size: int,
+        owner_id: int | None = None,
+    ) -> UploadState:
         upload_id = secrets.token_urlsafe(16)  # 128-bit
         state = UploadState(
             upload_id=upload_id,
@@ -88,6 +97,7 @@ class UploadStore:
             total_size=int(total_size),
             bytes_received=0,
             created_at=_utcnow_iso(),
+            owner_id=owner_id,
         )
         d = self._dir(upload_id)
         d.mkdir(parents=True, exist_ok=False)

@@ -6,3 +6,6 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 imageio[ffmpeg]>=2.34
+argon2-cffi>=23.1
+itsdangerous>=2.1
+jinja2>=3.1

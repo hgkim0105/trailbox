@@ -1,7 +1,10 @@
 # Trailbox Hub — one-command deployment.
 #
 # Quickstart:
-#   1. cp .env.example .env  (or just set TRAILBOX_HUB_TOKEN below)
+#   1. cp .env.example .env
+#      Fill in TRAILBOX_HUB_ADMIN_USER + TRAILBOX_HUB_ADMIN_PASS, or leave
+#      them empty to use the one-time setup-token flow (printed on first boot,
+#      also written to ./hub_data/.setup_token — visit /setup in a browser).
 #   2. docker compose up -d
 #
 # Defaults to LAN-only on :8765. To expose publicly with TLS, uncomment the
@@ -16,8 +19,21 @@ services:
     container_name: trailbox-hub
     restart: unless-stopped
     environment:
-      # REQUIRED. Trailbox clients send this as X-Trailbox-Token.
-      TRAILBOX_HUB_TOKEN: "${TRAILBOX_HUB_TOKEN:?set TRAILBOX_HUB_TOKEN in .env}"
+      # Optional first-boot admin bootstrap. If empty, a one-time setup token
+      # is logged to stderr + written to /data/.setup_token and consumed at
+      # /setup (web). On second boot these are ignored (admin already exists).
+      TRAILBOX_HUB_ADMIN_USER: "${TRAILBOX_HUB_ADMIN_USER:-}"
+      TRAILBOX_HUB_ADMIN_PASS: "${TRAILBOX_HUB_ADMIN_PASS:-}"
+      # Auto-approve new registrations on first boot (1) or require admin
+      # approval (0, default). Once seeded, change at runtime via /admin/settings.
+      TRAILBOX_HUB_AUTO_APPROVE: "${TRAILBOX_HUB_AUTO_APPROVE:-0}"
+      # Cookie signing key. If unset, persisted to /data/.secret_key on first
+      # boot. Set explicitly if you horizontally scale or want cookies stable
+      # across container rebuilds.
+      TRAILBOX_HUB_SECRET_KEY: "${TRAILBOX_HUB_SECRET_KEY:-}"
+      # Legacy shared token — when set, acts as an admin service-token.
+      # New deployments should leave this empty and use accounts instead.
+      TRAILBOX_HUB_TOKEN: "${TRAILBOX_HUB_TOKEN:-}"
       # Optional retention (days). 0 = keep forever.
       TRAILBOX_HUB_RETENTION_DAYS: "${TRAILBOX_HUB_RETENTION_DAYS:-0}"
       # Optional upload cap (MB).

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ session.session_id }} · Trailbox Hub{% endblock %}
+{% block content %}
+<h1><code>{{ session.session_id }}</code></h1>
+
+<dl class="kv">
+  <dt>시작 시각</dt><dd>{{ session.started_at or '—' }}</dd>
+  <dt>길이</dt><dd>{{ '%.1f초'|format(session.duration_seconds) if session.duration_seconds else '—' }}</dd>
+  <dt>크기</dt><dd>{{ (session.size_bytes / 1024 / 1024)|round(1) }} MB</dd>
+  <dt>로그 줄</dt><dd>{{ session.log_lines }}</dd>
+  <dt>입력 이벤트</dt><dd>{{ session.input_events }}</dd>
+  <dt>메트릭 샘플</dt><dd>{{ session.metric_samples }}</dd>
+  <dt>EXE</dt><dd><code>{{ session.exe_path or '—' }}</code></dd>
+</dl>
+
+<div class="actions row">
+  {% if session.has_viewer %}
+    {% if shares %}
+      <a class="button" href="/v/{{ shares[0].token }}/" target="_blank">뷰어 열기</a>
+    {% endif %}
+    <form action="/sessions/{{ session.session_id }}/share" method="post" class="inline-form">
+      <button type="submit" class="button">새 공유 링크 발급</button>
+    </form>
+  {% endif %}
+  <a class="button" href="/api/sessions/{{ session.session_id }}/zip">zip 다운로드</a>
+  <form action="/sessions/{{ session.session_id }}/delete" method="post" class="inline-form"
+        onsubmit="return confirm('정말 삭제하시겠습니까?');">
+    <button type="submit" class="danger button">삭제</button>
+  </form>
+</div>
+
+{% if shares %}
+<h2>공유 링크</h2>
+<table class="data">
+  <thead><tr><th>Token</th><th>URL</th><th></th></tr></thead>
+  <tbody>
+    {% for s in shares %}
+    <tr>
+      <td><code>{{ s.token[:8] }}…</code></td>
+      <td><a href="/v/{{ s.token }}/" target="_blank">/v/{{ s.token }}/</a></td>
+      <td>
+        <form action="/sessions/{{ session.session_id }}/share/{{ s.token }}/revoke" method="post" class="inline-form">
+          <button type="submit" class="danger link-btn">revoke</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

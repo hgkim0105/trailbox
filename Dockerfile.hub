@@ -4,7 +4,16 @@
 #
 # Build:   docker build -f Dockerfile.hub -t trailbox-hub .
 # Run:     docker run --rm -p 8765:8765 -v $(pwd)/hub_data:/data \
-#                     -e TRAILBOX_HUB_TOKEN=changeme trailbox-hub
+#              -e TRAILBOX_HUB_ADMIN_USER=admin \
+#              -e TRAILBOX_HUB_ADMIN_PASS='choose-something-strong' \
+#              trailbox-hub
+#
+# Bootstrap modes (pick one):
+#   1. Set TRAILBOX_HUB_ADMIN_USER + TRAILBOX_HUB_ADMIN_PASS on first boot.
+#   2. Leave them unset — a one-time setup token is printed to stderr and
+#      written to /data/.setup_token; visit /setup in a browser.
+#   3. Legacy: set TRAILBOX_HUB_TOKEN for the old shared-token compat path
+#      (treated as admin service-token). Not recommended for new installs.
 
 FROM python:3.11-slim
 

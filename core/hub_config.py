@@ -13,11 +13,12 @@ _GROUP = "hub"
 @dataclass
 class HubSettings:
     url: str = ""        # e.g. "http://hub.local:8765"
-    token: str = ""      # X-Trailbox-Token
+    token: str = ""      # X-Trailbox-Token (per-user, issued via /api/auth/tokens)
+    username: str = ""   # cached for display only; auth is by token
 
     @property
     def configured(self) -> bool:
-        return bool(self.url)
+        return bool(self.url) and bool(self.token)
 
 
 def load() -> HubSettings:
@@ -27,6 +28,7 @@ def load() -> HubSettings:
         return HubSettings(
             url=str(s.value("url", "") or "").strip(),
             token=str(s.value("token", "") or "").strip(),
+            username=str(s.value("username", "") or "").strip(),
         )
     finally:
         s.endGroup()
@@ -38,6 +40,7 @@ def save(settings: HubSettings) -> None:
     try:
         s.setValue("url", settings.url.strip())
         s.setValue("token", settings.token.strip())
+        s.setValue("username", settings.username.strip())
     finally:
         s.endGroup()
     s.sync()

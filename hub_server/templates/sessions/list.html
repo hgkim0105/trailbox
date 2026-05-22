@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}세션 · Trailbox Hub{% endblock %}
+{% block content %}
+<h1>세션</h1>
+<p class="muted">
+  {% if current_user.role == 'admin' %}전체 사용자{% else %}본인{% endif %}의
+  세션 {{ sessions|length }}개
+</p>
+
+{% if not sessions %}
+  <p class="muted">표시할 세션이 없습니다. Trailbox 클라이언트에서 업로드하면 여기에 나타납니다.</p>
+{% else %}
+<table class="data">
+  <thead>
+    <tr>
+      <th>Session</th>
+      <th>시작 시각</th>
+      <th>길이</th>
+      <th>크기</th>
+      {% if current_user.role == 'admin' %}<th>소유자</th>{% endif %}
+      <th>액션</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in sessions %}
+    <tr>
+      <td><a href="/sessions/{{ s.session_id }}"><code>{{ s.session_id }}</code></a></td>
+      <td>{{ s.started_at or '—' }}</td>
+      <td>{{ '%.1f초'|format(s.duration_seconds) if s.duration_seconds else '—' }}</td>
+      <td>{{ (s.size_bytes / 1024 / 1024)|round(1) }} MB</td>
+      {% if current_user.role == 'admin' %}
+        <td>{{ owners.get(s.session_id, '—') }}</td>
+      {% endif %}
+      <td class="actions">
+        <a href="/api/sessions/{{ s.session_id }}/zip">zip</a>
+        <form action="/sessions/{{ s.session_id }}/delete" method="post" class="inline-form"
+              onsubmit="return confirm('정말 삭제하시겠습니까? {{ s.session_id }}');">
+          <button type="submit" class="danger link-btn">삭제</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

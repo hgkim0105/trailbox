@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}사용자 관리 · Trailbox Hub{% endblock %}
+{% block content %}
+<h1>사용자</h1>
+
+{% if temp_password %}
+<section class="card" style="border-color: #1b7a1b;">
+  <h2 class="success">임시 비밀번호 발급됨 — <code>{{ temp_password_for }}</code></h2>
+  <p>
+    아래 값은 <strong>이 페이지에서만 한 번 표시</strong>됩니다. 지금 복사해서 본인에게 안전한 채널로 전달하세요.
+    해당 사용자는 다음 로그인 시 자동으로 비밀번호 변경 페이지로 이동합니다.
+  </p>
+  <code class="block">{{ temp_password }}</code>
+</section>
+{% endif %}
+
+{% if pending %}
+<section class="card">
+  <h2>승인 대기</h2>
+  <table class="data">
+    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>가입 시각</th><th></th></tr></thead>
+    <tbody>
+      {% for u in pending %}
+      <tr>
+        <td>{{ u.id }}</td>
+        <td>{{ u.username }}</td>
+        <td>{{ u.email or '—' }}</td>
+        <td>{{ u.created_at }}</td>
+        <td>
+          <form action="/admin/users/{{ u.id }}/approve" method="post" class="inline-form">
+            <button type="submit" class="primary">승인</button>
+          </form>
+          <form action="/admin/users/{{ u.id }}/disable" method="post" class="inline-form"
+                onsubmit="return confirm('거절(disable) 하시겠습니까?');">
+            <button type="submit" class="danger link-btn">거절</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>전체 사용자</h2>
+  <table class="data">
+    <thead>
+      <tr><th>ID</th><th>Username</th><th>Role</th><th>Status</th><th>가입</th><th>승인</th><th>액션</th></tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.id }}</td>
+        <td>{{ u.username }}</td>
+        <td>{{ u.role }}</td>
+        <td>{{ u.status }}</td>
+        <td>{{ u.created_at }}</td>
+        <td>{{ u.approved_at or '—' }}</td>
+        <td class="actions">
+          {% if u.id != current_user.id %}
+            {% if u.status == 'active' %}
+              <form action="/admin/users/{{ u.id }}/disable" method="post" class="inline-form"
+                    onsubmit="return confirm('비활성화 하시겠습니까?');">
+                <button type="submit" class="danger link-btn">disable</button>
+              </form>
+            {% endif %}
+            <form action="/admin/users/{{ u.id }}/role" method="post" class="inline-form">
+              <input type="hidden" name="role" value="{{ 'user' if u.role == 'admin' else 'admin' }}" />
+              <button type="submit" class="link-btn">{{ 'demote→user' if u.role == 'admin' else 'promote→admin' }}</button>
+            </form>
+            <form action="/admin/users/{{ u.id }}/tokens" method="post" class="inline-form"
+                  onsubmit="return confirm('이 사용자의 모든 토큰을 revoke 합니까?');">
+              <button type="submit" class="link-btn">revoke tokens</button>
+            </form>
+            <form action="/admin/users/{{ u.id }}/password/reset" method="post" class="inline-form"
+                  onsubmit="return confirm('임시 비밀번호를 생성하고 강제 변경 플래그를 설정합니다. 계속하시겠습니까?');">
+              <button type="submit" class="link-btn">reset password</button>
+            </form>
+          {% else %}
+            <span class="muted">(나)</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

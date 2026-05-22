@@ -11,7 +11,7 @@
 ; Output: ../dist/Trailbox-Setup.exe
 
 #define MyAppName      "Trailbox"
-#define MyAppVersion   "0.4.0"
+#define MyAppVersion   "0.8.0"
 #define MyAppPublisher "hgkim0105"
 #define MyAppURL       "https://github.com/hgkim0105/trailbox"
 #define DistDir        "..\dist"
@@ -108,6 +108,7 @@ Filename: "{app}\Trailbox.exe"; Description: "{cm:LaunchProgram,Trailbox}"; Flag
 ; wants their recordings preserved (they're the user's data, not ours).
 Type: files;          Name: "{app}\start-hub.bat"
 Type: files;          Name: "{app}\hub-token.txt"
+Type: files;          Name: "{app}\hub.env"
 
 [Code]
 const
@@ -120,6 +121,12 @@ var
   LabelHubHelp:  TNewStaticText;
   BtnGenToken:   TNewButton;
   BtnCopyToken:  TNewButton;
+  // Phase 0.8.0 — Hub admin bootstrap page (shown only when 'hub' is selected).
+  HubAdminPage:  TWizardPage;
+  EditAdminUser: TNewEdit;
+  EditAdminPass: TNewEdit;
+  EditAdminPass2: TNewEdit;
+  LabelAdminHelp: TNewStaticText;
 
 function RandToken: string;
 var
@@ -193,6 +200,28 @@ begin
   Result.Caption := Caption;
 end;
 
+function IsCommonPassword(const Pwd: string): Boolean;
+var
+  lower: string;
+begin
+  lower := Lowercase(Pwd);
+  Result :=
+    (lower = 'password') or (lower = 'password1') or (lower = 'password12') or
+    (lower = 'password123') or (lower = 'password1234') or
+    (lower = 'passw0rd') or (lower = 'qwerty12345') or
+    (lower = 'qwertyuiop') or (lower = '1234567890') or
+    (lower = '12345678901') or (lower = '111111111111') or
+    (lower = 'trailbox') or (lower = 'trailbox123') or
+    (lower = 'administrator') or (lower = 'letmein12345') or
+    (lower = 'welcome12345') or (lower = 'iloveyou1234') or
+    (lower = 'admin1234567');
+end;
+
+function ContainsCaseInsensitive(const Needle, Haystack: string): Boolean;
+begin
+  Result := Pos(Lowercase(Needle), Lowercase(Haystack)) > 0;
+end;
+
 procedure InitializeWizard;
 var
   Y: Integer;
@@ -200,9 +229,9 @@ begin
   HubConfigPage := CreateCustomPage(
     wpSelectComponents,
     'Hub 연결 설정',
-    'Trailbox 클라이언트가 사용할 Hub 주소와 API 토큰을 입력하세요.' + #13#10 +
-    'Hub 를 설치하는 경우 «Generate» 로 새 토큰을 만들고 팀원에게 공유. ' +
-    '클라이언트만 설치하는 경우 admin 한테 받은 토큰을 붙여넣으세요.');
+    'Trailbox 클라이언트가 사용할 Hub 주소를 입력하세요.' + #13#10 +
+    '계정/토큰은 설치 후 Trailbox 의 «허브 설정» 다이얼로그에서 로그인 또는 ' +
+    '회원가입으로 발급받습니다. 기존 운영자 토큰이 있으면 여기에 미리 붙여넣을 수 있습니다.');
 
   Y := 8;
 
@@ -223,13 +252,45 @@ begin
   Y := Y + 56;
 
   LabelHubHelp := MakeStaticText(HubConfigPage.Surface, 0, Y,
-    '• Hub URL: 단일-PC 환경이면 그대로 두세요. 팀 공유 환경이면 Hub 서버 호스트로 변경 ' +
+    '• Hub URL: 로컬 Hub 설치 시 그대로 두세요. 팀 공유 환경이면 Hub 호스트로 변경 ' +
     '(예: http://hub.local:8765).' + #13#10 +
-    '• Token: 비어두면 Hub 인증이 꺼집니다 (LAN 전용 권장). 보안이 필요하면 «Generate».' + #13#10 +
-    '• 설치 후 Trailbox 의 «허브 설정» 다이얼로그에서 언제든 변경 가능.');
+    '• Token: 사용 안 함(권장). 운영자 service-token 호환이 필요하면 «Generate» 후 ' +
+    'Hub 와 클라이언트 모두에 동일하게 적용됩니다.' + #13#10 +
+    '• 설치 후 Trailbox 의 «허브 설정» 다이얼로그에서 로그인하여 자동 토큰 발급 가능.');
   LabelHubHelp.AutoSize := False;
   LabelHubHelp.Width := HubConfigPage.SurfaceWidth;
   LabelHubHelp.Height := 80;
+
+  // ---- Hub admin bootstrap page (Phase 0.8.0) -----------------------------
+  HubAdminPage := CreateCustomPage(
+    HubConfigPage.ID,
+    'Hub 관리자 계정',
+    '이 Hub 의 첫 admin 계정을 생성합니다.' + #13#10 +
+    'Hub 첫 실행 시 자동으로 이 계정을 만들고, 사용 후 hub.env 파일은 즉시 삭제됩니다.');
+
+  Y := 8;
+  MakeStaticText(HubAdminPage.Surface, 0, Y, 'Admin Username');
+  EditAdminUser := MakeEdit(HubAdminPage.Surface, 0, Y + 18, HubAdminPage.SurfaceWidth, 'admin');
+
+  Y := Y + 56;
+  MakeStaticText(HubAdminPage.Surface, 0, Y, 'Password (최소 8자)');
+  EditAdminPass := MakeEdit(HubAdminPage.Surface, 0, Y + 18, HubAdminPage.SurfaceWidth, '');
+  EditAdminPass.PasswordChar := '*';
+
+  Y := Y + 56;
+  MakeStaticText(HubAdminPage.Surface, 0, Y, 'Password (확인)');
+  EditAdminPass2 := MakeEdit(HubAdminPage.Surface, 0, Y + 18, HubAdminPage.SurfaceWidth, '');
+  EditAdminPass2.PasswordChar := '*';
+
+  Y := Y + 56;
+  LabelAdminHelp := MakeStaticText(HubAdminPage.Surface, 0, Y,
+    '• 8자 이상, username 을 포함하지 않을 것.' + #13#10 +
+    '• 너무 흔한 비밀번호(password123, qwerty… 등)는 거부됩니다.' + #13#10 +
+    '• 분실 시 hub_data\hub.db 를 삭제하고 다시 설치하거나, ' +
+    '관리자 콘솔에서 setup-token 재발급 후 재설정해야 합니다.');
+  LabelAdminHelp.AutoSize := False;
+  LabelAdminHelp.Width := HubAdminPage.SurfaceWidth;
+  LabelAdminHelp.Height := 80;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -237,6 +298,44 @@ begin
   Result := False;
   if (PageID = HubConfigPage.ID) and (not NeedsHubConfigPage) then
     Result := True;
+  if (PageID = HubAdminPage.ID) and (not WizardIsComponentSelected('hub')) then
+    Result := True;
+end;
+
+function ValidateAdminInputs: Boolean;
+var
+  user, pass, pass2: string;
+begin
+  user := Trim(EditAdminUser.Text);
+  pass := EditAdminPass.Text;
+  pass2 := EditAdminPass2.Text;
+
+  if (Length(user) < 2) or (Length(user) > 40) then
+  begin
+    MsgBox('Username 은 2~40자여야 합니다.', mbError, MB_OK);
+    Result := False; Exit;
+  end;
+  if pass <> pass2 then
+  begin
+    MsgBox('비밀번호가 일치하지 않습니다.', mbError, MB_OK);
+    Result := False; Exit;
+  end;
+  if Length(pass) < 8 then
+  begin
+    MsgBox('비밀번호는 최소 8자여야 합니다.', mbError, MB_OK);
+    Result := False; Exit;
+  end;
+  if ContainsCaseInsensitive(user, pass) then
+  begin
+    MsgBox('비밀번호에 username 을 포함할 수 없습니다.', mbError, MB_OK);
+    Result := False; Exit;
+  end;
+  if IsCommonPassword(pass) then
+  begin
+    MsgBox('너무 흔한 비밀번호입니다. 다른 값을 사용하세요.', mbError, MB_OK);
+    Result := False; Exit;
+  end;
+  Result := True;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -249,6 +348,10 @@ begin
       MsgBox('Hub URL 을 입력하세요.', mbError, MB_OK);
       Result := False;
     end;
+  end;
+  if CurPageID = HubAdminPage.ID then
+  begin
+    Result := ValidateAdminInputs;
   end;
 end;
 
@@ -295,7 +398,7 @@ begin
   Body :=
     '@echo off' + #13#10 +
     'REM Trailbox Hub launcher - generated by installer.' + #13#10 +
-    'REM Edit TRAILBOX_HUB_TOKEN to rotate the token (keep clients in sync).' + #13#10 +
+    'REM Service-token (TRAILBOX_HUB_TOKEN) is optional; admin login is via web UI.' + #13#10 +
     'set TRAILBOX_HUB_TOKEN=' + Trim(EditHubToken.Text) + #13#10 +
     'set TRAILBOX_HUB_DATA=' + AppDir + '\hub_data' + #13#10 +
     'set TRAILBOX_HUB_HOST=127.0.0.1' + #13#10 +
@@ -307,11 +410,36 @@ begin
   SaveStringToFile(Path, Body, False);
 end;
 
+procedure WriteHubEnvFile;
+var
+  Path, Body, AppDir: string;
+  ResultCode: Integer;
+begin
+  if not WizardIsComponentSelected('hub') then Exit;
+  AppDir := ExpandConstant('{app}');
+  Path := AppDir + '\hub.env';
+  // Plain-text bootstrap file. hub_entry.py reads + deletes this on first
+  // launch, so the password doesn't linger on disk. Permissions are
+  // tightened via icacls below (best-effort — failure here is a warning).
+  Body :=
+    '# Trailbox Hub bootstrap (consumed + deleted on first launch).' + #13#10 +
+    '# DO NOT redistribute — contains the first-admin password in plaintext.' + #13#10 +
+    'TRAILBOX_HUB_ADMIN_USER=' + Trim(EditAdminUser.Text) + #13#10 +
+    'TRAILBOX_HUB_ADMIN_PASS=' + EditAdminPass.Text + #13#10;
+  if SaveStringToFile(Path, Body, False) then
+  begin
+    // Restrict to the current user only (and SYSTEM). Best-effort.
+    Exec(ExpandConstant('{cmd}'), '/c icacls "' + Path + '" /inheritance:r /grant:r "%USERNAME%":F SYSTEM:F',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     WriteStartHubBat;
     WriteHubTokenFile;
+    WriteHubEnvFile;
   end;
 end;

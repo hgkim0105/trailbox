@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}설정 · Trailbox Hub{% endblock %}
+{% block content %}
+<h1>Hub 설정</h1>
+
+<section class="card">
+  <form action="/admin/settings" method="post" class="stack">
+    <label class="checkbox">
+      <input type="checkbox" name="auto_approve_registration" value="1"
+             {% if settings.auto_approve_registration == '1' %}checked{% endif %} />
+      회원가입 자동 승인
+      <small class="muted">켜면 신규 가입자가 곧바로 active 상태가 됩니다. 끄면 관리자 승인 필요.</small>
+    </label>
+    <button type="submit" class="primary">저장</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>현재 값</h2>
+  <table class="data kv-table">
+    <thead><tr><th>Key</th><th>Value</th></tr></thead>
+    <tbody>
+      {% for k, v in settings.items() %}
+      <tr><td><code>{{ k }}</code></td><td><code>{{ v }}</code></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

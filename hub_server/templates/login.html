@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}로그인 · Trailbox Hub{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>로그인</h1>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form action="/login" method="post" class="stack">
+    {% if next %}<input type="hidden" name="next" value="{{ next }}" />{% endif %}
+    <label>Username
+      <input name="username" required autofocus value="{{ username or '' }}" />
+    </label>
+    <label>Password
+      <input name="password" type="password" required />
+    </label>
+    <button type="submit" class="primary">로그인</button>
+  </form>
+  <p class="muted">계정이 없나요? <a href="/register">회원가입</a></p>
+</section>
+{% endblock %}
