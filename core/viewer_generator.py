@@ -519,7 +519,7 @@ __TRACKS_HTML__
     const sys = META.system || {};
     const fs = META.frame_stats || {};
     const p99 = fs.delta_ms_p99 != null ? `${Math.round(fs.delta_ms_p99)} ms` : (fs.p99_ms != null ? `${Math.round(fs.p99_ms)} ms` : null);
-    const cores = sys.cpu_cores || sys.cpu_logical_cores;
+    const cores = META.cpu_cores || (sys.cpu && (sys.cpu.logical_cores || sys.cpu.physical_cores)) || sys.cpu_cores;
     const stats = [
       { v: fmtT(DURATION), l: 'Duration' },
       { v: fmtNum(META.screen_frames || 0), l: 'Frames' },
@@ -532,17 +532,71 @@ __TRACKS_HTML__
   }
 
   // ── Spec (system block) ─────────────────────────────────
+  // session_meta.json carries `system` as a nested snapshot from
+  // core/system_info.py: { os:{platform,release,build}, cpu:{name,physical_cores,logical_cores,max_mhz},
+  // ram:{total_mb,available_mb_at_start}, gpus:[...], displays:[{name,width,height,...}],
+  // python, trailbox_version }. Older sessions or the Android branch may have
+  // a flatter shape (capture:"android" etc.) — handle both.
   function renderSpec() {
     const body = document.getElementById('spec-body');
     const sys = META.system || {};
+
+    // OS — prefer the explicit string in legacy meta, otherwise compose from {os:{...}}.
+    let osStr = null;
+    if (typeof sys.os === 'string') osStr = sys.os;
+    else if (sys.os && typeof sys.os === 'object') osStr = sys.os.platform || sys.os.release || null;
+    else if (sys.platform) osStr = sys.platform;
+
+    // CPU — prefer object form's name + cores, fall back to plain string.
+    let cpuStr = null;
+    if (typeof sys.cpu === 'string') cpuStr = sys.cpu;
+    else if (sys.cpu && typeof sys.cpu === 'object') {
+      const name = sys.cpu.name || 'CPU';
+      const cores = sys.cpu.logical_cores || sys.cpu.physical_cores;
+      const ghz = sys.cpu.max_mhz ? ` @ ${(sys.cpu.max_mhz / 1000).toFixed(1)} GHz` : '';
+      cpuStr = cores ? `${name} (${cores} cores${ghz})` : `${name}${ghz}`;
+    }
+
+    // RAM — accept either `ram_gb` (legacy), `ram.total_mb` (current), or
+    // `ram_mb` if some future write emits flat MB.
+    let ramStr = null;
+    if (sys.ram_gb) ramStr = `${sys.ram_gb} GB`;
+    else if (sys.ram && typeof sys.ram === 'object' && sys.ram.total_mb) {
+      const gb = sys.ram.total_mb / 1024;
+      const avail = sys.ram.available_mb_at_start;
+      ramStr = avail
+        ? `${gb.toFixed(1)} GB (start free ${(avail / 1024).toFixed(1)} GB)`
+        : `${gb.toFixed(1)} GB`;
+    } else if (sys.ram_mb) ramStr = `${(sys.ram_mb / 1024).toFixed(1)} GB`;
+
+    // GPU — current meta carries `gpus: [name, ...]`; legacy carried `gpu` string.
+    let gpuStr = null;
+    if (sys.gpu) gpuStr = sys.gpu;
+    else if (Array.isArray(sys.gpus) && sys.gpus.length) gpuStr = sys.gpus.join(', ');
+
+    // Display — current meta carries `displays: [{name,width,height,...}]`.
+    let dispStr = null;
+    if (sys.display) dispStr = sys.display;
+    else if (Array.isArray(sys.displays) && sys.displays.length) {
+      dispStr = sys.displays.map(d => {
+        if (!d || typeof d !== 'object') return String(d);
+        const tag = d.primary ? '★ ' : '';
+        const dim = (d.width && d.height) ? `${d.width}×${d.height}` : '';
+        const hz = d.refresh_hz ? ` @ ${Math.round(d.refresh_hz)}Hz` : '';
+        const name = d.name ? `${d.name} ` : '';
+        return `${tag}${name}${dim}${hz}`.trim();
+      }).join(' · ');
+    }
+
+    const pyStr = sys.python_version || sys.python || null;
+
     const rows = [
-      ['OS', sys.platform || sys.os],
-      ['CPU', sys.cpu],
-      ['RAM', sys.ram_gb ? `${sys.ram_gb} GB` : null],
-      ['GPU', sys.gpu],
-      ['VRAM', sys.vram_gb ? `${sys.vram_gb} GB` : null],
-      ['Display', sys.display],
-      ['Python', sys.python_version],
+      ['OS', osStr],
+      ['CPU', cpuStr],
+      ['RAM', ramStr],
+      ['GPU', gpuStr],
+      ['Display', dispStr],
+      ['Python', pyStr],
       ['Trailbox', sys.trailbox_version],
       ['EXE', META.exe_path],
     ].filter(([, v]) => v);
