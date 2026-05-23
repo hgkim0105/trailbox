@@ -73,7 +73,7 @@ export default function App() {
   }
 
   return (
-    <div className="tbd-app" data-theme="dark">
+    <div className="tbd-app">
       <div className="tbd-window">
         {/* Custom titlebar (44px) — integrated tabs, no separate sidebar */}
         <div className="tbd-titlebar--custom" data-tauri-drag-region>
