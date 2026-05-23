@@ -1,29 +1,100 @@
 {% extends "base.html" %}
-{% block title %}설정 · Trailbox Hub{% endblock %}
+{% block title %}시스템 설정 · Trailbox Hub{% endblock %}
+{% block heading %}시스템 설정{% endblock %}
+
 {% block content %}
-<h1>Hub 설정</h1>
+<div class="page-header">
+  <div>
+    <h1>시스템 설정</h1>
+    <p>Hub 동작 정책 — 변경은 저장 시 즉시 반영됩니다</p>
+  </div>
+</div>
 
-<section class="card">
-  <form action="/admin/settings" method="post" class="stack">
-    <label class="checkbox">
-      <input type="checkbox" name="auto_approve_registration" value="1"
-             {% if settings.auto_approve_registration == '1' %}checked{% endif %} />
-      회원가입 자동 승인
-      <small class="muted">켜면 신규 가입자가 곧바로 active 상태가 됩니다. 끄면 관리자 승인 필요.</small>
-    </label>
-    <button type="submit" class="primary">저장</button>
-  </form>
-</section>
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:flex-start">
 
-<section class="card">
-  <h2>현재 값</h2>
-  <table class="data kv-table">
-    <thead><tr><th>Key</th><th>Value</th></tr></thead>
-    <tbody>
-      {% for k, v in settings.items() %}
-      <tr><td><code>{{ k }}</code></td><td><code>{{ v }}</code></td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+  {# ────────── 계정 정책 (backed) ────────── #}
+  <div class="card">
+    <div class="card__header">
+      <h3 class="card__title">계정 정책</h3>
+    </div>
+    <form action="/admin/settings" method="post" class="card__body" style="padding-top:0">
+      {% set auto_on = settings.auto_approve_registration == '1' %}
+      <div class="toggle-row">
+        <div class="toggle-row__main">
+          <div class="toggle-row__title">회원가입 자동 승인</div>
+          <div class="toggle-row__desc">신규 가입자가 곧바로 active 상태가 됩니다. 끄면 관리자 승인이 필요합니다.</div>
+        </div>
+        {# Form-driven toggle: hidden input holds the real value, the visible
+           toggle is a label so a click flips the checkbox state. CSS reads
+           :checked on the sibling and animates accordingly. #}
+        <label class="toggle-form">
+          <input type="checkbox" name="auto_approve_registration" value="1"
+                 {% if auto_on %}checked{% endif %}
+                 style="position:absolute; opacity:0; pointer-events:none" />
+          <span class="toggle {% if auto_on %}on{% endif %}" aria-hidden="true"></span>
+        </label>
+      </div>
+      <div style="margin-top:14px; display:flex; gap:8px">
+        <button class="btn btn--primary btn--sm" type="submit">저장</button>
+      </div>
+    </form>
+  </div>
+
+  {# ────────── 현재 환경값 (read-only) ────────── #}
+  <div class="card">
+    <div class="card__header">
+      <h3 class="card__title">현재 환경값 <span style="color:var(--muted); font-weight:500; font-size:12px; margin-left:6px">read-only</span></h3>
+    </div>
+    <div class="card__body">
+      <dl class="kv" style="grid-template-columns:140px 1fr; font-size:12.5px; gap:8px 12px">
+        <dt>Hub 버전</dt><dd class="mono">v{{ env_info.hub_version }}</dd>
+        <dt>Data root</dt><dd class="mono" style="word-break:break-all">{{ env_info.data_root }}</dd>
+        <dt>Bind</dt><dd class="mono">{{ env_info.bind }}</dd>
+        <dt>Max upload</dt><dd class="mono">{{ env_info.max_upload_bytes|bytes_human }}</dd>
+        <dt>Retention</dt>
+        <dd>
+          {% if env_info.retention_days > 0 %}
+            <span class="mono">{{ env_info.retention_days }}일</span>
+          {% else %}
+            <span class="badge badge--neutral">disabled</span>
+          {% endif %}
+        </dd>
+        <dt>Python</dt><dd class="mono">{{ env_info.python }}</dd>
+        <dt>Auth</dt>
+        <dd>
+          {% if env_info.auth_enabled %}
+            <span class="badge badge--success"><span class="dot"></span>required</span>
+          {% else %}
+            <span class="badge badge--warning"><span class="dot"></span>disabled</span>
+          {% endif %}
+        </dd>
+      </dl>
+    </div>
+  </div>
+
+  {# ────────── 향후 정책 (placeholder) ────────── #}
+  <div class="card" style="grid-column:1 / -1">
+    <div class="card__header">
+      <h3 class="card__title">향후 정책 <span style="color:var(--muted); font-weight:500; font-size:12px; margin-left:6px">미구현</span></h3>
+    </div>
+    <div class="card__body" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:8px 16px; font-size:12.5px; color:var(--muted)">
+      <div>
+        <strong style="color:var(--fg-2)">강한 비밀번호 정책</strong>
+        <div>최소 12자, 대소문자·숫자·특수문자 1개 이상</div>
+      </div>
+      <div>
+        <strong style="color:var(--fg-2)">공유 링크 기본 만료</strong>
+        <div>발급 시 기본 적용 TTL (현재는 무제한)</div>
+      </div>
+      <div>
+        <strong style="color:var(--fg-2)">세션 최대 크기</strong>
+        <div>업로드 거부 임계치 (현재는 Max upload 단일 값)</div>
+      </div>
+      <div>
+        <strong style="color:var(--fg-2)">자동 보관 기간</strong>
+        <div>오래된 세션 자동 삭제 (환경 변수 <code class="mono">TRAILBOX_HUB_RETENTION_DAYS</code> 만 지원)</div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

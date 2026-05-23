@@ -34,11 +34,19 @@ from ..bootstrap import consume_setup_token
 from ..config import HubConfig
 from ..lockout import LoginLockout
 from ..session_owners import SessionOwnerStore
+from ..session_tags import SessionTagStore, normalize_tag
 from ..settings_store import SettingsStore
 from ..shares import ShareStore
 from ..storage import Storage
 from ..tokens import ApiTokenStore
 from ..users import PasswordPolicyError, User, UserStore, validate_username
+from ..view_helpers import (
+    derive_device,
+    derive_device_label,
+    derive_thumb_kind,
+    load_events,
+    register_filters,
+)
 from ..web_sessions import COOKIE_NAME, SESSION_TTL_DAYS, WebSessionStore
 
 log = logging.getLogger("trailbox.hub.web")
@@ -110,16 +118,23 @@ def build_router(
     storage: Storage,
     shares: ShareStore,
     lockout: LoginLockout,
+    tags: SessionTagStore,
 ) -> tuple[APIRouter, Jinja2Templates]:
     router = APIRouter(tags=["web"])
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    register_filters(templates.env)
+
+    def _pending_user_count() -> int:
+        return sum(1 for u in users.list_all() if u.status == "pending")
 
     def _ctx(request: Request, **extra) -> dict:
         user = _resolve_current_user(request, sessions)
+        pending = _pending_user_count() if user and user.role == "admin" else 0
         return {
             "request": request,
             "current_user": user,
             "hub_version": HUB_VERSION,
+            "pending_user_count": pending,
             **extra,
         }
 
@@ -357,6 +372,7 @@ def build_router(
         if user.role != "admin":
             mine = set(owners.list_for_owner(user.id))
             summaries = [s for s in summaries if s.session_id in mine]
+
         owner_map: dict[str, str] = {}
         if user.role == "admin":
             id_to_name = {u.id: u.username for u in users.list_all()}
@@ -364,14 +380,51 @@ def build_router(
                 oid = owners.get(s.session_id)
                 if oid is not None:
                     owner_map[s.session_id] = id_to_name.get(oid, str(oid))
+
+        # Batched tag lookup so the list view stays O(1) DB calls.
+        tags_map = tags.tags_by_session([s.session_id for s in summaries])
+
+        view_sessions = []
+        total_size = 0
+        total_dur = 0.0
+        total_shares = 0
+        for s in summaries:
+            share_count = len(shares.list_for_session(s.session_id))
+            total_shares += share_count
+            total_size += s.size_bytes
+            total_dur += s.duration_seconds or 0.0
+            view_sessions.append({
+                "summary": s,
+                "owner": owner_map.get(s.session_id),
+                "shares_count": share_count,
+                "device": derive_device(s.exe_path, s.device_kind, s.platform),
+                "thumb_kind": derive_thumb_kind(s.exe_path, s.device_kind),
+                "device_label": derive_device_label(s.exe_path, s.platform, s.device_kind),
+                "tags": tags_map.get(s.session_id, []),
+            })
+
+        # Quota: hub_settings may carry a real number later; for now show against
+        # the prototype's 4 GiB reference so the % chip has something to display.
+        storage_quota = 4 * 1024 * 1024 * 1024
+
         return templates.TemplateResponse(
             request,
             "sessions/list.html",
-            _ctx(request, sessions=summaries, owners=owner_map),
+            _ctx(
+                request,
+                view_sessions=view_sessions,
+                total_count=len(view_sessions),
+                total_duration=total_dur,
+                total_size=total_size,
+                storage_quota=storage_quota,
+                total_shares=total_shares,
+                owners=owner_map,
+                active_nav="sessions",
+            ),
         )
 
     @router.get("/sessions/{session_id}", response_class=HTMLResponse)
-    def session_detail(request: Request, session_id: str):
+    def session_detail(request: Request, session_id: str, new_share: str | None = None):
         user = _require_user(request)
         if not storage.exists(session_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
@@ -382,10 +435,52 @@ def build_router(
         if s is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
         share_items = shares.list_for_session(session_id)
+
+        # Owner lookup for admin display.
+        owner_name = None
+        oid = owners.get(session_id)
+        if oid is not None:
+            row = users.get_by_id(oid)
+            if row is not None:
+                owner_name = row.username
+
+        # Pull system info out of session_meta.json for the 사양 tab. The meta
+        # schema is whatever the recording client wrote; we surface the common
+        # fields and pass the raw dict so the template can fall back gracefully.
+        import json as _json
+        meta_path = storage.session_dir(session_id) / "session_meta.json"
+        session_meta: dict = {}
+        if meta_path.is_file():
+            try:
+                session_meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, _json.JSONDecodeError):
+                session_meta = {}
+
+        view = {
+            "summary": s,
+            "owner": owner_name,
+            "device": derive_device(s.exe_path, s.device_kind, s.platform),
+            "device_label": derive_device_label(s.exe_path, s.platform, s.device_kind),
+            "thumb_kind": derive_thumb_kind(s.exe_path, s.device_kind),
+        }
+
+        events_data = load_events(storage.session_dir(session_id))
+        session_tags = tags.list_for_session(session_id)
+
         return templates.TemplateResponse(
             request,
             "sessions/detail.html",
-            _ctx(request, session=s, shares=share_items),
+            _ctx(
+                request,
+                session=s,
+                view=view,
+                shares=share_items,
+                session_meta=session_meta,
+                events_data=events_data,
+                session_tags=session_tags,
+                new_share=new_share if new_share and any(sh["token"] == new_share for sh in share_items) else None,
+                active_nav="sessions",
+            ),
         )
 
     @router.post("/sessions/{session_id}/delete")
@@ -412,8 +507,71 @@ def build_router(
             "share_created", actor_id=user.id, target=session_id,
             detail={"via": "web", "token_prefix": token[:8]},
         )
+        # Pass the token via query param so the detail page can flash it once.
         return RedirectResponse(
-            f"/sessions/{session_id}", status_code=status.HTTP_303_SEE_OTHER
+            f"/sessions/{session_id}?new_share={token}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    # Owner-auth viewer: same file tree the share-token route serves, but
+    # gated by cookie session instead of a public /v/{token}/ link. Lets the
+    # owner embed the viewer in /sessions/{id} without minting a share first.
+    @router.get("/sessions/{session_id}/v")
+    @router.get("/sessions/{session_id}/v/")
+    def session_viewer_root(request: Request, session_id: str):
+        return _serve_session_file(request, session_id, "viewer.html")
+
+    @router.get("/sessions/{session_id}/v/{path:path}")
+    def session_viewer_path(request: Request, session_id: str, path: str):
+        return _serve_session_file(request, session_id, path or "viewer.html")
+
+    def _serve_session_file(request: Request, session_id: str, rel: str):
+        from fastapi.responses import FileResponse
+        user = _require_user(request)
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        # Resolve + reject path traversal: every legitimate path must end up
+        # inside the session dir after symlink/`..` resolution.
+        if rel.endswith("/"):
+            rel = rel + "viewer.html"
+        session_dir = storage.session_dir(session_id).resolve()
+        target = (session_dir / rel).resolve()
+        try:
+            target.relative_to(session_dir)
+        except ValueError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if not target.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        return FileResponse(target)
+
+    @router.post("/sessions/{session_id}/tags")
+    def session_tag_add(request: Request, session_id: str, tag: str = Form(...)):
+        user = _require_user(request)
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        cleaned = normalize_tag(tag)
+        if cleaned:
+            tags.add(session_id, cleaned, created_by=user.id)
+        return RedirectResponse(
+            f"/sessions/{session_id}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @router.post("/sessions/{session_id}/tags/{tag_id}/remove")
+    def session_tag_remove(request: Request, session_id: str, tag_id: int):
+        user = _require_user(request)
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        tags.remove(tag_id, session_id=session_id)
+        return RedirectResponse(
+            f"/sessions/{session_id}",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     @router.post("/sessions/{session_id}/share/{token}/revoke")
@@ -539,7 +697,12 @@ def build_router(
         return templates.TemplateResponse(
             request,
             "admin/users.html",
-            _ctx(request, pending=users.list_pending(), users=users.list_all()),
+            _ctx(
+                request,
+                pending=users.list_pending(),
+                users=users.list_all(),
+                active_nav="admin-users",
+            ),
         )
 
     @router.post("/admin/users/{user_id}/approve")
@@ -631,16 +794,32 @@ def build_router(
                 users=users.list_all(),
                 temp_password_for=target.username,
                 temp_password=generated,
+                active_nav="admin-users",
             ),
         )
 
     @router.get("/admin/settings", response_class=HTMLResponse)
     def admin_settings(request: Request):
         _require_admin(request)
+        import sys as _sys
+        env_info = {
+            "hub_version": HUB_VERSION,
+            "data_root": str(cfg.data_root),
+            "bind": f"{cfg.host}:{cfg.port}",
+            "max_upload_bytes": cfg.max_upload_bytes,
+            "retention_days": cfg.retention_days,
+            "python": f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}",
+            "auth_enabled": cfg.auth_enabled,
+        }
         return templates.TemplateResponse(
             request,
             "admin/settings.html",
-            _ctx(request, settings=settings.all()),
+            _ctx(
+                request,
+                settings=settings.all(),
+                env_info=env_info,
+                active_nav="admin-settings",
+            ),
         )
 
     @router.post("/admin/settings")
@@ -668,7 +847,13 @@ def build_router(
         return templates.TemplateResponse(
             request,
             "admin/audit.html",
-            _ctx(request, entries=entries, usernames=usernames),
+            _ctx(
+                request,
+                entries=entries,
+                usernames=usernames,
+                limit=limit,
+                active_nav="admin-audit",
+            ),
         )
 
     return router, templates

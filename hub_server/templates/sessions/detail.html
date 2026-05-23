@@ -1,51 +1,414 @@
 {% extends "base.html" %}
 {% block title %}{{ session.session_id }} · Trailbox Hub{% endblock %}
+
+{% block breadcrumbs %}
+  <a href="/sessions" style="color:var(--muted)">세션</a>
+  <span class="sep">/</span>
+  <strong class="mono">{{ session.session_id }}</strong>
+{% endblock %}
+
 {% block content %}
-<h1><code>{{ session.session_id }}</code></h1>
+{# Reusable icons #}
+{% set icon_pc %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1"/><path d="M5.5 14h5M8 11.5V14"/></svg>{% endset %}
+{% set icon_phone %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><path d="M7 12.5h2"/></svg>{% endset %}
+{% set icon_link %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5l-1 1"/><path d="M9.5 6.5a2.5 2.5 0 0 0-3.5 0l-2 2a2.5 2.5 0 0 0 3.5 3.5l1-1"/></svg>{% endset %}
+{% set icon_copy %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M10 5V3.5a1 1 0 0 0-1-1H3.5a1 1 0 0 0-1 1V9a1 1 0 0 0 1 1H5"/></svg>{% endset %}
+{% set icon_trash %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.5 9a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1l.5-9"/></svg>{% endset %}
+{% set icon_download %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M4 7l4 4 4-4"/><path d="M2.5 13.5h11"/></svg>{% endset %}
+{% set icon_share %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="3.5" r="1.5"/><circle cx="4" cy="8" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M10.7 4.4 5.3 7.1M5.3 8.9l5.4 2.7"/></svg>{% endset %}
+{% set icon_external %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5"/><path d="M11.5 9.5v3.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1H7"/></svg>{% endset %}
 
-<dl class="kv">
-  <dt>시작 시각</dt><dd>{{ session.started_at or '—' }}</dd>
-  <dt>길이</dt><dd>{{ '%.1f초'|format(session.duration_seconds) if session.duration_seconds else '—' }}</dd>
-  <dt>크기</dt><dd>{{ (session.size_bytes / 1024 / 1024)|round(1) }} MB</dd>
-  <dt>로그 줄</dt><dd>{{ session.log_lines }}</dd>
-  <dt>입력 이벤트</dt><dd>{{ session.input_events }}</dd>
-  <dt>메트릭 샘플</dt><dd>{{ session.metric_samples }}</dd>
-  <dt>EXE</dt><dd><code>{{ session.exe_path or '—' }}</code></dd>
-</dl>
+{# ────────── Header ────────── #}
+<div class="detail-header">
+  <span class="detail-id">{{ session.session_id }}</span>
 
-<div class="actions row">
-  {% if session.has_viewer %}
-    {% if shares %}
-      <a class="button" href="/v/{{ shares[0].token }}/" target="_blank">뷰어 열기</a>
-    {% endif %}
-    <form action="/sessions/{{ session.session_id }}/share" method="post" class="inline-form">
-      <button type="submit" class="button">새 공유 링크 발급</button>
-    </form>
+  {% if view.device == 'Android' %}
+    <span class="badge badge--success">{{ icon_phone }}{{ view.device_label }}</span>
+  {% else %}
+    <span class="badge badge--info">{{ icon_pc }}{{ view.device_label }}</span>
   {% endif %}
-  <a class="button" href="/api/sessions/{{ session.session_id }}/zip">zip 다운로드</a>
-  <form action="/sessions/{{ session.session_id }}/delete" method="post" class="inline-form"
-        onsubmit="return confirm('정말 삭제하시겠습니까?');">
-    <button type="submit" class="danger button">삭제</button>
+
+  {% if view.owner and current_user.role == 'admin' %}
+    <span class="badge badge--outline" style="display:inline-flex; gap:6px; align-items:center; height:22px; padding:0 8px">
+      <span class="avatar avatar--sm" style="width:16px; height:16px; font-size:9px">{{ view.owner[0]|upper }}</span>
+      {{ view.owner }}
+    </span>
+  {% endif %}
+
+  <div style="margin-left:auto; display:flex; gap:8px">
+    <a class="btn" href="/api/sessions/{{ session.session_id }}/zip">{{ icon_download }}zip 다운로드</a>
+    <form action="/sessions/{{ session.session_id }}/share" method="post" class="inline-form">
+      <button type="submit" class="btn btn--primary">{{ icon_share }}공유 링크 발급</button>
+    </form>
+  </div>
+</div>
+
+{# Tag strip — chips with × remove + add input #}
+<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:16px">
+  {% for t in session_tags %}
+    <span class="badge badge--outline" style="display:inline-flex; align-items:center; gap:2px; height:22px; padding:0 0 0 8px">
+      <span class="mono" style="font-size:11.5px">#{{ t.tag }}</span>
+      <form action="/sessions/{{ session.session_id }}/tags/{{ t.id }}/remove" method="post" class="inline-form">
+        <button type="submit" class="btn btn--ghost" title="태그 제거" aria-label="태그 제거"
+                style="height:20px; width:20px; padding:0; border:0; opacity:0.55; font-size:14px; line-height:1">×</button>
+      </form>
+    </span>
+  {% endfor %}
+  <form action="/sessions/{{ session.session_id }}/tags" method="post" style="display:inline-flex">
+    <input class="input mono" name="tag" placeholder="+ 태그 추가" maxlength="32" autocomplete="off"
+           style="height:22px; padding:0 10px; font-size:11.5px; width:140px" />
   </form>
 </div>
 
-{% if shares %}
-<h2>공유 링크</h2>
-<table class="data">
-  <thead><tr><th>Token</th><th>URL</th><th></th></tr></thead>
-  <tbody>
-    {% for s in shares %}
-    <tr>
-      <td><code>{{ s.token[:8] }}…</code></td>
-      <td><a href="/v/{{ s.token }}/" target="_blank">/v/{{ s.token }}/</a></td>
-      <td>
-        <form action="/sessions/{{ session.session_id }}/share/{{ s.token }}/revoke" method="post" class="inline-form">
-          <button type="submit" class="danger link-btn">revoke</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+{% if new_share %}
+  {% set new_share_url = request.url_for('view_root', token=new_share) %}
+  <div class="flash flash--success" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+    <strong>공유 링크가 발급되었습니다.</strong>
+    <code class="mono" style="background:oklch(0.55 0.14 150 / 0.1); padding:2px 8px; border-radius:4px; flex-shrink:0">{{ new_share_url }}</code>
+    <button class="btn btn--ghost btn--sm" data-copy="{{ new_share_url }}" data-copy-done="복사됨">{{ icon_copy }}<span>복사</span></button>
+    <a class="btn btn--ghost btn--sm" href="{{ new_share_url }}" target="_blank" rel="noopener">{{ icon_external }}<span>열기</span></a>
+  </div>
 {% endif %}
+
+<div class="detail-grid">
+  {# ────────── LEFT: viewer + tabs ────────── #}
+  <div style="display:flex; flex-direction:column; gap:16px; min-width:0">
+
+    {# Viewer area — embed the session's own viewer.html via owner-auth route.
+       Falls back to a thumbnail+message card when has_viewer is false. #}
+    <div class="viewer" style="position:relative">
+      {% if session.has_viewer %}
+        <div style="position:relative; aspect-ratio:16/9; background:oklch(0.08 0.01 270)">
+          <iframe src="/sessions/{{ session.session_id }}/v/"
+                  title="{{ session.session_id }} viewer"
+                  loading="lazy"
+                  style="position:absolute; inset:0; width:100%; height:100%; border:0; background:transparent"
+                  allow="autoplay; fullscreen"
+                  referrerpolicy="no-referrer"></iframe>
+          <a class="btn btn--ghost btn--icon btn--sm"
+             href="/sessions/{{ session.session_id }}/v/" target="_blank" rel="noopener"
+             title="새 탭에서 열기" aria-label="새 탭에서 열기"
+             style="position:absolute; top:10px; right:10px; background:oklch(0.15 0.01 270 / 0.7); color:white; border-color:oklch(1 0 0 / 0.2); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px)">
+            {{ icon_external }}
+          </a>
+        </div>
+      {% else %}
+        <div class="viewer__stage" style="display:flex; align-items:center; justify-content:center; position:relative">
+          <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.28 0.12 {{ view.thumb_kind|thumb_hue }}), oklch(0.16 0.06 200))"></div>
+          <img class="viewer__frame" src="/api/sessions/{{ session.session_id }}/thumb.jpg" alt="" onerror="this.remove()" />
+          <div style="position:relative; text-align:center; color:white; padding:18px 22px; background:oklch(0 0 0 / 0.45); border-radius:12px; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px)">
+            <div class="mono" style="font-size:13px; font-weight:600; margin-bottom:8px">{{ session.session_id }}</div>
+            <div style="font-size:12px; opacity:0.7">viewer.html이 이 세션에 포함되지 않았습니다</div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+
+    {# Tabs card: events / system / shares  (AI tab intentionally omitted) #}
+    <div class="card" data-tabs-scope>
+      <div class="card__header" style="padding-bottom:0; border-bottom:0; align-items:flex-end">
+        <div class="tabs" style="margin-bottom:0; border-bottom:0">
+          <button class="tabs__item active" data-tab="events">이벤트</button>
+          <button class="tabs__item" data-tab="system">시스템 사양</button>
+          <button class="tabs__item" data-tab="shares">
+            공유 링크
+            {% if shares %}<span class="count">{{ shares|length }}</span>{% endif %}
+          </button>
+          <button class="tabs__item" data-tab="analysis">
+            AI 분석
+            <span class="count" style="background:var(--warning-soft); color:oklch(0.45 0.14 75)">곧</span>
+          </button>
+        </div>
+      </div>
+
+      {# 이벤트 — first N lines of logs.jsonl + inputs.jsonl, merged by t_video_s #}
+      <div data-tab-panel="events">
+        {% if not events_data.events %}
+          <div class="card__body">
+            <div class="empty" style="padding:20px 0">
+              <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+                <path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>
+              </svg>
+              <h3>이벤트가 없습니다</h3>
+              <p>이 세션은 로그·입력 캡처를 끄고 기록된 것 같습니다.</p>
+            </div>
+          </div>
+        {% else %}
+          <div style="padding:12px 14px; border-bottom:1px solid var(--border); border-top:1px solid var(--border); display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+            <div class="seg" data-seg-name="event-filter">
+              <button class="seg__btn active" data-value="all">전체 · {{ events_data.counts.all }}</button>
+              <button class="seg__btn" data-value="log">Logs · {{ events_data.counts.log }}</button>
+              <button class="seg__btn" data-value="input">Inputs · {{ events_data.counts.input }}</button>
+              {% if events_data.counts.error %}
+                <button class="seg__btn" data-value="error">Errors · {{ events_data.counts.error }}</button>
+              {% endif %}
+              {% if events_data.counts.warn %}
+                <button class="seg__btn" data-value="warn">Warn · {{ events_data.counts.warn }}</button>
+              {% endif %}
+            </div>
+            <div class="input-wrap" style="flex:1; max-width:240px; margin-left:auto">
+              <svg class="icon-left" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.5"/>
+                <path d="M10.5 10.5 14 14"/>
+              </svg>
+              <input class="input" id="events-search" placeholder="이벤트 검색" autocomplete="off" />
+            </div>
+          </div>
+
+          {% if events_data.truncated_logs or events_data.truncated_inputs %}
+            <div style="padding:8px 14px; background:var(--bg-2); border-bottom:1px solid var(--border-muted); font-size:11.5px; color:var(--muted)">
+              앞 {{ events_data.per_file_limit }}줄만 표시 — 전체는
+              {{ events_data.total_logs|compact_number }} logs ·
+              {{ events_data.total_inputs|compact_number }} inputs. 전체 타임라인은 위 뷰어에서 확인.
+            </div>
+          {% endif %}
+
+          <div class="event-list" id="events-list">
+            {% for ev in events_data.events %}
+              <div class="event-row" data-kind="{{ ev.kind }}" data-t="{{ ev.t_video_s }}"
+                   data-search="{{ ((ev.message or '') ~ ' ' ~ (ev.source or ''))|lower }}">
+                <span class="event-row__t">
+                  <span class="event-row__type"></span>
+                  {{ ev.t_video_s|t_video }}
+                </span>
+                <span class="event-row__msg">
+                  <span style="color:var(--subtle); margin-right:6px">{{ ev.source }}</span>
+                  {{ ev.message }}
+                </span>
+              </div>
+            {% endfor %}
+          </div>
+
+          <div id="events-empty" class="empty" hidden style="padding:24px 0">
+            <h3>일치하는 이벤트가 없습니다</h3>
+          </div>
+        {% endif %}
+      </div>
+
+      {# 시스템 사양 #}
+      <div data-tab-panel="system" hidden>
+        <div class="card__body">
+          <dl class="kv" style="grid-template-columns:90px 1fr; font-size:13px">
+            {% set sys = session_meta.get('system') or {} %}
+            {% if sys.get('platform') or sys.get('os') %}
+              <dt>OS</dt><dd>{{ sys.get('platform') or sys.get('os') }}</dd>
+            {% endif %}
+            {% if sys.get('cpu') %}
+              <dt>CPU</dt><dd>{{ sys.cpu }}</dd>
+            {% endif %}
+            {% if sys.get('ram_gb') %}
+              <dt>RAM</dt><dd>{{ sys.ram_gb }} GB</dd>
+            {% endif %}
+            {% if sys.get('gpu') %}
+              <dt>GPU</dt><dd>{{ sys.gpu }}</dd>
+            {% endif %}
+            {% if sys.get('vram_gb') %}
+              <dt>VRAM</dt><dd>{{ sys.vram_gb }} GB</dd>
+            {% endif %}
+            {% if sys.get('display') %}
+              <dt>Display</dt><dd>{{ sys.display }}</dd>
+            {% endif %}
+            {% if sys.get('python_version') %}
+              <dt>Python</dt><dd class="mono">{{ sys.python_version }}</dd>
+            {% endif %}
+            {% if sys.get('trailbox_version') %}
+              <dt>Trailbox</dt><dd class="mono">{{ sys.trailbox_version }}</dd>
+            {% endif %}
+            <dt>EXE</dt><dd class="mono" style="word-break:break-all">{{ session.exe_path or '—' }}</dd>
+            <dt>Session ID</dt><dd class="mono">{{ session.session_id }}</dd>
+          </dl>
+          {% if not sys %}
+            <p style="margin-top:14px; font-size:12.5px; color:var(--muted)">
+              session_meta.json에 system 블록이 없습니다 — 이 세션은 시스템 스냅샷이 기록되기 전 버전(혹은 외부) 클라이언트에서 캡처된 것 같습니다.
+            </p>
+          {% endif %}
+        </div>
+      </div>
+
+      {# 공유 링크 #}
+      <div data-tab-panel="shares" hidden>
+        {% if not shares %}
+          <div class="card__body">
+            <div class="empty" style="padding:20px 0">
+              <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+                <path d="M6.5 9.5a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5l-1 1"/>
+                <path d="M9.5 6.5a2.5 2.5 0 0 0-3.5 0l-2 2a2.5 2.5 0 0 0 3.5 3.5l1-1"/>
+              </svg>
+              <h3>아직 공유 링크가 없습니다</h3>
+              <p>상단의 「공유 링크 발급」 버튼으로 만들 수 있어요.</p>
+            </div>
+          </div>
+        {% else %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Token</th>
+                <th>URL</th>
+                <th style="width:1px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in shares %}
+                {% set s_url = request.url_for('view_root', token=s.token) %}
+                <tr>
+                  <td><code class="mono">{{ s.token[:10] }}…</code></td>
+                  <td>
+                    <div style="display:flex; align-items:center; gap:6px">
+                      <code class="mono" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ s_url }}</code>
+                      <button class="btn btn--ghost btn--sm" data-copy="{{ s_url }}" data-copy-done="복사됨">{{ icon_copy }}<span>복사</span></button>
+                      <a class="btn btn--ghost btn--sm" href="{{ s_url }}" target="_blank" rel="noopener" title="새 탭에서 열기">{{ icon_external }}</a>
+                    </div>
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <form action="/sessions/{{ session.session_id }}/share/{{ s.token }}/revoke" method="post" class="inline-form"
+                            data-confirm="이 공유 링크를 폐기하시겠습니까? 기존 URL은 더 이상 작동하지 않습니다.">
+                        <button class="btn btn--ghost btn--sm btn--danger" type="submit">revoke</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+
+      {# AI 분석 — interface scaffold for a future LLM hook. The card lays out
+         where the assistant output will land; a real implementation would
+         POST to /api/sessions/{sid}/analyze and stream the response into
+         #analysis-output. We intentionally don't ship the endpoint yet — the
+         user-facing '곧 제공' messaging is the contract. #}
+      <div data-tab-panel="analysis" hidden>
+        <div class="card__body">
+          <div style="display:flex; align-items:flex-start; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border-muted); margin-bottom:14px">
+            <div style="width:40px; height:40px; border-radius:10px; background:var(--accent-soft); color:var(--accent-fg); display:flex; align-items:center; justify-content:center; flex-shrink:0">
+              <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="5" width="10" height="8" rx="1.5"/>
+                <path d="M8 5V2.5"/>
+                <circle cx="6" cy="9" r="0.6" fill="currentColor"/>
+                <circle cx="10" cy="9" r="0.6" fill="currentColor"/>
+                <path d="M6 11.5h4"/>
+              </svg>
+            </div>
+            <div style="flex:1; min-width:0">
+              <div style="font-size:14px; font-weight:600; margin-bottom:2px; display:flex; align-items:center; gap:8px">
+                Claude · <code class="mono" style="font-size:12px">session.analyze</code>
+                <span class="badge badge--warning"><span class="dot"></span>곧 제공</span>
+              </div>
+              <div style="font-size:12.5px; color:var(--muted)">
+                MCP를 통해 session_meta · logs · inputs · metrics를 컨텍스트로 묶어
+                Claude에게 분석을 의뢰합니다.
+              </div>
+            </div>
+            <button class="btn btn--sm" disabled title="아직 제공되지 않음">재분석</button>
+          </div>
+
+          <div id="analysis-output" style="background:var(--bg-2); border:1px solid var(--border); border-radius:8px; padding:14px; font-size:13px; line-height:1.6; color:var(--fg-2)">
+            <p style="margin:0 0 10px">
+              <strong style="color:var(--fg)">예정된 출력 형식 ─</strong>
+              실 구현 시 아래 세 섹션이 자동 생성되어 여기 채워집니다.
+            </p>
+            <ul style="margin:0 0 12px; padding-left:20px">
+              <li><strong>요약</strong> — 세션 길이, 주요 이벤트 시점, 메트릭 이상치 1–2문장</li>
+              <li><strong>주목할 만한 구간</strong> — t_video_s 코드블록 + 무슨 일이 일어났는지</li>
+              <li><strong>제안</strong> — 이전 세션과의 비교, 회귀 의심, 다음 점검 포인트</li>
+            </ul>
+            <div style="display:grid; grid-template-columns:120px 1fr; gap:6px 12px; font-size:12px; padding:10px 12px; background:var(--surface); border-radius:6px; border:1px solid var(--border-muted)">
+              <span style="color:var(--muted)">입력 컨텍스트</span>
+              <span class="mono" style="word-break:break-all">session_meta.json · logs.jsonl(first 1k) · inputs.jsonl(first 1k) · metrics/process.jsonl</span>
+              <span style="color:var(--muted)">캐시 위치</span>
+              <span class="mono" style="word-break:break-all">{session_dir}/analysis.json</span>
+              <span style="color:var(--muted)">예상 라우트</span>
+              <span class="mono">POST /api/sessions/{sid}/analyze</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ────────── RIGHT: session info + danger ────────── #}
+  <aside style="display:flex; flex-direction:column; gap:16px; min-width:0">
+    <div class="card">
+      <div class="card__header">
+        <h3 class="card__title">세션 정보</h3>
+      </div>
+      <div class="card__body">
+        <dl class="kv" style="grid-template-columns:88px 1fr; font-size:13px; gap:8px 12px">
+          <dt>시작</dt><dd class="mono" style="font-size:12px">{{ session.started_at or '—' }}</dd>
+          <dt></dt><dd style="font-size:12px; color:var(--muted); margin-top:-4px">{{ session.started_at|relative_time }}</dd>
+          <dt>길이</dt><dd class="mono">{{ session.duration_seconds|duration }}</dd>
+          <dt>크기</dt><dd class="mono">{{ session.size_bytes|bytes_human }}</dd>
+          <dt>프레임</dt><dd><span class="mono">{{ session.screen_frames|compact_number }}</span></dd>
+          <dt>로그</dt><dd><span class="mono">{{ session.log_lines|compact_number }}</span> 줄</dd>
+          <dt>입력</dt><dd><span class="mono">{{ session.input_events|compact_number }}</span> 이벤트</dd>
+          <dt>샘플</dt><dd><span class="mono">{{ session.metric_samples|compact_number }}</span></dd>
+          {% if view.owner %}
+            <dt>소유자</dt>
+            <dd style="display:flex; align-items:center; gap:6px">
+              <span class="avatar avatar--sm">{{ view.owner[0]|upper }}</span>
+              {{ view.owner }}
+            </dd>
+          {% endif %}
+          <dt>뷰어</dt>
+          <dd>
+            {% if session.has_viewer %}
+              <span class="badge badge--success"><span class="dot"></span>포함됨</span>
+            {% else %}
+              <span class="badge badge--neutral">없음</span>
+            {% endif %}
+          </dd>
+        </dl>
+      </div>
+      <div class="card__footer">
+        <form action="/sessions/{{ session.session_id }}/delete" method="post" class="inline-form"
+              data-confirm="정말 삭제하시겠습니까? 세션 {{ session.session_id }} 의 파일과 공유 링크가 모두 사라집니다.">
+          <button type="submit" class="btn btn--sm btn--danger">{{ icon_trash }}<span>세션 삭제</span></button>
+        </form>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function () {
+  // Events tab: filter by kind + search, attempt seek-on-click via iframe postMessage.
+  const list = document.getElementById('events-list');
+  if (!list) return;
+  const empty = document.getElementById('events-empty');
+  const state = { kind: 'all', q: '' };
+
+  function apply() {
+    let visible = 0;
+    list.querySelectorAll('.event-row[data-kind]').forEach((row) => {
+      let show = true;
+      if (state.kind !== 'all' && row.dataset.kind !== state.kind) show = false;
+      if (state.q && !row.dataset.search.includes(state.q)) show = false;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (empty) empty.hidden = visible !== 0;
+  }
+
+  document.querySelectorAll('[data-seg-name="event-filter"]').forEach((g) => {
+    g.addEventListener('seg-change', (e) => { state.kind = e.detail.value; apply(); });
+  });
+  const input = document.getElementById('events-search');
+  if (input) input.addEventListener('input', (e) => { state.q = e.target.value.toLowerCase().trim(); apply(); });
+
+  // Best-effort seek. The owner-auth viewer iframe is same-origin so we
+  // could postMessage to it; current viewer.html doesn't listen for that,
+  // but the message is harmless and future viewer versions can adopt it.
+  list.addEventListener('click', (ev) => {
+    const row = ev.target.closest('.event-row[data-t]');
+    if (!row) return;
+    const t = parseFloat(row.dataset.t);
+    if (!Number.isFinite(t)) return;
+    const iframe = document.querySelector('.viewer iframe');
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage({ type: 'trailbox.seek', t_video_s: t }, '*');
+  });
+})();
+</script>
 {% endblock %}

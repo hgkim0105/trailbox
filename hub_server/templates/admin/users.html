@@ -1,89 +1,193 @@
 {% extends "base.html" %}
 {% block title %}사용자 관리 · Trailbox Hub{% endblock %}
+{% block heading %}사용자 관리{% endblock %}
+
 {% block content %}
-<h1>사용자</h1>
+{% set icon_check %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>{% endset %}
+{% set icon_close %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 3.5 12.5 12.5M12.5 3.5 3.5 12.5"/></svg>{% endset %}
+{% set icon_copy %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M10 5V3.5a1 1 0 0 0-1-1H3.5a1 1 0 0 0-1 1V9a1 1 0 0 0 1 1H5"/></svg>{% endset %}
+{% set icon_clock %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>{% endset %}
+
+<div class="page-header">
+  <div>
+    <h1>사용자 관리</h1>
+    <p>승인 대기 · 권한 · 상태 · 토큰</p>
+  </div>
+</div>
 
 {% if temp_password %}
-<section class="card" style="border-color: #1b7a1b;">
-  <h2 class="success">임시 비밀번호 발급됨 — <code>{{ temp_password_for }}</code></h2>
-  <p>
-    아래 값은 <strong>이 페이지에서만 한 번 표시</strong>됩니다. 지금 복사해서 본인에게 안전한 채널로 전달하세요.
-    해당 사용자는 다음 로그인 시 자동으로 비밀번호 변경 페이지로 이동합니다.
-  </p>
-  <code class="block">{{ temp_password }}</code>
-</section>
+  <div class="flash flash--success" style="flex-direction:column; align-items:stretch; gap:10px; margin-bottom:18px">
+    <div>
+      <strong>임시 비밀번호 발급됨 —</strong>
+      <code class="mono" style="background:oklch(0.55 0.14 150 / 0.1); padding:1px 6px; border-radius:4px">{{ temp_password_for }}</code>
+    </div>
+    <div style="font-size:12.5px; color:var(--fg-2)">
+      아래 값은 <strong>이 페이지에서만 한 번 표시</strong>됩니다. 안전한 채널로 본인에게 전달하세요. 해당 사용자는 다음 로그인 시 자동으로 비밀번호 변경 페이지로 이동합니다.
+    </div>
+    <div class="code-block" style="display:flex; align-items:center; gap:8px">
+      <span style="flex:1; min-width:0; word-break:break-all">{{ temp_password }}</span>
+      <button class="btn btn--ghost btn--sm" data-copy="{{ temp_password }}" data-copy-done="복사됨">{{ icon_copy }}<span>복사</span></button>
+    </div>
+  </div>
 {% endif %}
 
+{# ────────── Pending approvals ────────── #}
 {% if pending %}
-<section class="card">
-  <h2>승인 대기</h2>
-  <table class="data">
-    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>가입 시각</th><th></th></tr></thead>
-    <tbody>
-      {% for u in pending %}
-      <tr>
-        <td>{{ u.id }}</td>
-        <td>{{ u.username }}</td>
-        <td>{{ u.email or '—' }}</td>
-        <td>{{ u.created_at }}</td>
-        <td>
-          <form action="/admin/users/{{ u.id }}/approve" method="post" class="inline-form">
-            <button type="submit" class="primary">승인</button>
-          </form>
-          <form action="/admin/users/{{ u.id }}/disable" method="post" class="inline-form"
-                onsubmit="return confirm('거절(disable) 하시겠습니까?');">
-            <button type="submit" class="danger link-btn">거절</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</section>
+  <div class="card" style="margin-bottom:18px; border-color: color-mix(in oklch, var(--warning) 30%, var(--border))">
+    <div class="card__header" style="background:var(--warning-soft)">
+      <h3 class="card__title" style="display:flex; align-items:center; gap:8px">
+        <span style="color:oklch(0.5 0.13 75)">{{ icon_clock }}</span>
+        승인 대기 ({{ pending|length }})
+      </h3>
+      <div style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--muted)">
+        <span>관리자 승인 후 활성화됩니다</span>
+      </div>
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Email</th>
+          <th>가입 시각</th>
+          <th style="width:1px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in pending %}
+          <tr>
+            <td>
+              <div style="display:flex; align-items:center; gap:8px">
+                <span class="avatar avatar--sm">{{ u.username[0]|upper }}</span>
+                <span style="font-weight:500">{{ u.username }}</span>
+              </div>
+            </td>
+            <td>{{ u.email or '—' }}</td>
+            <td class="mono" style="font-size:11.5px; color:var(--muted)">
+              {{ u.created_at }}
+              {% if u.created_at %}<span style="margin-left:6px">· {{ u.created_at|relative_time }}</span>{% endif %}
+            </td>
+            <td>
+              <div class="row-actions">
+                <form action="/admin/users/{{ u.id }}/approve" method="post" class="inline-form">
+                  <button class="btn btn--primary btn--sm" type="submit">{{ icon_check }}<span>승인</span></button>
+                </form>
+                <form action="/admin/users/{{ u.id }}/disable" method="post" class="inline-form"
+                      data-confirm="이 가입 신청을 거절(disable) 하시겠습니까?">
+                  <button class="btn btn--ghost btn--sm btn--danger" type="submit">{{ icon_close }}<span>거절</span></button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 {% endif %}
 
-<section class="card">
-  <h2>전체 사용자</h2>
-  <table class="data">
+{# ────────── All users ────────── #}
+<div class="card">
+  <div class="card__header">
+    <h3 class="card__title">전체 사용자 ({{ users|length }})</h3>
+    <div class="input-wrap" style="max-width:240px">
+      <svg class="icon-left" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5"/>
+        <path d="M10.5 10.5 14 14"/>
+      </svg>
+      <input class="input" id="users-search" placeholder="username · email 검색" autocomplete="off" />
+    </div>
+  </div>
+  <table class="table">
     <thead>
-      <tr><th>ID</th><th>Username</th><th>Role</th><th>Status</th><th>가입</th><th>승인</th><th>액션</th></tr>
-    </thead>
-    <tbody>
-      {% for u in users %}
       <tr>
-        <td>{{ u.id }}</td>
-        <td>{{ u.username }}</td>
-        <td>{{ u.role }}</td>
-        <td>{{ u.status }}</td>
-        <td>{{ u.created_at }}</td>
-        <td>{{ u.approved_at or '—' }}</td>
-        <td class="actions">
-          {% if u.id != current_user.id %}
-            {% if u.status == 'active' %}
-              <form action="/admin/users/{{ u.id }}/disable" method="post" class="inline-form"
-                    onsubmit="return confirm('비활성화 하시겠습니까?');">
-                <button type="submit" class="danger link-btn">disable</button>
-              </form>
-            {% endif %}
-            <form action="/admin/users/{{ u.id }}/role" method="post" class="inline-form">
-              <input type="hidden" name="role" value="{{ 'user' if u.role == 'admin' else 'admin' }}" />
-              <button type="submit" class="link-btn">{{ 'demote→user' if u.role == 'admin' else 'promote→admin' }}</button>
-            </form>
-            <form action="/admin/users/{{ u.id }}/tokens" method="post" class="inline-form"
-                  onsubmit="return confirm('이 사용자의 모든 토큰을 revoke 합니까?');">
-              <button type="submit" class="link-btn">revoke tokens</button>
-            </form>
-            <form action="/admin/users/{{ u.id }}/password/reset" method="post" class="inline-form"
-                  onsubmit="return confirm('임시 비밀번호를 생성하고 강제 변경 플래그를 설정합니다. 계속하시겠습니까?');">
-              <button type="submit" class="link-btn">reset password</button>
-            </form>
-          {% else %}
-            <span class="muted">(나)</span>
-          {% endif %}
-        </td>
+        <th>User</th>
+        <th>Role</th>
+        <th>Status</th>
+        <th>가입</th>
+        <th>승인</th>
+        <th style="width:1px"></th>
       </tr>
+    </thead>
+    <tbody id="users-tbody">
+      {% for u in users %}
+        <tr data-search="{{ ((u.username or '') ~ ' ' ~ (u.email or ''))|lower }}">
+          <td>
+            <div style="display:flex; align-items:center; gap:10px">
+              <span class="avatar avatar--sm">{{ u.username[0]|upper }}</span>
+              <div>
+                <div style="font-weight:500">
+                  {{ u.username }}
+                  {% if u.id == current_user.id %}
+                    <span style="color:var(--muted); font-weight:400; font-size:12px">· 나</span>
+                  {% endif %}
+                </div>
+                <div style="font-size:11.5px; color:var(--muted)">{{ u.email or '—' }}</div>
+              </div>
+            </div>
+          </td>
+          <td>
+            {% if u.role == 'admin' %}
+              <span class="badge badge--accent">admin</span>
+            {% else %}
+              <span class="badge badge--neutral">user</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if u.status == 'active' %}
+              <span class="badge badge--success"><span class="dot"></span>active</span>
+            {% elif u.status == 'pending' %}
+              <span class="badge badge--warning"><span class="dot"></span>pending</span>
+            {% else %}
+              <span class="badge badge--danger"><span class="dot"></span>{{ u.status }}</span>
+            {% endif %}
+          </td>
+          <td class="mono" style="font-size:11.5px; color:var(--muted)">{{ u.created_at or '—' }}</td>
+          <td class="mono" style="font-size:11.5px; color:var(--muted)">{{ u.approved_at or '—' }}</td>
+          <td>
+            {% if u.id != current_user.id %}
+              <div class="row-actions">
+                {% if u.status == 'active' %}
+                  <form action="/admin/users/{{ u.id }}/disable" method="post" class="inline-form"
+                        data-confirm="이 사용자를 disable 하고 보유 토큰을 모두 폐기합니다. 계속하시겠습니까?">
+                    <button class="btn btn--ghost btn--sm btn--danger" type="submit">disable</button>
+                  </form>
+                {% endif %}
+                <form action="/admin/users/{{ u.id }}/role" method="post" class="inline-form"
+                      data-confirm="{{ u.username }}의 권한을 변경합니다. 계속하시겠습니까?">
+                  <input type="hidden" name="role" value="{{ 'user' if u.role == 'admin' else 'admin' }}" />
+                  <button class="btn btn--ghost btn--sm" type="submit">
+                    {{ 'demote → user' if u.role == 'admin' else 'promote → admin' }}
+                  </button>
+                </form>
+                <form action="/admin/users/{{ u.id }}/tokens" method="post" class="inline-form"
+                      data-confirm="이 사용자의 모든 API 토큰을 폐기합니다. 사용 중인 클라이언트는 즉시 401을 받게 됩니다.">
+                  <button class="btn btn--ghost btn--sm btn--danger" type="submit">revoke tokens</button>
+                </form>
+                <form action="/admin/users/{{ u.id }}/password/reset" method="post" class="inline-form"
+                      data-confirm="임시 비밀번호를 생성하고 강제 변경 플래그를 설정합니다. 이 사용자의 모든 토큰도 함께 폐기됩니다. 계속하시겠습니까?">
+                  <button class="btn btn--ghost btn--sm" type="submit">reset pw</button>
+                </form>
+              </div>
+            {% else %}
+              <span style="color:var(--subtle); font-size:11.5px">자기 자신</span>
+            {% endif %}
+          </td>
+        </tr>
       {% endfor %}
     </tbody>
   </table>
-</section>
+</div>
+
+<script>
+(function () {
+  const input = document.getElementById('users-search');
+  if (!input) return;
+  const tbody = document.getElementById('users-tbody');
+  input.addEventListener('input', function () {
+    const q = input.value.toLowerCase().trim();
+    tbody.querySelectorAll('tr[data-search]').forEach(function (row) {
+      row.style.display = (!q || row.dataset.search.includes(q)) ? '' : 'none';
+    });
+  });
+})();
+</script>
 {% endblock %}

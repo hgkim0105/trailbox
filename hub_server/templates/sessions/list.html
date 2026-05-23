@@ -1,46 +1,363 @@
 {% extends "base.html" %}
 {% block title %}세션 · Trailbox Hub{% endblock %}
-{% block content %}
-<h1>세션</h1>
-<p class="muted">
-  {% if current_user.role == 'admin' %}전체 사용자{% else %}본인{% endif %}의
-  세션 {{ sessions|length }}개
-</p>
+{% block heading %}세션{% endblock %}
 
-{% if not sessions %}
-  <p class="muted">표시할 세션이 없습니다. Trailbox 클라이언트에서 업로드하면 여기에 나타납니다.</p>
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>세션</h1>
+    <p>{% if current_user.role == 'admin' %}전체 사용자{% else %}본인{% endif %}의 캡처 세션 · 업로드, 공유</p>
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat">
+    <div class="stat__label">세션</div>
+    <div class="stat__value">{{ total_count }}</div>
+    <div class="stat__delta">{% if current_user.role == 'admin' %}전체 사용자{% else %}내 세션{% endif %}</div>
+  </div>
+  <div class="stat">
+    <div class="stat__label">총 길이</div>
+    <div class="stat__value">{{ total_duration|duration }}</div>
+    <div class="stat__delta">
+      {% if total_count > 0 %}평균 {{ (total_duration / total_count)|duration }}{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat__label">스토리지</div>
+    <div class="stat__value">{{ total_size|bytes_human }}</div>
+    <div class="stat__delta">
+      {% if storage_quota %}{{ ((total_size * 100) / storage_quota)|round(0, 'floor')|int }}% · {{ storage_quota|bytes_human }} quota{% endif %}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat__label">활성 공유</div>
+    <div class="stat__value">{{ total_shares }}</div>
+    <div class="stat__delta">{% if total_shares > 0 %}공유 링크 활성{% else %}없음{% endif %}</div>
+  </div>
+</div>
+
+{# Reusable SVG fragments — define here to avoid repeating the same path strings. #}
+{% set icon_pc %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1"/><path d="M5.5 14h5M8 11.5V14"/></svg>{% endset %}
+{% set icon_phone %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><path d="M7 12.5h2"/></svg>{% endset %}
+{% set icon_link %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 9.5a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5l-1 1"/><path d="M9.5 6.5a2.5 2.5 0 0 0-3.5 0l-2 2a2.5 2.5 0 0 0 3.5 3.5l1-1"/></svg>{% endset %}
+
+<div class="sessions-toolbar">
+  <div class="input-wrap" style="flex:1; max-width:360px">
+    <svg class="icon-left" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5"/>
+      <path d="M10.5 10.5 14 14"/>
+    </svg>
+    <input class="input" id="sessions-search" placeholder="세션 ID · 실행파일 검색" autocomplete="off" />
+  </div>
+
+  {% if current_user.role == 'admin' %}
+    <div class="seg" data-seg-name="scope">
+      <button class="seg__btn active" data-value="all">전체</button>
+      <button class="seg__btn" data-value="mine">내 세션</button>
+    </div>
+  {% endif %}
+
+  <div class="seg" data-seg-name="device">
+    <button class="seg__btn active" data-value="all">모두</button>
+    <button class="seg__btn" data-value="PC">{{ icon_pc }}<span>PC</span></button>
+    <button class="seg__btn" data-value="Android">{{ icon_phone }}<span>Android</span></button>
+  </div>
+
+  <div style="margin-left:auto">
+    <div class="seg" data-seg-name="layout" role="group" aria-label="레이아웃">
+      <button class="seg__btn active" data-value="cards" title="카드" aria-label="카드">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="5" height="5" rx="0.5"/><rect x="9" y="2" width="5" height="5" rx="0.5"/><rect x="2" y="9" width="5" height="5" rx="0.5"/><rect x="9" y="9" width="5" height="5" rx="0.5"/></svg>
+      </button>
+      <button class="seg__btn" data-value="table" title="테이블" aria-label="테이블">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="0.5"/><path d="M2 6h12M2 9.5h12M6 6v7.5"/></svg>
+      </button>
+      <button class="seg__btn" data-value="compact" title="컴팩트" aria-label="컴팩트">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+{% if not view_sessions %}
+  <div class="empty">
+    <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+      <path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>
+      <path d="M4 4v8M9 4v8" stroke-opacity="0.4"/>
+    </svg>
+    <h3>표시할 세션이 없습니다</h3>
+    <p>Trailbox 클라이언트에서 업로드하면 여기에 표시됩니다.</p>
+  </div>
 {% else %}
-<table class="data">
-  <thead>
-    <tr>
-      <th>Session</th>
-      <th>시작 시각</th>
-      <th>길이</th>
-      <th>크기</th>
-      {% if current_user.role == 'admin' %}<th>소유자</th>{% endif %}
-      <th>액션</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for s in sessions %}
-    <tr>
-      <td><a href="/sessions/{{ s.session_id }}"><code>{{ s.session_id }}</code></a></td>
-      <td>{{ s.started_at or '—' }}</td>
-      <td>{{ '%.1f초'|format(s.duration_seconds) if s.duration_seconds else '—' }}</td>
-      <td>{{ (s.size_bytes / 1024 / 1024)|round(1) }} MB</td>
-      {% if current_user.role == 'admin' %}
-        <td>{{ owners.get(s.session_id, '—') }}</td>
-      {% endif %}
-      <td class="actions">
-        <a href="/api/sessions/{{ s.session_id }}/zip">zip</a>
-        <form action="/sessions/{{ s.session_id }}/delete" method="post" class="inline-form"
-              onsubmit="return confirm('정말 삭제하시겠습니까? {{ s.session_id }}');">
-          <button type="submit" class="danger link-btn">삭제</button>
-        </form>
-      </td>
-    </tr>
+
+<div data-list-container data-active-layout="cards">
+
+  {# ────────── Cards ────────── #}
+  <div class="sessions-grid" data-layout-panel="cards">
+    {% for view in view_sessions %}
+      {% set s = view.summary %}
+      <a href="/sessions/{{ s.session_id }}" class="session-card"
+         data-device="{{ view.device }}" data-owner="{{ view.owner or '' }}"
+         data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label ~ ' ' ~ (view.tags|join(' ')))|lower }}">
+        <div class="thumb">
+          <div class="thumb__bg" style="background: linear-gradient(135deg, oklch(0.35 0.14 {{ view.thumb_kind|thumb_hue }}), oklch(0.22 0.08 200))"></div>
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:white; opacity:0.45">
+            {% if view.device == 'Android' %}
+              <svg width="44" height="44" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><path d="M7 12.5h2"/></svg>
+            {% else %}
+              <svg width="44" height="44" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1"/><path d="M5.5 14h5M8 11.5V14"/></svg>
+            {% endif %}
+          </div>
+          <img class="thumb__img" src="/api/sessions/{{ s.session_id }}/thumb.jpg" alt="" loading="lazy" onerror="this.remove()" />
+          <div class="thumb__overlay"></div>
+          <div class="thumb__badges">
+            <span class="badge badge--outline" style="background:oklch(0.15 0.01 270 / 0.5); color:white; border-color:oklch(1 0 0 / 0.25)">{{ view.device }}</span>
+            {% if s.has_viewer %}<span class="badge badge--outline" style="background:oklch(0.15 0.01 270 / 0.5); color:white; border-color:oklch(1 0 0 / 0.25)">viewer</span>{% endif %}
+          </div>
+          <div class="thumb__title">{{ s.session_id }}</div>
+          <div class="thumb__duration">{{ s.duration_seconds|duration }}</div>
+          <div class="thumb-play">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg>
+          </div>
+        </div>
+        <div class="session-card__body">
+          <div class="session-card__title">
+            <span class="mono" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1">{{ s.session_id }}</span>
+            {% if view.shares_count > 0 %}
+              <span class="badge badge--accent">{{ icon_link }}{{ view.shares_count }}</span>
+            {% endif %}
+          </div>
+          <div class="session-card__meta">
+            <span>{{ view.device_label }}</span>
+            <span class="sep">·</span>
+            <span>{{ s.started_at|relative_time }}</span>
+            {% if view.owner and current_user.role == 'admin' %}
+              <span class="sep">·</span>
+              <span>{{ view.owner }}</span>
+            {% endif %}
+          </div>
+          {% if view.tags %}
+            <div style="display:flex; gap:4px; flex-wrap:wrap">
+              {% for t in view.tags[:3] %}
+                <span class="badge badge--outline mono" style="font-size:10.5px; height:18px; padding:0 6px">#{{ t }}</span>
+              {% endfor %}
+              {% if view.tags|length > 3 %}
+                <span style="font-size:10.5px; color:var(--muted); padding:0 4px; align-self:center">+{{ view.tags|length - 3 }}</span>
+              {% endif %}
+            </div>
+          {% endif %}
+          <div class="session-card__counts">
+            <div class="metric-pill">
+              <div class="metric-pill__value">{{ s.log_lines|compact_number }}</div>
+              <div class="metric-pill__label">Logs</div>
+            </div>
+            <div class="metric-pill">
+              <div class="metric-pill__value">{{ s.input_events|compact_number }}</div>
+              <div class="metric-pill__label">Inputs</div>
+            </div>
+            <div class="metric-pill">
+              <div class="metric-pill__value">{{ s.metric_samples|compact_number }}</div>
+              <div class="metric-pill__label">Samples</div>
+            </div>
+          </div>
+        </div>
+      </a>
     {% endfor %}
-  </tbody>
-</table>
+  </div>
+
+  {# ────────── Table ────────── #}
+  <div data-layout-panel="table" hidden>
+    <div class="card" style="overflow:hidden">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:54px"></th>
+            <th>Session</th>
+            <th>시작</th>
+            <th>길이</th>
+            <th>크기</th>
+            <th>이벤트</th>
+            {% if current_user.role == 'admin' %}<th>소유자</th>{% endif %}
+            <th>공유</th>
+            <th style="width:1px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for view in view_sessions %}
+            {% set s = view.summary %}
+            <tr data-device="{{ view.device }}" data-owner="{{ view.owner or '' }}"
+                data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label ~ ' ' ~ (view.tags|join(' ')))|lower }}">
+              <td>
+                <a href="/sessions/{{ s.session_id }}" style="text-decoration:none; display:block">
+                  <div class="session-row-thumb" style="width:42px; height:26px; border-radius:4px; overflow:hidden; position:relative">
+                    <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.35 0.14 {{ view.thumb_kind|thumb_hue }}), oklch(0.22 0.08 200))"></div>
+                    <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:white">
+                      {% if view.device == 'Android' %}{{ icon_phone }}{% else %}{{ icon_pc }}{% endif %}
+                    </div>
+                    <img src="/api/sessions/{{ s.session_id }}/thumb.jpg" alt="" loading="lazy" onerror="this.remove()" />
+                  </div>
+                </a>
+              </td>
+              <td>
+                <a href="/sessions/{{ s.session_id }}" style="color:inherit; text-decoration:none">
+                  <div style="display:flex; flex-direction:column; gap:2px">
+                    <code class="mono" style="font-weight:500">{{ s.session_id }}</code>
+                    <span style="font-size:11.5px; color:var(--muted)">{{ view.device_label }}</span>
+                  </div>
+                </a>
+              </td>
+              <td>
+                <div style="display:flex; flex-direction:column; font-size:12px">
+                  <span>{{ s.started_at|relative_time }}</span>
+                  {% if s.started_at %}<span class="mono" style="font-size:11px; color:var(--muted)">{{ s.started_at }}</span>{% endif %}
+                </div>
+              </td>
+              <td><span class="mono">{{ s.duration_seconds|duration }}</span></td>
+              <td><span class="mono">{{ s.size_bytes|bytes_human }}</span></td>
+              <td>
+                <div style="display:flex; gap:10px; font-size:11.5px; color:var(--muted)" class="mono">
+                  <span>L {{ s.log_lines|compact_number }}</span>
+                  <span>I {{ s.input_events|compact_number }}</span>
+                  <span>S {{ s.metric_samples|compact_number }}</span>
+                </div>
+              </td>
+              {% if current_user.role == 'admin' %}
+                <td>
+                  {% if view.owner %}
+                    <div style="display:flex; align-items:center; gap:6px">
+                      <div class="avatar avatar--sm">{{ view.owner[0]|upper }}</div>
+                      <span>{{ view.owner }}</span>
+                    </div>
+                  {% else %}
+                    <span style="color:var(--subtle)">—</span>
+                  {% endif %}
+                </td>
+              {% endif %}
+              <td>
+                {% if view.shares_count > 0 %}
+                  <span class="badge badge--accent">{{ icon_link }}{{ view.shares_count }}</span>
+                {% else %}
+                  <span style="color:var(--subtle); font-size:12px">—</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="row-actions">
+                  <a class="btn btn--ghost btn--sm btn--icon" href="/api/sessions/{{ s.session_id }}/zip" title="zip" aria-label="zip 다운로드">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M4 7l4 4 4-4"/><path d="M2.5 13.5h11"/></svg>
+                  </a>
+                  <form action="/sessions/{{ s.session_id }}/delete" method="post" class="inline-form"
+                        data-confirm="정말 삭제하시겠습니까? {{ s.session_id }}">
+                    <button type="submit" class="btn btn--ghost btn--sm btn--icon btn--danger" title="삭제" aria-label="삭제">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.5 9a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1l.5-9"/></svg>
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ────────── Compact ────────── #}
+  <div data-layout-panel="compact" hidden>
+    <div class="sessions-compact">
+      {% for view in view_sessions %}
+        {% set s = view.summary %}
+        <a href="/sessions/{{ s.session_id }}" class="sessions-compact__row"
+           data-device="{{ view.device }}" data-owner="{{ view.owner or '' }}"
+           data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label ~ ' ' ~ (view.tags|join(' ')))|lower }}">
+          <div class="sessions-compact__thumb">
+            <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.35 0.14 {{ view.thumb_kind|thumb_hue }}), oklch(0.22 0.08 200))"></div>
+            <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:white; opacity:0.85">
+              {% if view.device == 'Android' %}<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/></svg>{% else %}<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="2.5" width="13" height="9" rx="1"/></svg>{% endif %}
+            </div>
+            <img src="/api/sessions/{{ s.session_id }}/thumb.jpg" alt="" loading="lazy" onerror="this.remove()" />
+          </div>
+          <div style="display:flex; flex-direction:column; gap:1px; min-width:0">
+            <span class="sessions-compact__id">{{ s.session_id }}</span>
+            <span class="sessions-compact__meta">
+              <span>{{ view.device_label }}</span>
+              <span class="sep">·</span>
+              <span>{{ s.started_at|relative_time }}</span>
+              {% if view.owner and current_user.role == 'admin' %}
+                <span class="sep">·</span>
+                <span>{{ view.owner }}</span>
+              {% endif %}
+            </span>
+          </div>
+          <span class="mono" style="font-size:12px; color:var(--muted)">{{ s.duration_seconds|duration }}</span>
+          <span class="mono" style="display:flex; gap:10px; font-size:11px; color:var(--muted)">
+            <span>L {{ s.log_lines|compact_number }}</span>
+            <span>I {{ s.input_events|compact_number }}</span>
+          </span>
+          {% if view.shares_count > 0 %}
+            <span class="badge badge--accent">{{ view.shares_count }}</span>
+          {% else %}
+            <span style="width:28px"></span>
+          {% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  const root = document.querySelector('[data-list-container]');
+  if (!root) return;
+  const VALID = ['cards', 'table', 'compact'];
+  const ME = {{ current_user.username|tojson }};
+  const isAdmin = {{ (current_user.role == 'admin')|tojson }};
+
+  function setLayout(l) {
+    if (!VALID.includes(l)) l = 'cards';
+    root.setAttribute('data-active-layout', l);
+    root.querySelectorAll('[data-layout-panel]').forEach(p => {
+      p.hidden = p.dataset.layoutPanel !== l;
+    });
+    document.querySelectorAll('[data-seg-name="layout"] .seg__btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.value === l);
+    });
+    try { localStorage.setItem('hub_session_layout', l); } catch (e) {}
+  }
+
+  let initial = 'cards';
+  try { initial = localStorage.getItem('hub_session_layout') || 'cards'; } catch (e) {}
+  setLayout(initial);
+
+  document.querySelectorAll('[data-seg-name="layout"]').forEach(g => {
+    g.addEventListener('seg-change', e => setLayout(e.detail.value));
+  });
+
+  const state = { scope: isAdmin ? 'all' : 'mine', device: 'all', q: '' };
+  document.querySelectorAll('[data-seg-name="scope"]').forEach(g => {
+    g.addEventListener('seg-change', e => { state.scope = e.detail.value; apply(); });
+  });
+  document.querySelectorAll('[data-seg-name="device"]').forEach(g => {
+    g.addEventListener('seg-change', e => { state.device = e.detail.value; apply(); });
+  });
+  const searchInput = document.getElementById('sessions-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', e => { state.q = e.target.value.toLowerCase().trim(); apply(); });
+  }
+
+  function apply() {
+    root.querySelectorAll('[data-device]').forEach(el => {
+      const dev = el.dataset.device;
+      const own = el.dataset.owner;
+      const search = (el.dataset.search || '');
+      let visible = true;
+      if (state.scope === 'mine' && own !== ME) visible = false;
+      if (state.device !== 'all' && dev !== state.device) visible = false;
+      if (state.q && !search.includes(state.q)) visible = false;
+      el.style.display = visible ? '' : 'none';
+    });
+  }
+})();
+</script>
+
 {% endif %}
 {% endblock %}
