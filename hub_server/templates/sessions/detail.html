@@ -57,38 +57,34 @@
   {# ────────── LEFT: viewer + tabs ────────── #}
   <div style="display:flex; flex-direction:column; gap:16px; min-width:0">
 
-    {# Viewer area #}
-    <div class="viewer">
-      <div class="viewer__stage" style="display:flex; align-items:center; justify-content:center; position:relative">
-        <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.28 0.12 {{ view.thumb_kind|thumb_hue }}), oklch(0.16 0.06 200))"></div>
-        <img class="viewer__frame" src="/api/sessions/{{ session.session_id }}/thumb.jpg" alt="" onerror="this.remove()" />
-        <div style="position:relative; text-align:center; color:white; padding:18px 22px; background:oklch(0 0 0 / 0.45); border-radius:12px; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px)">
-          <div style="opacity:0.6; margin-bottom:14px">
-            {% if view.device == 'Android' %}
-              <svg width="56" height="56" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><path d="M7 12.5h2"/></svg>
-            {% else %}
-              <svg width="56" height="56" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1"/><path d="M5.5 14h5M8 11.5V14"/></svg>
-            {% endif %}
-          </div>
-          <div class="mono" style="font-size:13px; font-weight:600; margin-bottom:8px">{{ session.session_id }}</div>
-          {% if session.has_viewer %}
-            {% if shares %}
-              {% set v_url = request.url_for('view_root', token=shares[0].token) %}
-              <a class="btn btn--primary btn--sm" href="{{ v_url }}" target="_blank" rel="noopener" style="margin-top:8px">
-                {{ icon_external }}<span>뷰어 열기</span>
-              </a>
-              <div style="margin-top:10px; font-size:11.5px; opacity:0.65">공유 링크로 새 탭에서 재생</div>
-            {% else %}
-              <form action="/sessions/{{ session.session_id }}/share" method="post" class="inline-form" style="margin-top:8px">
-                <button class="btn btn--primary btn--sm" type="submit">{{ icon_share }}<span>공유 링크 발급 후 뷰어 열기</span></button>
-              </form>
-              <div style="margin-top:10px; font-size:11.5px; opacity:0.65">발급 후 새 탭에서 자동 열기</div>
-            {% endif %}
-          {% else %}
-            <div style="margin-top:8px; font-size:12px; opacity:0.7">viewer.html이 이 세션에 포함되지 않았습니다</div>
-          {% endif %}
+    {# Viewer area — embed the session's own viewer.html via owner-auth route.
+       Falls back to a thumbnail+message card when has_viewer is false. #}
+    <div class="viewer" style="position:relative">
+      {% if session.has_viewer %}
+        <div style="position:relative; aspect-ratio:16/9; background:oklch(0.08 0.01 270)">
+          <iframe src="/sessions/{{ session.session_id }}/v/"
+                  title="{{ session.session_id }} viewer"
+                  loading="lazy"
+                  style="position:absolute; inset:0; width:100%; height:100%; border:0; background:transparent"
+                  allow="autoplay; fullscreen"
+                  referrerpolicy="no-referrer"></iframe>
+          <a class="btn btn--ghost btn--icon btn--sm"
+             href="/sessions/{{ session.session_id }}/v/" target="_blank" rel="noopener"
+             title="새 탭에서 열기" aria-label="새 탭에서 열기"
+             style="position:absolute; top:10px; right:10px; background:oklch(0.15 0.01 270 / 0.7); color:white; border-color:oklch(1 0 0 / 0.2); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px)">
+            {{ icon_external }}
+          </a>
         </div>
-      </div>
+      {% else %}
+        <div class="viewer__stage" style="display:flex; align-items:center; justify-content:center; position:relative">
+          <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.28 0.12 {{ view.thumb_kind|thumb_hue }}), oklch(0.16 0.06 200))"></div>
+          <img class="viewer__frame" src="/api/sessions/{{ session.session_id }}/thumb.jpg" alt="" onerror="this.remove()" />
+          <div style="position:relative; text-align:center; color:white; padding:18px 22px; background:oklch(0 0 0 / 0.45); border-radius:12px; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px)">
+            <div class="mono" style="font-size:13px; font-weight:600; margin-bottom:8px">{{ session.session_id }}</div>
+            <div style="font-size:12px; opacity:0.7">viewer.html이 이 세션에 포함되지 않았습니다</div>
+          </div>
+        </div>
+      {% endif %}
     </div>
 
     {# Tabs card: events / system / shares  (AI tab intentionally omitted) #}

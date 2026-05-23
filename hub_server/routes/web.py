@@ -501,6 +501,39 @@ def build_router(
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
+    # Owner-auth viewer: same file tree the share-token route serves, but
+    # gated by cookie session instead of a public /v/{token}/ link. Lets the
+    # owner embed the viewer in /sessions/{id} without minting a share first.
+    @router.get("/sessions/{session_id}/v")
+    @router.get("/sessions/{session_id}/v/")
+    def session_viewer_root(request: Request, session_id: str):
+        return _serve_session_file(request, session_id, "viewer.html")
+
+    @router.get("/sessions/{session_id}/v/{path:path}")
+    def session_viewer_path(request: Request, session_id: str, path: str):
+        return _serve_session_file(request, session_id, path or "viewer.html")
+
+    def _serve_session_file(request: Request, session_id: str, rel: str):
+        from fastapi.responses import FileResponse
+        user = _require_user(request)
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        # Resolve + reject path traversal: every legitimate path must end up
+        # inside the session dir after symlink/`..` resolution.
+        if rel.endswith("/"):
+            rel = rel + "viewer.html"
+        session_dir = storage.session_dir(session_id).resolve()
+        target = (session_dir / rel).resolve()
+        try:
+            target.relative_to(session_dir)
+        except ValueError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if not target.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        return FileResponse(target)
+
     @router.post("/sessions/{session_id}/share/{token}/revoke")
     def session_share_revoke(request: Request, session_id: str, token: str):
         user = _require_user(request)
