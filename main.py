@@ -8,7 +8,7 @@ stdio at import time.
 """
 from __future__ import annotations
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 
 import sys
 
@@ -487,7 +487,7 @@ class TrailboxWindow(QMainWindow):
         self.recorder.set_recording(True)
         self.recorder.set_session_id(session_id)
         audio_status = "오디오 ON" if self._audio_recorder else "오디오 OFF"
-        log_status = "로그 ON" if self._log_collector else "로그 OFF"
+        log_status = "로그 ON" if self._log_collectors else "로그 OFF"
         input_status = "입력 ON" if self._input_recorder else "입력 OFF"
         self.statusBar().showMessage(
             f"녹화 시작: {session.dir} (max {max_fps}fps, "
