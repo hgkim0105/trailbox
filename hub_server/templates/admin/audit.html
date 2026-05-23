@@ -1,23 +1,132 @@
 {% extends "base.html" %}
 {% block title %}감사 로그 · Trailbox Hub{% endblock %}
-{% block content %}
-<h1>감사 로그</h1>
-<p class="muted">최근 {{ entries|length }}개</p>
+{% block heading %}감사 로그{% endblock %}
 
-<table class="data">
-  <thead>
-    <tr><th>시각</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr>
-  </thead>
-  <tbody>
-    {% for e in entries %}
-    <tr>
-      <td>{{ e.ts }}</td>
-      <td>{{ usernames.get(e.actor_id, e.actor_id) or '—' }}</td>
-      <td><code>{{ e.action }}</code></td>
-      <td>{{ e.target or '—' }}</td>
-      <td><code>{{ e.detail or '' }}</code></td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+{% block content %}
+{% macro action_category(action) -%}
+  {%- if action.startswith('login_') or action.startswith('password_') -%}auth
+  {%- elif action.startswith('session_') or action.startswith('share_') -%}session
+  {%- elif action in ('approve', 'disable') or action.startswith('role_') or action.startswith('token_') -%}user
+  {%- elif action.startswith('settings_') -%}settings
+  {%- else -%}other
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro action_tone(action) -%}
+  {%- if 'failed' in action -%}danger
+  {%- elif action.startswith('share_') -%}accent
+  {%- elif action in ('approve',) or 'upload' in action -%}success
+  {%- elif 'disable' in action or 'delete' in action or 'revoke' in action or 'reset' in action -%}warning
+  {%- else -%}neutral
+  {%- endif -%}
+{%- endmacro %}
+
+<div class="page-header">
+  <div>
+    <h1>감사 로그</h1>
+    <p>모든 보안·관리 이벤트 기록 · 최근 {{ entries|length }}건</p>
+  </div>
+</div>
+
+<div class="sessions-toolbar">
+  <div class="input-wrap" style="flex:1; max-width:360px">
+    <svg class="icon-left" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5"/>
+      <path d="M10.5 10.5 14 14"/>
+    </svg>
+    <input class="input" id="audit-search" placeholder="actor · action · target · detail 검색" autocomplete="off" />
+  </div>
+  <div class="seg" data-seg-name="audit-filter">
+    <button class="seg__btn active" data-value="all">전체 · {{ entries|length }}</button>
+    <button class="seg__btn" data-value="auth">Auth</button>
+    <button class="seg__btn" data-value="session">Session</button>
+    <button class="seg__btn" data-value="user">User</button>
+    <button class="seg__btn" data-value="settings">Settings</button>
+    <button class="seg__btn" data-value="other">Other</button>
+  </div>
+</div>
+
+<div class="card" style="overflow:hidden">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>시각</th>
+        <th>Actor</th>
+        <th>Action</th>
+        <th>Target</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody id="audit-tbody">
+      {% for e in entries %}
+        {% set cat = action_category(e.action) %}
+        {% set tone = action_tone(e.action) %}
+        {% set actor_name = (usernames.get(e.actor_id) if e.actor_id else 'system') or ('user#' ~ e.actor_id) %}
+        <tr data-category="{{ cat }}"
+            data-search="{{ ((actor_name or '') ~ ' ' ~ e.action ~ ' ' ~ (e.target or '') ~ ' ' ~ (e.detail or ''))|lower }}">
+          <td class="mono" style="font-size:11.5px; color:var(--muted); white-space:nowrap">
+            {{ e.ts }}
+          </td>
+          <td>
+            {% if e.actor_id %}
+              <div style="display:flex; align-items:center; gap:6px">
+                <span class="avatar avatar--sm">{{ (actor_name[0] if actor_name else '?')|upper }}</span>
+                <span>{{ actor_name }}</span>
+              </div>
+            {% else %}
+              <div style="display:flex; align-items:center; gap:6px">
+                <span style="width:22px; height:22px; border-radius:6px; background:var(--surface-2); display:inline-flex; align-items:center; justify-content:center; color:var(--muted)">
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2 4 9h3l-1 5 5-7H8z"/></svg>
+                </span>
+                <span style="font-size:12px; color:var(--muted)">system</span>
+              </div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge badge--{{ tone }}">{{ e.action }}</span>
+          </td>
+          <td class="mono" style="font-size:12px">{{ e.target or '—' }}</td>
+          <td class="mono" style="font-size:11.5px; color:var(--muted); max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="{{ e.detail or '' }}">
+            {{ e.detail or '—' }}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div id="audit-empty" class="empty" hidden>
+  <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+    <circle cx="7" cy="7" r="4.5"/>
+    <path d="M10.5 10.5 14 14"/>
+  </svg>
+  <h3>일치하는 감사 로그가 없습니다</h3>
+</div>
+
+<script>
+(function () {
+  const tbody = document.getElementById('audit-tbody');
+  const empty = document.getElementById('audit-empty');
+  if (!tbody) return;
+  const state = { cat: 'all', q: '' };
+
+  function apply() {
+    let visible = 0;
+    tbody.querySelectorAll('tr[data-category]').forEach((row) => {
+      let show = true;
+      if (state.cat !== 'all' && row.dataset.category !== state.cat) show = false;
+      if (state.q && !row.dataset.search.includes(state.q)) show = false;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (empty) empty.hidden = visible !== 0;
+  }
+
+  document.querySelectorAll('[data-seg-name="audit-filter"]').forEach((g) => {
+    g.addEventListener('seg-change', (e) => { state.cat = e.detail.value; apply(); });
+  });
+  const input = document.getElementById('audit-search');
+  if (input) input.addEventListener('input', (e) => { state.q = e.target.value.toLowerCase().trim(); apply(); });
+})();
+</script>
 {% endblock %}

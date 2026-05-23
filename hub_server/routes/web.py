@@ -728,10 +728,25 @@ def build_router(
     @router.get("/admin/settings", response_class=HTMLResponse)
     def admin_settings(request: Request):
         _require_admin(request)
+        import sys as _sys
+        env_info = {
+            "hub_version": HUB_VERSION,
+            "data_root": str(cfg.data_root),
+            "bind": f"{cfg.host}:{cfg.port}",
+            "max_upload_bytes": cfg.max_upload_bytes,
+            "retention_days": cfg.retention_days,
+            "python": f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}",
+            "auth_enabled": cfg.auth_enabled,
+        }
         return templates.TemplateResponse(
             request,
             "admin/settings.html",
-            _ctx(request, settings=settings.all()),
+            _ctx(
+                request,
+                settings=settings.all(),
+                env_info=env_info,
+                active_nav="admin-settings",
+            ),
         )
 
     @router.post("/admin/settings")
@@ -759,7 +774,13 @@ def build_router(
         return templates.TemplateResponse(
             request,
             "admin/audit.html",
-            _ctx(request, entries=entries, usernames=usernames),
+            _ctx(
+                request,
+                entries=entries,
+                usernames=usernames,
+                limit=limit,
+                active_nav="admin-audit",
+            ),
         )
 
     return router, templates
