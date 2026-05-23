@@ -88,6 +88,24 @@
     }
   });
 
+  // ── Toggle [hidden] on a target by selector ([data-toggle-hidden="#x"]) ───
+  document.addEventListener('click', function (ev) {
+    const btn = ev.target.closest('[data-toggle-hidden]');
+    if (!btn) return;
+    ev.preventDefault();
+    const sel = btn.dataset.toggleHidden;
+    const target = document.querySelector(sel);
+    if (!target) return;
+    const next = !target.hidden;
+    target.hidden = next;
+    btn.setAttribute('aria-expanded', String(!next));
+    // If revealing, focus the first input/textarea/button inside.
+    if (!next) {
+      const focusable = target.querySelector('input, textarea, select, button');
+      if (focusable) focusable.focus();
+    }
+  });
+
   // ── Confirm for danger buttons (legacy: button.danger, new: .btn--danger) ──
   document.addEventListener('submit', function (ev) {
     const form = ev.target;

@@ -1,57 +1,172 @@
 {% extends "base.html" %}
 {% block title %}내 계정 · Trailbox Hub{% endblock %}
+{% block heading %}내 계정{% endblock %}
+
 {% block content %}
-<h1>내 계정</h1>
+{% set icon_key %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="10.5" r="3"/><path d="M7.5 8.5 13 3M11 5l1.5 1.5"/></svg>{% endset %}
+{% set icon_copy %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M10 5V3.5a1 1 0 0 0-1-1H3.5a1 1 0 0 0-1 1V9a1 1 0 0 0 1 1H5"/></svg>{% endset %}
+{% set icon_plus %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>{% endset %}
+{% set icon_robot %}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="10" height="8" rx="1.5"/><path d="M8 5V2.5"/><circle cx="6" cy="9" r="0.6" fill="currentColor"/><circle cx="10" cy="9" r="0.6" fill="currentColor"/><path d="M6 11.5h4"/></svg>{% endset %}
 
-<dl class="kv">
-  <dt>Username</dt><dd>{{ current_user.username }}</dd>
-  <dt>Email</dt><dd>{{ current_user.email or '—' }}</dd>
-  <dt>Role</dt><dd>{{ current_user.role }}</dd>
-  <dt>Status</dt><dd>{{ current_user.status }}</dd>
-</dl>
+<div class="page-header">
+  <div>
+    <h1>내 계정</h1>
+    <p>프로필 · 비밀번호 · API 토큰</p>
+  </div>
+</div>
 
-<p><a class="button" href="/account/password">비밀번호 변경</a></p>
+{# ────────── Profile ────────── #}
+<div class="card" style="margin-bottom:18px">
+  <div class="card__body" style="display:flex; align-items:center; gap:18px; flex-wrap:wrap">
+    <div class="avatar avatar--lg">{{ current_user.username[0]|upper }}</div>
+    <div style="flex:1; min-width:200px">
+      <div style="font-size:18px; font-weight:600; letter-spacing:-0.01em">{{ current_user.username }}</div>
+      <div style="display:flex; gap:6px; align-items:center; margin-top:4px; flex-wrap:wrap">
+        <span class="badge {% if current_user.role == 'admin' %}badge--accent{% else %}badge--neutral{% endif %}">{{ current_user.role }}</span>
+        <span class="badge badge--success"><span class="dot"></span>{{ current_user.status }}</span>
+        {% if current_user.email %}
+          <span style="color:var(--muted); font-size:12.5px">· {{ current_user.email }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <button class="btn" type="button" data-toggle-hidden="#password-form" aria-expanded="false" aria-controls="password-form">
+      {{ icon_key }}<span>비밀번호 변경</span>
+    </button>
+  </div>
 
-<section class="card">
-  <h2>API 토큰</h2>
-  <p class="muted">Trailbox 클라이언트 / MCP 백엔드가 X-Trailbox-Token 헤더에 실어 보내는 값입니다.</p>
+  <div id="password-form" hidden style="padding:18px; border-top:1px solid var(--border); background:var(--bg-2)">
+    {% if password_error %}
+      <div class="flash flash--error" style="margin-bottom:12px">{{ password_error }}</div>
+    {% endif %}
+    <form action="/account/password" method="post">
+      <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; max-width:780px">
+        <div class="field">
+          <label class="field__label" for="acct-curpw">현재 비밀번호</label>
+          <input class="input" id="acct-curpw" name="current_password" type="password" required autocomplete="current-password" />
+        </div>
+        <div class="field">
+          <label class="field__label" for="acct-newpw">
+            새 비밀번호 <span class="field__help--inline">(최소 8자)</span>
+          </label>
+          <input class="input" id="acct-newpw" name="new_password" type="password" required minlength="8" autocomplete="new-password" />
+        </div>
+        <div class="field">
+          <label class="field__label" for="acct-newpw2">확인</label>
+          <input class="input" id="acct-newpw2" name="new_password2" type="password" required minlength="8" autocomplete="new-password" />
+        </div>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:8px">
+        <button class="btn btn--primary" type="submit">변경</button>
+        <button class="btn btn--ghost" type="button" data-toggle-hidden="#password-form">취소</button>
+      </div>
+    </form>
+  </div>
+</div>
 
-  {% if new_token %}
-    <p class="success">
-      새 토큰이 발급되었습니다. 아래 값은 <strong>다시 표시되지 않습니다</strong> — 지금 복사해두세요.<br />
-      <code class="block">{{ new_token }}</code>
-    </p>
-  {% endif %}
+{# ────────── API Tokens ────────── #}
+<div class="card" style="margin-bottom:18px">
+  <div class="card__header">
+    <div>
+      <h3 class="card__title">API 토큰</h3>
+      <div class="card__subtitle">Trailbox 클라이언트 · MCP 백엔드가 <code class="mono">X-Trailbox-Token</code> 헤더에 실어 보냅니다.</div>
+    </div>
+  </div>
 
-  {% if tokens %}
-    <table class="data">
-      <thead><tr><th>ID</th><th>Label</th><th>발급</th><th>마지막 사용</th><th>상태</th><th></th></tr></thead>
-      <tbody>
-        {% for t in tokens %}
-        <tr>
-          <td>{{ t.id }}</td>
-          <td>{{ t.label or '—' }}</td>
-          <td>{{ t.created_at }}</td>
-          <td>{{ t.last_used or '—' }}</td>
-          <td>{% if t.revoked_at %}<span class="muted">revoked</span>{% else %}active{% endif %}</td>
-          <td>
-            {% if not t.revoked_at %}
-            <form action="/account/tokens/{{ t.id }}/revoke" method="post" class="inline-form">
-              <button type="submit" class="danger link-btn">revoke</button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="muted">아직 발급된 토큰이 없습니다.</p>
-  {% endif %}
+  <div class="card__body">
+    {% if new_token %}
+      <div class="flash flash--success" style="flex-direction:column; align-items:stretch; gap:10px">
+        <div><strong>새 토큰 발급 완료.</strong> 아래 값은 <strong>다시 표시되지 않습니다</strong> — 지금 복사해두세요.</div>
+        <div class="code-block" style="display:flex; align-items:center; gap:8px">
+          <span style="flex:1; min-width:0; word-break:break-all">{{ new_token }}</span>
+          <button class="btn btn--ghost btn--sm" data-copy="{{ new_token }}" data-copy-done="복사됨">{{ icon_copy }}<span>복사</span></button>
+        </div>
+      </div>
+    {% endif %}
 
-  <form action="/account/tokens" method="post" class="row">
-    <input name="label" placeholder="라벨 (예: laptop-qa1)" />
-    <button type="submit" class="primary">새 토큰 발급</button>
-  </form>
-</section>
+    <form action="/account/tokens" method="post" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap">
+      <input class="input" name="label" placeholder="라벨 (예: laptop-qa1, claude-mcp)" maxlength="80" style="flex:1; max-width:320px" />
+      <button class="btn btn--primary" type="submit">{{ icon_plus }}<span>새 토큰 발급</span></button>
+    </form>
+
+    {% if tokens %}
+      <div style="overflow-x:auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>라벨</th>
+              <th>발급</th>
+              <th>마지막 사용</th>
+              <th>상태</th>
+              <th style="width:1px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in tokens %}
+              <tr>
+                <td class="mono" style="color:var(--muted)">#{{ t.id }}</td>
+                <td>{{ t.label or '—' }}</td>
+                <td class="mono" style="font-size:11.5px; color:var(--muted)">{{ t.created_at|relative_time }}</td>
+                <td style="font-size:12px; color:var(--muted)">
+                  {% if t.last_used %}{{ t.last_used|relative_time }}{% else %}—{% endif %}
+                </td>
+                <td>
+                  {% if t.revoked_at %}
+                    <span class="badge badge--neutral">revoked</span>
+                  {% else %}
+                    <span class="badge badge--success"><span class="dot"></span>active</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if not t.revoked_at %}
+                    <div class="row-actions">
+                      <form action="/account/tokens/{{ t.id }}/revoke" method="post" class="inline-form"
+                            data-confirm="이 토큰을 폐기하시겠습니까? 사용 중인 클라이언트는 즉시 401을 받게 됩니다.">
+                        <button class="btn btn--ghost btn--sm btn--danger" type="submit">revoke</button>
+                      </form>
+                    </div>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty" style="padding:20px 0">
+        <h3>아직 발급된 토큰이 없습니다</h3>
+        <p>위 입력란에 라벨을 적고 「새 토큰 발급」을 누르세요.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ────────── MCP setup ────────── #}
+{% set hub_url = (request.base_url|string).rstrip('/') %}
+{% set mcp_config %}{
+  "mcpServers": {
+    "trailbox": {
+      "command": "C:\\Program Files\\Trailbox\\Trailbox-mcp.exe",
+      "env": {
+        "TRAILBOX_HUB_URL": "{{ hub_url }}",
+        "TRAILBOX_HUB_TOKEN": "<위에서 발급한 토큰>"
+      }
+    }
+  }
+}{% endset %}
+<div class="card">
+  <div class="card__header">
+    <div style="flex:1">
+      <h3 class="card__title" style="display:flex; align-items:center; gap:8px">
+        <span style="width:24px; height:24px; border-radius:6px; background:var(--accent-soft); color:var(--accent-fg); display:inline-flex; align-items:center; justify-content:center; flex-shrink:0">{{ icon_robot }}</span>
+        Claude Desktop MCP 연동
+      </h3>
+      <div class="card__subtitle">아래 설정을 <code class="mono">claude_desktop_config.json</code>에 추가하세요.</div>
+    </div>
+    <button class="btn btn--ghost btn--sm" data-copy="{{ mcp_config }}" data-copy-done="복사됨">{{ icon_copy }}<span>복사</span></button>
+  </div>
+  <div class="card__body">
+    <pre class="code-block" style="margin:0; line-height:1.5; white-space:pre-wrap; word-break:break-all">{{ mcp_config }}</pre>
+  </div>
+</div>
 {% endblock %}
