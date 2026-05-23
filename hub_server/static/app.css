@@ -166,12 +166,20 @@ input, select, textarea { font: inherit; color: inherit; }
    ============================================================ */
 .app {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   min-height: 100vh;
 }
 
 .app.auth-mode {
   grid-template-columns: 1fr;
+}
+
+/* Below ~960px the 240px sidebar eats too much horizontal room, so we
+   collapse it to an icon rail. Brand mark + nav icons remain visible;
+   labels, section headers, and the user footer hide via the rules
+   farther down. */
+@media (max-width: 960px) {
+  .app { grid-template-columns: 56px minmax(0, 1fr); }
 }
 
 /* ── Sidebar ──────────────────────────── */
@@ -870,13 +878,28 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .detail-header .badge { height: 22px; padding: 0 8px; font-size: 12px; }
 
+/* Detail grid scales the side column with viewport width: cramped at the
+   1100 → 1400 band, opens up to ~440 on truly wide displays. Below 1100
+   the layout collapses to a single column and the right card stacks. */
 .detail-grid {
   display: grid;
-  grid-template-columns: 1fr 360px;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 440px);
   gap: 18px;
+  align-items: start;
 }
 @media (max-width: 1100px) {
-  .detail-grid { grid-template-columns: 1fr; }
+  .detail-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 1800px) {
+  /* Very wide displays — let the side column breathe a bit and cap the
+     viewer column so it doesn't stretch into a too-wide letterbox. */
+  .detail-grid { grid-template-columns: minmax(0, 1fr) 480px; max-width: 1720px; }
+}
+/* Detail header actions: wrap onto their own row on narrow viewports
+   so the session_id stays readable instead of getting squeezed. */
+@media (max-width: 760px) {
+  .detail-header { gap: 8px; }
+  .detail-header > div[style*="margin-left:auto"] { margin-left: 0 !important; width: 100%; }
 }
 
 /* ── Viewer mock ──────────────────────────── */
@@ -1150,9 +1173,16 @@ input, select, textarea { font: inherit; color: inherit; }
 
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 20px;
+}
+/* Reflow stat cards to 2x2 on tablet widths, 1-column on phone widths. */
+@media (max-width: 1100px) {
+  .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .stat-row { grid-template-columns: minmax(0, 1fr); }
 }
 .stat {
   background: var(--surface);
@@ -1220,6 +1250,39 @@ input, select, textarea { font: inherit; color: inherit; }
 /* The HTML `hidden` attribute needs !important so it wins against
    utility classes like `.sessions-grid { display: grid }`. */
 [hidden] { display: none !important; }
+
+/* ── Compact sidebar (≤ 960px) ──────────────────────────── */
+@media (max-width: 960px) {
+  .sidebar { padding: 14px 6px; align-items: center; }
+  .sidebar__brand-text,
+  .sidebar__section-label,
+  .nav-item > span:not(.nav-badge):not(.nav-icon),
+  .sidebar__user > div:not(.avatar),
+  .sidebar__user > .btn--icon { display: none; }
+  .nav-item {
+    width: 40px; height: 36px;
+    justify-content: center; gap: 0;
+    padding: 6px;
+  }
+  .nav-item .nav-badge {
+    position: absolute; top: -2px; right: -2px;
+    margin-left: 0; min-width: 16px; padding: 0 4px;
+    font-size: 9.5px; line-height: 14px; height: 14px;
+  }
+  .nav-item { position: relative; }
+  .sidebar__user {
+    padding: 8px 4px;
+    justify-content: center;
+  }
+  .sidebar__brand { padding: 4px 0 12px; justify-content: center; }
+}
+/* Below 700 the topbar's breadcrumbs need room too; tighten content padding. */
+@media (max-width: 700px) {
+  .content { padding: 18px 14px 40px; }
+  .topbar { padding: 10px 14px; }
+  .page-header { flex-direction: column; align-items: flex-start; }
+  .page-header__actions { margin-top: 4px; }
+}
 
 /* Real-frame thumbnail layered on top of the device-icon gradient. If the
    image 404s, an inline `onerror` hides it and the gradient shows through. */
