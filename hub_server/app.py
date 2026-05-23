@@ -41,6 +41,7 @@ from .routes import api_admin as api_admin_routes
 from .routes import api_auth as api_auth_routes
 from .routes import web as web_routes
 from .session_owners import SessionOwnerStore
+from .session_tags import SessionTagStore
 from .settings_store import SettingsStore
 from .shares import ShareStore
 from .storage import Storage, is_valid_session_id
@@ -82,6 +83,7 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
     owners = SessionOwnerStore(db)
     audit = AuditLog(db)
     lockout = LoginLockout()
+    tags_store = SessionTagStore(db)
 
     # --- disk-backed stores -----------------------------------------------
     storage = Storage(cfg.data_root, owners=owners)
@@ -118,6 +120,7 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
     app.state.audit = audit
     app.state.lockout = lockout
     app.state.auth_ctx = auth_ctx
+    app.state.tags = tags_store
 
     app.include_router(
         api_auth_routes.build_router(
@@ -154,6 +157,7 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
         storage=storage,
         shares=shares,
         lockout=lockout,
+        tags=tags_store,
     )
     app.include_router(web_router)
 

@@ -98,7 +98,7 @@
       {% set s = view.summary %}
       <a href="/sessions/{{ s.session_id }}" class="session-card"
          data-device="{{ view.device }}" data-owner="{{ view.owner or '' }}"
-         data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label)|lower }}">
+         data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label ~ ' ' ~ (view.tags|join(' ')))|lower }}">
         <div class="thumb">
           <div class="thumb__bg" style="background: linear-gradient(135deg, oklch(0.35 0.14 {{ view.thumb_kind|thumb_hue }}), oklch(0.22 0.08 200))"></div>
           <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:white; opacity:0.45">
@@ -136,6 +136,16 @@
               <span>{{ view.owner }}</span>
             {% endif %}
           </div>
+          {% if view.tags %}
+            <div style="display:flex; gap:4px; flex-wrap:wrap">
+              {% for t in view.tags[:3] %}
+                <span class="badge badge--outline mono" style="font-size:10.5px; height:18px; padding:0 6px">#{{ t }}</span>
+              {% endfor %}
+              {% if view.tags|length > 3 %}
+                <span style="font-size:10.5px; color:var(--muted); padding:0 4px; align-self:center">+{{ view.tags|length - 3 }}</span>
+              {% endif %}
+            </div>
+          {% endif %}
           <div class="session-card__counts">
             <div class="metric-pill">
               <div class="metric-pill__value">{{ s.log_lines|compact_number }}</div>
@@ -176,7 +186,7 @@
           {% for view in view_sessions %}
             {% set s = view.summary %}
             <tr data-device="{{ view.device }}" data-owner="{{ view.owner or '' }}"
-                data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label)|lower }}">
+                data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label ~ ' ' ~ (view.tags|join(' ')))|lower }}">
               <td>
                 <a href="/sessions/{{ s.session_id }}" style="text-decoration:none; display:block">
                   <div class="session-row-thumb" style="width:42px; height:26px; border-radius:4px; overflow:hidden; position:relative">
@@ -257,7 +267,7 @@
         {% set s = view.summary %}
         <a href="/sessions/{{ s.session_id }}" class="sessions-compact__row"
            data-device="{{ view.device }}" data-owner="{{ view.owner or '' }}"
-           data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label)|lower }}">
+           data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label ~ ' ' ~ (view.tags|join(' ')))|lower }}">
           <div class="sessions-compact__thumb">
             <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.35 0.14 {{ view.thumb_kind|thumb_hue }}), oklch(0.22 0.08 200))"></div>
             <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:white; opacity:0.85">

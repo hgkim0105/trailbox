@@ -34,6 +34,7 @@ from ..bootstrap import consume_setup_token
 from ..config import HubConfig
 from ..lockout import LoginLockout
 from ..session_owners import SessionOwnerStore
+from ..session_tags import SessionTagStore, normalize_tag
 from ..settings_store import SettingsStore
 from ..shares import ShareStore
 from ..storage import Storage
@@ -117,6 +118,7 @@ def build_router(
     storage: Storage,
     shares: ShareStore,
     lockout: LoginLockout,
+    tags: SessionTagStore,
 ) -> tuple[APIRouter, Jinja2Templates]:
     router = APIRouter(tags=["web"])
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -379,6 +381,9 @@ def build_router(
                 if oid is not None:
                     owner_map[s.session_id] = id_to_name.get(oid, str(oid))
 
+        # Batched tag lookup so the list view stays O(1) DB calls.
+        tags_map = tags.tags_by_session([s.session_id for s in summaries])
+
         view_sessions = []
         total_size = 0
         total_dur = 0.0
@@ -395,6 +400,7 @@ def build_router(
                 "device": derive_device(s.exe_path, s.device_kind, s.platform),
                 "thumb_kind": derive_thumb_kind(s.exe_path, s.device_kind),
                 "device_label": derive_device_label(s.exe_path, s.platform, s.device_kind),
+                "tags": tags_map.get(s.session_id, []),
             })
 
         # Quota: hub_settings may carry a real number later; for now show against
@@ -459,6 +465,7 @@ def build_router(
         }
 
         events_data = load_events(storage.session_dir(session_id))
+        session_tags = tags.list_for_session(session_id)
 
         return templates.TemplateResponse(
             request,
@@ -470,6 +477,7 @@ def build_router(
                 shares=share_items,
                 session_meta=session_meta,
                 events_data=events_data,
+                session_tags=session_tags,
                 new_share=new_share if new_share and any(sh["token"] == new_share for sh in share_items) else None,
                 active_nav="sessions",
             ),
@@ -537,6 +545,34 @@ def build_router(
         if not target.is_file():
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
         return FileResponse(target)
+
+    @router.post("/sessions/{session_id}/tags")
+    def session_tag_add(request: Request, session_id: str, tag: str = Form(...)):
+        user = _require_user(request)
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        cleaned = normalize_tag(tag)
+        if cleaned:
+            tags.add(session_id, cleaned, created_by=user.id)
+        return RedirectResponse(
+            f"/sessions/{session_id}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @router.post("/sessions/{session_id}/tags/{tag_id}/remove")
+    def session_tag_remove(request: Request, session_id: str, tag_id: int):
+        user = _require_user(request)
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        tags.remove(tag_id, session_id=session_id)
+        return RedirectResponse(
+            f"/sessions/{session_id}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     @router.post("/sessions/{session_id}/share/{token}/revoke")
     def session_share_revoke(request: Request, session_id: str, token: str):

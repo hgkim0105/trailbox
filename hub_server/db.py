@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_session_owners_owner ON session_owners(owner_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
 """
 
-_LATEST_VERSION = 2
+_LATEST_VERSION = 3
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -112,6 +112,27 @@ def migrate(conn: sqlite3.Connection) -> int:
         )
         conn.execute("PRAGMA user_version = 2")
         version = 2
+
+    if version < 3:
+        # v3: session_tags — small per-session tag table. Owners (or admins)
+        # can attach lowercase kebab-case-ish labels for filtering / search.
+        # Tags are normalized at write time; UNIQUE keeps duplicates out.
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS session_tags (
+              id          INTEGER PRIMARY KEY,
+              session_id  TEXT NOT NULL,
+              tag         TEXT NOT NULL COLLATE NOCASE,
+              created_at  TEXT NOT NULL,
+              created_by  INTEGER REFERENCES users(id),
+              UNIQUE(session_id, tag)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_tags_session ON session_tags(session_id);
+            CREATE INDEX IF NOT EXISTS idx_session_tags_tag ON session_tags(tag);
+            """
+        )
+        conn.execute("PRAGMA user_version = 3")
+        version = 3
 
     return version
 
