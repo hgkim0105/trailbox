@@ -624,7 +624,12 @@ def build_router(
         return templates.TemplateResponse(
             request,
             "admin/users.html",
-            _ctx(request, pending=users.list_pending(), users=users.list_all()),
+            _ctx(
+                request,
+                pending=users.list_pending(),
+                users=users.list_all(),
+                active_nav="admin-users",
+            ),
         )
 
     @router.post("/admin/users/{user_id}/approve")
@@ -716,6 +721,7 @@ def build_router(
                 users=users.list_all(),
                 temp_password_for=target.username,
                 temp_password=generated,
+                active_nav="admin-users",
             ),
         )
 
