@@ -1,16 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Trailbox Hub{% endblock %}
+
 {% block content %}
-<section class="hero">
-  <h1>Trailbox Hub</h1>
-  <p class="muted">Trailbox QA 세션 공유 백엔드.</p>
-  {% if current_user %}
-    <p><a class="button primary" href="/sessions">내 세션 보기</a></p>
-  {% else %}
-    <p>
-      <a class="button primary" href="/login">로그인</a>
-      <a class="button" href="/register">회원가입</a>
-    </p>
-  {% endif %}
-</section>
+<div class="page-header">
+  <div>
+    <h1>Trailbox Hub</h1>
+    <p>Trailbox QA 세션 공유 백엔드 · v{{ hub_version }}</p>
+  </div>
+</div>
+
+<div class="card" style="max-width:640px">
+  <div class="card__body" style="display:flex; flex-direction:column; gap:14px">
+    {% if current_user %}
+      <p style="margin:0; color:var(--fg-2)">
+        <strong>{{ current_user.username }}</strong> 으로 로그인됨 · {{ current_user.role }}
+      </p>
+      <div style="display:flex; gap:8px">
+        <a class="btn btn--primary" href="/sessions">내 세션 보기</a>
+        <a class="btn" href="/account">계정</a>
+      </div>
+    {% else %}
+      <p style="margin:0; color:var(--muted)">
+        팀이 캡처한 QA 세션을 확인하려면 로그인하세요.
+      </p>
+      <div style="display:flex; gap:8px">
+        <a class="btn btn--primary" href="/login">로그인</a>
+        <a class="btn" href="/register">회원가입</a>
+      </div>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}
