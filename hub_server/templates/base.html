@@ -123,7 +123,7 @@
       </div>
     </header>
 
-    <main class="content">
+    <main class="content {% block content_class %}{% endblock %}">
       {% if flash %}
         <div class="flash flash--{{ flash.level }}">{{ flash.message }}</div>
       {% endif %}
