@@ -39,6 +39,12 @@ from ..shares import ShareStore
 from ..storage import Storage
 from ..tokens import ApiTokenStore
 from ..users import PasswordPolicyError, User, UserStore, validate_username
+from ..view_helpers import (
+    derive_device,
+    derive_device_label,
+    derive_thumb_kind,
+    register_filters,
+)
 from ..web_sessions import COOKIE_NAME, SESSION_TTL_DAYS, WebSessionStore
 
 log = logging.getLogger("trailbox.hub.web")
@@ -113,13 +119,19 @@ def build_router(
 ) -> tuple[APIRouter, Jinja2Templates]:
     router = APIRouter(tags=["web"])
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    register_filters(templates.env)
+
+    def _pending_user_count() -> int:
+        return sum(1 for u in users.list_all() if u.status == "pending")
 
     def _ctx(request: Request, **extra) -> dict:
         user = _resolve_current_user(request, sessions)
+        pending = _pending_user_count() if user and user.role == "admin" else 0
         return {
             "request": request,
             "current_user": user,
             "hub_version": HUB_VERSION,
+            "pending_user_count": pending,
             **extra,
         }
 
@@ -357,6 +369,7 @@ def build_router(
         if user.role != "admin":
             mine = set(owners.list_for_owner(user.id))
             summaries = [s for s in summaries if s.session_id in mine]
+
         owner_map: dict[str, str] = {}
         if user.role == "admin":
             id_to_name = {u.id: u.username for u in users.list_all()}
@@ -364,10 +377,43 @@ def build_router(
                 oid = owners.get(s.session_id)
                 if oid is not None:
                     owner_map[s.session_id] = id_to_name.get(oid, str(oid))
+
+        view_sessions = []
+        total_size = 0
+        total_dur = 0.0
+        total_shares = 0
+        for s in summaries:
+            share_count = len(shares.list_for_session(s.session_id))
+            total_shares += share_count
+            total_size += s.size_bytes
+            total_dur += s.duration_seconds or 0.0
+            view_sessions.append({
+                "summary": s,
+                "owner": owner_map.get(s.session_id),
+                "shares_count": share_count,
+                "device": derive_device(s.exe_path),
+                "thumb_kind": derive_thumb_kind(s.exe_path),
+                "device_label": derive_device_label(s.exe_path),
+            })
+
+        # Quota: hub_settings may carry a real number later; for now show against
+        # the prototype's 4 GiB reference so the % chip has something to display.
+        storage_quota = 4 * 1024 * 1024 * 1024
+
         return templates.TemplateResponse(
             request,
             "sessions/list.html",
-            _ctx(request, sessions=summaries, owners=owner_map),
+            _ctx(
+                request,
+                view_sessions=view_sessions,
+                total_count=len(view_sessions),
+                total_duration=total_dur,
+                total_size=total_size,
+                storage_quota=storage_quota,
+                total_shares=total_shares,
+                owners=owner_map,
+                active_nav="sessions",
+            ),
         )
 
     @router.get("/sessions/{session_id}", response_class=HTMLResponse)
