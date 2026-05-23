@@ -98,24 +98,47 @@ def compact_number(n: int | float | None) -> str:
     return str(int(v))
 
 
-# ── Derived from exe_path ────────────────────────────────────────────────
+# ── Derived from session_meta + exe_path ─────────────────────────────────
+#
+# All three derivations prefer the authoritative signals from session_meta
+# (capture.target.kind and system.platform) when present, falling back to an
+# exe_path substring heuristic when the meta is missing those fields. The
+# fallback exists so sessions captured by older Trailbox clients (pre-meta
+# enrichment) still get reasonable badges.
 
-def derive_device(exe_path: str | None) -> str:
-    """Best-effort: 'Android' for scrcpy/Android-tagged paths, else 'PC'.
+def derive_device(
+    exe_path: str | None,
+    device_kind: str | None = None,
+    platform: str | None = None,
+) -> str:
+    """Returns 'Android' or 'PC' for the top-level device badge.
 
-    Better signal would come from session_meta.capture.target.kind but that
-    isn't in SessionSummary today. Cheap heuristic only.
+    Priority: device_kind == 'android' > platform contains 'Android' >
+    exe_path heuristic.
     """
-    if not exe_path:
-        return "PC"
-    s = exe_path.lower()
-    if "scrcpy" in s or "android" in s or s.endswith(".apk"):
+    if device_kind == "android":
         return "Android"
+    if platform and "android" in platform.lower():
+        return "Android"
+    if exe_path:
+        s = exe_path.lower()
+        if "scrcpy" in s or "android" in s or s.endswith(".apk"):
+            return "Android"
     return "PC"
 
 
-def derive_thumb_kind(exe_path: str | None) -> str:
-    """Returns 'game' | 'mobile' | 'code'. Controls the card thumb's gradient hue."""
+def derive_thumb_kind(
+    exe_path: str | None,
+    device_kind: str | None = None,
+) -> str:
+    """Returns 'game' | 'mobile' | 'code'. Controls the card thumb's gradient hue.
+
+    'mobile' is anchored to the authoritative device_kind when present;
+    'game' vs 'code' is still exe_path-based since the meta has no
+    notion of game-ness.
+    """
+    if device_kind == "android":
+        return "mobile"
     if not exe_path:
         return "code"
     s = exe_path.lower()
@@ -126,8 +149,24 @@ def derive_thumb_kind(exe_path: str | None) -> str:
     return "code"
 
 
-def derive_device_label(exe_path: str | None) -> str:
-    """Filename without extension, or '—'."""
+def derive_device_label(
+    exe_path: str | None,
+    platform: str | None = None,
+    device_kind: str | None = None,
+) -> str:
+    """Human-facing label below the device badge.
+
+    Prefers the platform string from session_meta ('Windows 11', 'macOS 14',
+    'Android 14'); falls back to the exe filename without extension.
+    """
+    if platform:
+        # Trim long platform strings to keep card layouts tidy.
+        p = platform.strip()
+        if len(p) <= 32:
+            return p
+        return p[:30] + "…"
+    if device_kind == "android":
+        return "Android"
     if not exe_path:
         return "—"
     name = os.path.basename(exe_path.replace("\\", "/"))

@@ -42,6 +42,11 @@ class SessionSummary:
     metric_samples: int
     size_bytes: int
     has_viewer: bool
+    # Authoritative device signal from the recording client when present in
+    # session_meta.json; otherwise None and view helpers fall back to the
+    # exe_path heuristic. New fields default so existing callers stay valid.
+    device_kind: str | None = None  # 'monitor' | 'window' | 'android'
+    platform: str | None = None     # e.g. 'Windows 11', 'macOS 14', 'Android 14'
 
 
 class Storage:
@@ -149,6 +154,13 @@ class Storage:
     def _summarize(self, session_dir: Path) -> SessionSummary:
         meta = _load_meta(session_dir)
         size = _dir_size(session_dir)
+        # Authoritative device signal lives in two places; we look at both and
+        # let view helpers prefer them over exe_path string-matching.
+        capture = meta.get("capture") if isinstance(meta.get("capture"), dict) else {}
+        target = capture.get("target") if isinstance(capture.get("target"), dict) else {}
+        system = meta.get("system") if isinstance(meta.get("system"), dict) else {}
+        device_kind = target.get("kind") if isinstance(target.get("kind"), str) else None
+        platform = system.get("platform") if isinstance(system.get("platform"), str) else None
         return SessionSummary(
             session_id=meta.get("session_id") or session_dir.name,
             started_at=meta.get("started_at"),
@@ -160,6 +172,8 @@ class Storage:
             metric_samples=int(meta.get("metric_samples") or 0),
             size_bytes=size,
             has_viewer=(session_dir / "viewer.html").exists(),
+            device_kind=device_kind,
+            platform=platform,
         )
 
 

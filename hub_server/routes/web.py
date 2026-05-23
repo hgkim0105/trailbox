@@ -391,9 +391,9 @@ def build_router(
                 "summary": s,
                 "owner": owner_map.get(s.session_id),
                 "shares_count": share_count,
-                "device": derive_device(s.exe_path),
-                "thumb_kind": derive_thumb_kind(s.exe_path),
-                "device_label": derive_device_label(s.exe_path),
+                "device": derive_device(s.exe_path, s.device_kind, s.platform),
+                "thumb_kind": derive_thumb_kind(s.exe_path, s.device_kind),
+                "device_label": derive_device_label(s.exe_path, s.platform, s.device_kind),
             })
 
         # Quota: hub_settings may carry a real number later; for now show against
@@ -452,9 +452,9 @@ def build_router(
         view = {
             "summary": s,
             "owner": owner_name,
-            "device": derive_device(s.exe_path),
-            "device_label": derive_device_label(s.exe_path),
-            "thumb_kind": derive_thumb_kind(s.exe_path),
+            "device": derive_device(s.exe_path, s.device_kind, s.platform),
+            "device_label": derive_device_label(s.exe_path, s.platform, s.device_kind),
+            "thumb_kind": derive_thumb_kind(s.exe_path, s.device_kind),
         }
 
         return templates.TemplateResponse(
