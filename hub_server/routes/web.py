@@ -417,7 +417,7 @@ def build_router(
         )
 
     @router.get("/sessions/{session_id}", response_class=HTMLResponse)
-    def session_detail(request: Request, session_id: str):
+    def session_detail(request: Request, session_id: str, new_share: str | None = None):
         user = _require_user(request)
         if not storage.exists(session_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
@@ -428,10 +428,47 @@ def build_router(
         if s is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
         share_items = shares.list_for_session(session_id)
+
+        # Owner lookup for admin display.
+        owner_name = None
+        oid = owners.get(session_id)
+        if oid is not None:
+            row = users.get_by_id(oid)
+            if row is not None:
+                owner_name = row.username
+
+        # Pull system info out of session_meta.json for the 사양 tab. The meta
+        # schema is whatever the recording client wrote; we surface the common
+        # fields and pass the raw dict so the template can fall back gracefully.
+        import json as _json
+        meta_path = storage.session_dir(session_id) / "session_meta.json"
+        session_meta: dict = {}
+        if meta_path.is_file():
+            try:
+                session_meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, _json.JSONDecodeError):
+                session_meta = {}
+
+        view = {
+            "summary": s,
+            "owner": owner_name,
+            "device": derive_device(s.exe_path),
+            "device_label": derive_device_label(s.exe_path),
+            "thumb_kind": derive_thumb_kind(s.exe_path),
+        }
+
         return templates.TemplateResponse(
             request,
             "sessions/detail.html",
-            _ctx(request, session=s, shares=share_items),
+            _ctx(
+                request,
+                session=s,
+                view=view,
+                shares=share_items,
+                session_meta=session_meta,
+                new_share=new_share if new_share and any(sh["token"] == new_share for sh in share_items) else None,
+                active_nav="sessions",
+            ),
         )
 
     @router.post("/sessions/{session_id}/delete")
@@ -458,8 +495,10 @@ def build_router(
             "share_created", actor_id=user.id, target=session_id,
             detail={"via": "web", "token_prefix": token[:8]},
         )
+        # Pass the token via query param so the detail page can flash it once.
         return RedirectResponse(
-            f"/sessions/{session_id}", status_code=status.HTTP_303_SEE_OTHER
+            f"/sessions/{session_id}?new_share={token}",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     @router.post("/sessions/{session_id}/share/{token}/revoke")
