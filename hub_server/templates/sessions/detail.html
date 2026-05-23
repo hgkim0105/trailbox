@@ -97,6 +97,10 @@
             공유 링크
             {% if shares %}<span class="count">{{ shares|length }}</span>{% endif %}
           </button>
+          <button class="tabs__item" data-tab="analysis">
+            AI 분석
+            <span class="count" style="background:var(--warning-soft); color:oklch(0.45 0.14 75)">곧</span>
+          </button>
         </div>
       </div>
 
@@ -251,6 +255,58 @@
             </tbody>
           </table>
         {% endif %}
+      </div>
+
+      {# AI 분석 — interface scaffold for a future LLM hook. The card lays out
+         where the assistant output will land; a real implementation would
+         POST to /api/sessions/{sid}/analyze and stream the response into
+         #analysis-output. We intentionally don't ship the endpoint yet — the
+         user-facing '곧 제공' messaging is the contract. #}
+      <div data-tab-panel="analysis" hidden>
+        <div class="card__body">
+          <div style="display:flex; align-items:flex-start; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--border-muted); margin-bottom:14px">
+            <div style="width:40px; height:40px; border-radius:10px; background:var(--accent-soft); color:var(--accent-fg); display:flex; align-items:center; justify-content:center; flex-shrink:0">
+              <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="5" width="10" height="8" rx="1.5"/>
+                <path d="M8 5V2.5"/>
+                <circle cx="6" cy="9" r="0.6" fill="currentColor"/>
+                <circle cx="10" cy="9" r="0.6" fill="currentColor"/>
+                <path d="M6 11.5h4"/>
+              </svg>
+            </div>
+            <div style="flex:1; min-width:0">
+              <div style="font-size:14px; font-weight:600; margin-bottom:2px; display:flex; align-items:center; gap:8px">
+                Claude · <code class="mono" style="font-size:12px">session.analyze</code>
+                <span class="badge badge--warning"><span class="dot"></span>곧 제공</span>
+              </div>
+              <div style="font-size:12.5px; color:var(--muted)">
+                MCP를 통해 session_meta · logs · inputs · metrics를 컨텍스트로 묶어
+                Claude에게 분석을 의뢰합니다.
+              </div>
+            </div>
+            <button class="btn btn--sm" disabled title="아직 제공되지 않음">재분석</button>
+          </div>
+
+          <div id="analysis-output" style="background:var(--bg-2); border:1px solid var(--border); border-radius:8px; padding:14px; font-size:13px; line-height:1.6; color:var(--fg-2)">
+            <p style="margin:0 0 10px">
+              <strong style="color:var(--fg)">예정된 출력 형식 ─</strong>
+              실 구현 시 아래 세 섹션이 자동 생성되어 여기 채워집니다.
+            </p>
+            <ul style="margin:0 0 12px; padding-left:20px">
+              <li><strong>요약</strong> — 세션 길이, 주요 이벤트 시점, 메트릭 이상치 1–2문장</li>
+              <li><strong>주목할 만한 구간</strong> — t_video_s 코드블록 + 무슨 일이 일어났는지</li>
+              <li><strong>제안</strong> — 이전 세션과의 비교, 회귀 의심, 다음 점검 포인트</li>
+            </ul>
+            <div style="display:grid; grid-template-columns:120px 1fr; gap:6px 12px; font-size:12px; padding:10px 12px; background:var(--surface); border-radius:6px; border:1px solid var(--border-muted)">
+              <span style="color:var(--muted)">입력 컨텍스트</span>
+              <span class="mono" style="word-break:break-all">session_meta.json · logs.jsonl(first 1k) · inputs.jsonl(first 1k) · metrics/process.jsonl</span>
+              <span style="color:var(--muted)">캐시 위치</span>
+              <span class="mono" style="word-break:break-all">{session_dir}/analysis.json</span>
+              <span style="color:var(--muted)">예상 라우트</span>
+              <span class="mono">POST /api/sessions/{sid}/analyze</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
