@@ -59,7 +59,10 @@ Name: "mcp";  Description: "Trailbox MCP (AI 분석 서버, 약 43 MB)"; Types: 
 Name: "hub";  Description: "Trailbox Hub (세션 공유 서버, 약 43 MB)"; Types: full custom
 
 [Files]
-Source: "{#DistDir}\Trailbox.exe";     DestDir: "{app}"; Flags: ignoreversion; Components: gui
+; GUI is built with PyInstaller --onedir, so the source is dist/Trailbox/* (the
+; launcher .exe + the _internal/ runtime tree). recursesubdirs flattens that tree
+; into {app}, putting Trailbox.exe next to _internal/ — same layout as dist.
+Source: "{#DistDir}\Trailbox\*";       DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: gui
 Source: "{#DistDir}\Trailbox-mcp.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: mcp
 Source: "{#DistDir}\Trailbox-hub.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: hub
 

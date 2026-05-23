@@ -110,7 +110,11 @@ class LauncherPanel(QWidget):
         self._android_thread: _DetectAndroidDevicesWorker | None = None
         self._android_timer: QTimer | None = None
         self._build_ui()
-        self.refresh_window_list()
+        # Defer the initial window enumeration past __init__ so the panel paints
+        # immediately; enumerate_windows() walks every top-level HWND and would
+        # otherwise add ~100-300ms to the first paint. The 0ms timer fires on
+        # the next event-loop tick — by which point the window is already up.
+        QTimer.singleShot(0, self.refresh_window_list)
         self._start_hotkey_picker()
         # Initial Android scan + recurring poll. Fires regardless of the
         # current radio selection so switching to Android is instant.

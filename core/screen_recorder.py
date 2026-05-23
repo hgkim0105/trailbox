@@ -26,10 +26,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import dxcam
-import numpy as np
 from imageio_ffmpeg import get_ffmpeg_exe
-from windows_capture import Frame, InternalCaptureControl, WindowsCapture
+
+# dxcam / numpy / windows_capture are *deliberately* not imported at module
+# scope. dxcam triggers comtypes' COM init + type-library compilation (~0.5s),
+# windows_capture loads a Rust pyd (~0.2s), and numpy is ~0.1s — together they
+# dominated app startup. Each one is now imported lazily inside the specific
+# backend method that uses it (`_run_monitor`, `_run_window`), so an idle
+# Trailbox.exe sitting on the launcher screen never pays for them.
+#
+# The COM-ordering rule from CLAUDE.md ("screen_recorder must import before
+# audio_recorder") was about main-thread import order. Now both libraries are
+# imported inside their respective recorder threads, so per-thread COM
+# apartments stay independent and the ordering becomes moot.
 
 
 class _ScrcpyNoFramesError(RuntimeError):
@@ -247,6 +256,8 @@ class ScreenRecorder:
     # ---- Monitor (dxcam) --------------------------------------------------
 
     def _run_monitor(self, target: MonitorTarget) -> None:
+        import dxcam  # lazy: comtypes type-library load is ~0.5s
+
         camera = dxcam.create(output_idx=target.index, output_color="BGRA")
         if camera is None:
             raise RuntimeError(
@@ -294,6 +305,10 @@ class ScreenRecorder:
     # ---- Window (WGC) -----------------------------------------------------
 
     def _run_window(self, target: WindowTarget) -> None:
+        # Lazy: windows_capture loads a Rust pyd and numpy adds another ~0.1s.
+        import numpy as np
+        from windows_capture import Frame, InternalCaptureControl, WindowsCapture
+
         capture = WindowsCapture(
             cursor_capture=True,
             draw_border=False,

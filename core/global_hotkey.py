@@ -8,7 +8,9 @@ bleed into focused games / apps.
 from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from pynput import keyboard
+
+# pynput is imported lazily inside ``start()``. The listener is only spun up
+# once a recording begins, so we don't make idle Trailbox.exe pay for it.
 
 
 class GlobalHotkey(QObject):
@@ -19,11 +21,13 @@ class GlobalHotkey(QObject):
     def __init__(self, hotkey: str = "<ctrl>+<alt>+r") -> None:
         super().__init__()
         self.hotkey = hotkey
-        self._listener: keyboard.GlobalHotKeys | None = None
+        self._listener = None  # type: ignore[var-annotated]
 
     def start(self) -> None:
         if self._listener is not None:
             return
+        from pynput import keyboard
+
         self._listener = keyboard.GlobalHotKeys({self.hotkey: self._fire})
         self._listener.start()
 

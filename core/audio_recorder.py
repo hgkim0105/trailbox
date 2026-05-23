@@ -11,8 +11,9 @@ import threading
 import wave
 from pathlib import Path
 
-import numpy as np
-import soundcard as sc
+# numpy + soundcard are imported lazily inside `_run` to keep app startup fast.
+# soundcard pulls in its WASAPI COM bindings on import (~0.2s), and is only
+# touched when the user actually starts a recording with audio enabled.
 
 
 class AudioRecorder:
@@ -64,6 +65,9 @@ class AudioRecorder:
 
     def _run(self) -> None:
         try:
+            import numpy as np
+            import soundcard as sc
+
             speaker = sc.default_speaker()
             loopback_mic = sc.get_microphone(speaker.name, include_loopback=True)
             self._device_name = speaker.name

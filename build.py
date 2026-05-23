@@ -38,8 +38,11 @@ import imageio_ffmpeg
 
 _ICON = "assets/trailbox.ico"
 
+# GUI uses --onedir so cold-start doesn't pay the 120MB extraction-to-%TEMP%
+# tax that --onefile imposes on every launch. Installer (.iss) and the
+# _run_pyinstaller exit-path resolution below were updated together.
 _GUI_FLAGS = [
-    "--onefile",
+    "--onedir",
     "--windowed",
     "--name", "Trailbox",
     "--icon", _ICON,
@@ -183,7 +186,12 @@ def _run_pyinstaller(
     print(f"\n=== building {name}.exe ({entry}) ===")
     print("$ " + " ".join(c if ";" not in c else f'"{c}"' for c in cmd))
     subprocess.run(cmd, check=True, cwd=repo_root)
-    out = repo_root / "dist" / f"{name}.exe"
+    # --onedir puts the launcher at dist/<name>/<name>.exe alongside _internal/;
+    # --onefile leaves it at dist/<name>.exe directly.
+    if "--onedir" in flags:
+        out = repo_root / "dist" / name / f"{name}.exe"
+    else:
+        out = repo_root / "dist" / f"{name}.exe"
     if not out.exists():
         raise RuntimeError(f"PyInstaller did not produce {out}")
     return out
@@ -224,7 +232,13 @@ def main() -> int:
     if installer_exe is not None:
         outputs.append(installer_exe)
     for path in outputs:
-        size_mb = path.stat().st_size / 1024 / 1024
+        # For --onedir GUI, report the whole bundle size (launcher + _internal/),
+        # not just the small launcher .exe — the bundle is what installer ships.
+        if path.parent.name == path.stem:
+            total = sum(f.stat().st_size for f in path.parent.rglob("*") if f.is_file())
+        else:
+            total = path.stat().st_size
+        size_mb = total / 1024 / 1024
         print(f"  {path}  ({size_mb:.1f} MB)")
     return 0
 

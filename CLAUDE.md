@@ -48,9 +48,11 @@ Release flow, in this order:
 2. Commit the bumps.
 3. `git tag vX.Y.Z` on that commit, push commit + tag together.
 4. `build.py` to produce `dist/Trailbox{,-mcp,-hub,-Setup}.exe` — **must run after step 1** so the bundled `main.py` carries the new version AND the installer banner shows the new version. Build artifacts created before the bump will report the old version forever.
-5. `gh release create vX.Y.Z` attaching all 4 binaries.
+5. `gh release create vX.Y.Z` attaching the binaries — see the note below about GUI packaging.
 
 If you find `__version__` already lagging the latest tag, fix forward (bump + new release) rather than retroactively moving the existing tag — published .exe SHA-sums shouldn't change under a fixed tag name.
+
+GUI is `--onedir` (since the startup-perf pass): `build.py` produces `dist/Trailbox/Trailbox.exe + _internal/` instead of a single `dist/Trailbox.exe`. The Inno Setup installer absorbs that automatically (it now copies `dist\Trailbox\*` with `recursesubdirs`). For GitHub Releases, ship the installer (`Trailbox-Setup.exe`) as the user-facing GUI artifact; if you also want a raw GUI bundle attached, zip `dist/Trailbox/` first (`Compress-Archive dist\Trailbox Trailbox-vX.Y.Z.zip`) — uploading the loose .exe alone won't work because it needs `_internal/` next to it. `Trailbox-mcp.exe` and `Trailbox-hub.exe` stay `--onefile` and can still be attached directly.
 
 Hub-specific release notes:
 
@@ -85,9 +87,13 @@ That field is written into every JSONL line from every recorder. It's how the vi
 
 Both paths feed the same ffmpeg subprocess. **Critical**: ffmpeg is spawned with `-use_wallclock_as_timestamps 1` + `-fps_mode passthrough`. We write to ffmpeg's stdin **only when a new frame is available** (subject to `max_fps` rate cap). Do not reintroduce a fixed-cadence ticker — the prior version did, and the resulting duplicate-frame judder was the bug that drove the VFR redesign.
 
-## COM threading order (import-order bug, will resurface if you reorder)
+## COM threading order (per-thread now; was per-module before v0.8.x startup work)
 
-In `main.py`, `core.screen_recorder` (which imports dxcam → comtypes) MUST import before `core.audio_recorder` (which imports soundcard). soundcard initializes COM with a different threading mode; if it goes first, comtypes' init raises `OSError [WinError -2147417850] "스레드 모드가 설정된 후에는 바꿀 수 없습니다"`. The current import order in `main.py` is deliberate — there's a comment guarding it. Don't sort imports here blindly.
+Historically `core.screen_recorder` (dxcam → comtypes) HAD TO import before `core.audio_recorder` (soundcard) at main-thread module level, because the second one to load would crash with `OSError [WinError -2147417850] "스레드 모드가 설정된 후에는 바꿀 수 없습니다"`.
+
+That constraint has been resolved structurally: `dxcam`, `windows_capture`, `soundcard`, and `pynput` are no longer imported at module scope. Each recorder imports its heavy dep **inside its own background thread** (`ScreenRecorder._run_monitor`, `ScreenRecorder._run_window`, `AudioRecorder._run`, `InputRecorder.start`). Per-thread COM apartments stay independent, so the cross-mode collision can't happen.
+
+This was worth ~1.2 s off cold-start app launch (dxcam alone was 900 ms+). If you reintroduce module-level imports of any of those four libraries you'll both bring back the startup cost AND resurrect the COM-mode collision — keep them inside their consumer methods.
 
 ## Bidirectional auto-detection (window ↔ log dir)
 

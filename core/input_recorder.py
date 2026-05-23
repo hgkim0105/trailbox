@@ -21,8 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import win32gui
-from pynput import keyboard, mouse
+# win32gui (pywin32) and pynput together add ~150-250ms to import. Both are
+# only touched when a recording is actually running, so we defer them to
+# ``start()`` / ``_window_origin()``.
 
 
 _MOVE_INTERVAL_S = 0.1
@@ -66,8 +67,9 @@ class InputRecorder:
         self.window_hwnd = int(window_hwnd) if window_hwnd else None
 
         self._stop = threading.Event()
-        self._key_listener: keyboard.Listener | None = None
-        self._mouse_listener: mouse.Listener | None = None
+        # Typed as Any to avoid importing pynput at module scope.
+        self._key_listener: Any = None
+        self._mouse_listener: Any = None
         self._jsonl_fh = None
         self._vtt_fh = None
         self._lock = threading.Lock()
@@ -78,6 +80,8 @@ class InputRecorder:
     # ---- Public API -------------------------------------------------------
 
     def start(self) -> None:
+        from pynput import keyboard, mouse
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._jsonl_fh = open(
             self.output_dir / "inputs.jsonl", "w", encoding="utf-8", newline="\n"
@@ -130,6 +134,8 @@ class InputRecorder:
         if self.window_hwnd is None:
             return None
         try:
+            import win32gui  # lazy: pywin32 not needed for monitor-capture sessions
+
             left, top, _, _ = win32gui.GetWindowRect(self.window_hwnd)
             return (left, top)
         except Exception:  # noqa: BLE001 - window may have closed
