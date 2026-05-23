@@ -100,23 +100,68 @@
         </div>
       </div>
 
-      {# 이벤트 — placeholder until we wire logs.jsonl + inputs.jsonl streaming #}
+      {# 이벤트 — first N lines of logs.jsonl + inputs.jsonl, merged by t_video_s #}
       <div data-tab-panel="events">
-        <div class="card__body">
-          <div class="empty" style="padding:24px; text-align:left; display:flex; gap:16px; align-items:center">
-            <div style="width:40px; height:40px; border-radius:10px; background:var(--accent-soft); color:var(--accent-fg); display:flex; align-items:center; justify-content:center; flex-shrink:0">
-              {% if current_user.role == 'admin' %}{% endif %}
-              <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
-            </div>
-            <div>
-              <div style="font-weight:600; color:var(--fg); margin-bottom:2px">이벤트 타임라인은 뷰어에서 확인</div>
-              <div style="font-size:12.5px; color:var(--muted)">
-                {{ session.log_lines|compact_number }} logs · {{ session.input_events|compact_number }} inputs ·
-                {{ session.metric_samples|compact_number }} samples. 전체 타임라인 + 스크럽 동기화는 viewer.html에서 동작합니다.
-              </div>
+        {% if not events_data.events %}
+          <div class="card__body">
+            <div class="empty" style="padding:20px 0">
+              <svg width="32" height="32" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+                <path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>
+              </svg>
+              <h3>이벤트가 없습니다</h3>
+              <p>이 세션은 로그·입력 캡처를 끄고 기록된 것 같습니다.</p>
             </div>
           </div>
-        </div>
+        {% else %}
+          <div style="padding:12px 14px; border-bottom:1px solid var(--border); border-top:1px solid var(--border); display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+            <div class="seg" data-seg-name="event-filter">
+              <button class="seg__btn active" data-value="all">전체 · {{ events_data.counts.all }}</button>
+              <button class="seg__btn" data-value="log">Logs · {{ events_data.counts.log }}</button>
+              <button class="seg__btn" data-value="input">Inputs · {{ events_data.counts.input }}</button>
+              {% if events_data.counts.error %}
+                <button class="seg__btn" data-value="error">Errors · {{ events_data.counts.error }}</button>
+              {% endif %}
+              {% if events_data.counts.warn %}
+                <button class="seg__btn" data-value="warn">Warn · {{ events_data.counts.warn }}</button>
+              {% endif %}
+            </div>
+            <div class="input-wrap" style="flex:1; max-width:240px; margin-left:auto">
+              <svg class="icon-left" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.5"/>
+                <path d="M10.5 10.5 14 14"/>
+              </svg>
+              <input class="input" id="events-search" placeholder="이벤트 검색" autocomplete="off" />
+            </div>
+          </div>
+
+          {% if events_data.truncated_logs or events_data.truncated_inputs %}
+            <div style="padding:8px 14px; background:var(--bg-2); border-bottom:1px solid var(--border-muted); font-size:11.5px; color:var(--muted)">
+              앞 {{ events_data.per_file_limit }}줄만 표시 — 전체는
+              {{ events_data.total_logs|compact_number }} logs ·
+              {{ events_data.total_inputs|compact_number }} inputs. 전체 타임라인은 위 뷰어에서 확인.
+            </div>
+          {% endif %}
+
+          <div class="event-list" id="events-list">
+            {% for ev in events_data.events %}
+              <div class="event-row" data-kind="{{ ev.kind }}" data-t="{{ ev.t_video_s }}"
+                   data-search="{{ ((ev.message or '') ~ ' ' ~ (ev.source or ''))|lower }}">
+                <span class="event-row__t">
+                  <span class="event-row__type"></span>
+                  {{ ev.t_video_s|t_video }}
+                </span>
+                <span class="event-row__msg">
+                  <span style="color:var(--subtle); margin-right:6px">{{ ev.source }}</span>
+                  {{ ev.message }}
+                </span>
+              </div>
+            {% endfor %}
+          </div>
+
+          <div id="events-empty" class="empty" hidden style="padding:24px 0">
+            <h3>일치하는 이벤트가 없습니다</h3>
+          </div>
+        {% endif %}
       </div>
 
       {# 시스템 사양 #}
@@ -252,4 +297,45 @@
     </div>
   </aside>
 </div>
+
+<script>
+(function () {
+  // Events tab: filter by kind + search, attempt seek-on-click via iframe postMessage.
+  const list = document.getElementById('events-list');
+  if (!list) return;
+  const empty = document.getElementById('events-empty');
+  const state = { kind: 'all', q: '' };
+
+  function apply() {
+    let visible = 0;
+    list.querySelectorAll('.event-row[data-kind]').forEach((row) => {
+      let show = true;
+      if (state.kind !== 'all' && row.dataset.kind !== state.kind) show = false;
+      if (state.q && !row.dataset.search.includes(state.q)) show = false;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (empty) empty.hidden = visible !== 0;
+  }
+
+  document.querySelectorAll('[data-seg-name="event-filter"]').forEach((g) => {
+    g.addEventListener('seg-change', (e) => { state.kind = e.detail.value; apply(); });
+  });
+  const input = document.getElementById('events-search');
+  if (input) input.addEventListener('input', (e) => { state.q = e.target.value.toLowerCase().trim(); apply(); });
+
+  // Best-effort seek. The owner-auth viewer iframe is same-origin so we
+  // could postMessage to it; current viewer.html doesn't listen for that,
+  // but the message is harmless and future viewer versions can adopt it.
+  list.addEventListener('click', (ev) => {
+    const row = ev.target.closest('.event-row[data-t]');
+    if (!row) return;
+    const t = parseFloat(row.dataset.t);
+    if (!Number.isFinite(t)) return;
+    const iframe = document.querySelector('.viewer iframe');
+    if (!iframe || !iframe.contentWindow) return;
+    iframe.contentWindow.postMessage({ type: 'trailbox.seek', t_video_s: t }, '*');
+  });
+})();
+</script>
 {% endblock %}

@@ -43,6 +43,7 @@ from ..view_helpers import (
     derive_device,
     derive_device_label,
     derive_thumb_kind,
+    load_events,
     register_filters,
 )
 from ..web_sessions import COOKIE_NAME, SESSION_TTL_DAYS, WebSessionStore
@@ -457,6 +458,8 @@ def build_router(
             "thumb_kind": derive_thumb_kind(s.exe_path, s.device_kind),
         }
 
+        events_data = load_events(storage.session_dir(session_id))
+
         return templates.TemplateResponse(
             request,
             "sessions/detail.html",
@@ -466,6 +469,7 @@ def build_router(
                 view=view,
                 shares=share_items,
                 session_meta=session_meta,
+                events_data=events_data,
                 new_share=new_share if new_share and any(sh["token"] == new_share for sh in share_items) else None,
                 active_nav="sessions",
             ),

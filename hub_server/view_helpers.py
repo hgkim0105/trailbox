@@ -12,7 +12,11 @@ only handles formatting and reversible derivations from existing fields.
 from __future__ import annotations
 
 import datetime as _dt
+import json as _json
 import os
+import re as _re
+from pathlib import Path as _Path
+from typing import Iterator as _Iterator
 
 # ── Relative time ────────────────────────────────────────────────────────
 
@@ -182,6 +186,146 @@ def thumb_hue(kind: str | None) -> int:
     return _THUMB_HUE.get(kind or "code", 220)
 
 
+# ── Event stream loader (logs.jsonl + inputs.jsonl) ──────────────────────
+#
+# Reads the first N lines of each file, classifies them, and returns one
+# merged list ordered by t_video_s so the Detail page's Events tab can
+# render without doing any client-side fetching. Hard cap on lines keeps
+# the page payload bounded even for noisy sessions.
+
+_ERR_RE = _re.compile(r"\b(error|fatal|exception|traceback)\b", _re.IGNORECASE)
+_WARN_RE = _re.compile(r"\b(warn(ing)?|deprecat)\b", _re.IGNORECASE)
+
+
+def _classify_log(message: str) -> str:
+    if not message:
+        return "log"
+    if _ERR_RE.search(message):
+        return "error"
+    if _WARN_RE.search(message):
+        return "warn"
+    return "log"
+
+
+def _input_label(payload: dict) -> str:
+    """Make a one-line human description out of an input record's payload."""
+    if not isinstance(payload, dict):
+        return "input"
+    kind = payload.get("type") or payload.get("kind") or "input"
+    if kind == "key":
+        action = payload.get("action", "press")
+        key = payload.get("key", "?")
+        return f"key {action} · {key}"
+    if kind in ("mouse", "click"):
+        btn = payload.get("button", "?")
+        act = "press" if payload.get("pressed") else "release"
+        x, y = payload.get("x"), payload.get("y")
+        if x is not None and y is not None:
+            return f"mouse {btn} {act} @ ({x},{y})"
+        return f"mouse {btn} {act}"
+    if kind == "scroll":
+        dx, dy = payload.get("dx", 0), payload.get("dy", 0)
+        return f"scroll dx={dx} dy={dy}"
+    if kind == "move":
+        x, y = payload.get("x"), payload.get("y")
+        return f"move @ ({x},{y})"
+    return f"{kind}"
+
+
+def _iter_jsonl(path: _Path, limit: int) -> _Iterator[dict]:
+    if not path.is_file():
+        return
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                if i >= limit:
+                    return
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+    except OSError:
+        return
+
+
+def load_events(session_dir: _Path, *, per_file_limit: int = 500) -> dict:
+    """Read both logs.jsonl and inputs.jsonl up to ``per_file_limit`` lines
+    each, classify, merge, and return ``{events, counts, truncated_logs,
+    truncated_inputs, total_logs, total_inputs}``.
+
+    The truncation flags surface to the template so it can show 'showing
+    first N of M' when a session is large enough to exceed the cap.
+    """
+    out: list[dict] = []
+    counts = {"log": 0, "input": 0, "error": 0, "warn": 0, "all": 0}
+
+    logs_path = session_dir / "logs" / "logs.jsonl"
+    inputs_path = session_dir / "inputs" / "inputs.jsonl"
+
+    def _file_total(p: _Path) -> int:
+        if not p.is_file():
+            return 0
+        try:
+            with p.open("rb") as f:
+                # Cheap line count — good enough for the truncated-warning UX
+                return sum(1 for _ in f)
+        except OSError:
+            return 0
+
+    total_logs = _file_total(logs_path)
+    total_inputs = _file_total(inputs_path)
+
+    for rec in _iter_jsonl(logs_path, per_file_limit):
+        msg = rec.get("message") or ""
+        kind = _classify_log(msg)
+        counts[kind] += 1
+        log_info = rec.get("log") if isinstance(rec.get("log"), dict) else {}
+        src = log_info.get("source") if isinstance(log_info.get("source"), dict) else {}
+        out.append({
+            "t_video_s": float(rec.get("t_video_s") or 0.0),
+            "kind": kind,
+            "source": src.get("name") or "log",
+            "message": msg,
+        })
+
+    for rec in _iter_jsonl(inputs_path, per_file_limit):
+        payload = rec.get("input") if isinstance(rec.get("input"), dict) else {}
+        counts["input"] += 1
+        out.append({
+            "t_video_s": float(rec.get("t_video_s") or 0.0),
+            "kind": "input",
+            "source": payload.get("type") or "input",
+            "message": _input_label(payload),
+        })
+
+    out.sort(key=lambda e: e["t_video_s"])
+    counts["all"] = len(out)
+
+    return {
+        "events": out,
+        "counts": counts,
+        "total_logs": total_logs,
+        "total_inputs": total_inputs,
+        "truncated_logs": total_logs > per_file_limit,
+        "truncated_inputs": total_inputs > per_file_limit,
+        "per_file_limit": per_file_limit,
+    }
+
+
+def format_t_video(secs: float) -> str:
+    """Seconds → 'MM:SS.d' (tenths) matching viewer.html / events row format."""
+    if secs is None:
+        return "00:00.0"
+    s = max(0.0, float(secs))
+    m = int(s // 60)
+    sec = int(s % 60)
+    tenths = int((s - int(s)) * 10)
+    return f"{m:02d}:{sec:02d}.{tenths}"
+
+
 # ── Registration ─────────────────────────────────────────────────────────
 
 def register_filters(env) -> None:
@@ -191,3 +335,4 @@ def register_filters(env) -> None:
     env.filters["bytes_human"] = bytes_human
     env.filters["compact_number"] = compact_number
     env.filters["thumb_hue"] = thumb_hue
+    env.filters["t_video"] = format_t_video
