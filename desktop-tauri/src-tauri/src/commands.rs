@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{BufRead, BufReader, Write as IoWrite};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use tauri::State;
 
 fn output_root() -> PathBuf {
     let exe_dir = std::env::current_exe()
@@ -221,4 +224,132 @@ pub fn list_android_devices() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub fn get_system_info() -> Result<serde_json::Value, String> {
     call_bridge("system-info")
+}
+
+// ── Recording subprocess management ────────────────────────────────
+
+pub struct RecordingProcess {
+    pub child: Mutex<Option<Child>>,
+}
+
+impl Default for RecordingProcess {
+    fn default() -> Self {
+        Self { child: Mutex::new(None) }
+    }
+}
+
+#[tauri::command]
+pub fn start_recording(
+    config: serde_json::Value,
+    state: State<RecordingProcess>,
+) -> Result<String, String> {
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    if guard.is_some() {
+        return Err("recording already in progress".into());
+    }
+
+    let root = project_root();
+    let bridge = root.join("desktop-tauri").join("bridge_record.py");
+    if !bridge.is_file() {
+        return Err(format!("bridge_record.py not found at {}", bridge.display()));
+    }
+
+    let mut child = Command::new(python_exe())
+        .arg(&bridge)
+        .current_dir(&root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("failed to spawn recording bridge: {}", e))?;
+
+    // Read the "ready" event
+    {
+        let stdout = child.stdout.as_mut().ok_or("no stdout")?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader.read_line(&mut line).map_err(|e| e.to_string())?;
+        let evt: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        if evt.get("event").and_then(|v| v.as_str()) != Some("ready") {
+            return Err(format!("expected 'ready', got: {}", line.trim()));
+        }
+    }
+
+    // Send start command
+    {
+        let stdin = child.stdin.as_mut().ok_or("no stdin")?;
+        let start_cmd = serde_json::json!({"cmd": "start", "target": config.get("target"), "exe_path": config.get("exe_path"), "log_dirs": config.get("log_dirs"), "max_fps": config.get("max_fps"), "audio": config.get("audio"), "input": config.get("input"), "metrics": config.get("metrics")});
+        let line = serde_json::to_string(&start_cmd).map_err(|e| e.to_string())?;
+        stdin.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        stdin.write_all(b"\n").map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+    }
+
+    // Read the "started" event
+    {
+        let stdout = child.stdout.as_mut().ok_or("no stdout")?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader.read_line(&mut line).map_err(|e| e.to_string())?;
+        let evt: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        match evt.get("event").and_then(|v| v.as_str()) {
+            Some("started") => {
+                let sid = evt.get("session_id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                *guard = Some(child);
+                return Ok(sid);
+            }
+            Some("error") => {
+                let msg = evt.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                return Err(msg.to_string());
+            }
+            _ => return Err(format!("unexpected event: {}", line.trim())),
+        }
+    }
+}
+
+#[tauri::command]
+pub fn stop_recording(state: State<RecordingProcess>) -> Result<serde_json::Value, String> {
+    let mut guard = state.child.lock().map_err(|e| e.to_string())?;
+    let mut child = guard.take().ok_or("no recording in progress")?;
+
+    // Send stop command
+    {
+        let stdin = child.stdin.as_mut().ok_or("no stdin")?;
+        stdin.write_all(b"{\"cmd\":\"stop\"}\n").map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+    }
+
+    // Read events until "done" or "exit"
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let reader = BufReader::new(stdout);
+    let mut result = serde_json::Value::Null;
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        if line.trim().is_empty() { continue; }
+        let evt: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match evt.get("event").and_then(|v| v.as_str()) {
+            Some("done") => { result = evt; }
+            Some("exit") => break,
+            _ => {}
+        }
+    }
+
+    let _ = child.wait();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn read_recording_status(state: State<RecordingProcess>) -> Result<Option<serde_json::Value>, String> {
+    let guard = state.child.lock().map_err(|e| e.to_string())?;
+    let child = match guard.as_ref() {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    // Non-blocking read of latest status from stdout
+    // This is tricky with blocking stdio — for now return a simple "recording" flag
+    let _ = child;
+    Ok(Some(serde_json::json!({"recording": true})))
 }
