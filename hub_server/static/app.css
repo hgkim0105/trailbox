@@ -417,6 +417,7 @@ input, select, textarea { font: inherit; color: inherit; }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .input::placeholder { color: var(--subtle); }
+.input--sm { height: 28px; font-size: 12.5px; padding: 0 8px; }
 .input--lg { height: 40px; font-size: 14px; padding: 0 13px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
@@ -1220,27 +1221,35 @@ input, select, textarea { font: inherit; color: inherit; }
 .stat__delta--up { color: var(--success); }
 .stat__delta--down { color: var(--danger); }
 
+.toggle-form {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: 40px; min-height: 22px;
+}
 .toggle {
   position: relative;
-  width: 32px; height: 18px;
+  display: block;
+  width: 40px; height: 22px;
   background: var(--border-strong);
   border-radius: 999px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.2s;
   flex-shrink: 0;
 }
-.toggle.on { background: var(--accent); }
+input:checked + .toggle { background: var(--success, #22c55e); }
 .toggle::after {
   content: '';
   position: absolute;
-  top: 2px; left: 2px;
-  width: 14px; height: 14px;
+  top: 3px; left: 3px;
+  width: 16px; height: 16px;
   background: white;
   border-radius: 50%;
-  transition: transform 0.15s;
+  transition: transform 0.2s;
   box-shadow: 0 1px 3px oklch(0 0 0 / 0.2);
 }
-.toggle.on::after { transform: translateX(14px); }
+input:checked + .toggle::after { transform: translateX(18px); }
 
 .toggle-row {
   display: flex; align-items: flex-start; justify-content: space-between;

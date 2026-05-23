@@ -36,9 +36,16 @@
     </span>
   {% endif %}
 
-  <div style="margin-left:auto; display:flex; gap:8px">
+  <div style="margin-left:auto; display:flex; gap:8px; align-items:center">
     <a class="btn" href="/api/sessions/{{ session.session_id }}/zip">{{ icon_download }}zip 다운로드</a>
-    <form action="/sessions/{{ session.session_id }}/share" method="post" class="inline-form">
+    <form action="/sessions/{{ session.session_id }}/share" method="post" class="inline-form" style="display:flex; gap:4px; align-items:center">
+      <select name="expires_days" class="input input--sm" style="width:auto; font-size:12px; padding:4px 8px">
+        <option value="0">무제한</option>
+        <option value="1">1일</option>
+        <option value="7">7일</option>
+        <option value="30">30일</option>
+        <option value="90">90일</option>
+      </select>
       <button type="submit" class="btn btn--primary">{{ icon_share }}공유 링크 발급</button>
     </form>
   </div>
@@ -263,20 +270,32 @@
               <tr>
                 <th>Token</th>
                 <th>URL</th>
+                <th>만료</th>
                 <th style="width:1px"></th>
               </tr>
             </thead>
             <tbody>
               {% for s in shares %}
                 {% set s_url = request.url_for('view_root', token=s.token) %}
-                <tr>
+                <tr{% if s.expired %} style="opacity:0.5"{% endif %}>
                   <td><code class="mono">{{ s.token[:10] }}…</code></td>
                   <td>
                     <div style="display:flex; align-items:center; gap:6px">
                       <code class="mono" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ s_url }}</code>
+                      {% if not s.expired %}
                       <button class="btn btn--ghost btn--sm" data-copy="{{ s_url }}" data-copy-done="복사됨">{{ icon_copy }}<span>복사</span></button>
                       <a class="btn btn--ghost btn--sm" href="{{ s_url }}" target="_blank" rel="noopener" title="새 탭에서 열기">{{ icon_external }}</a>
+                      {% endif %}
                     </div>
+                  </td>
+                  <td>
+                    {% if s.expired %}
+                      <span class="badge badge--danger">만료됨</span>
+                    {% elif s.expires_at %}
+                      <span class="mono" style="font-size:12px">{{ s.expires_at[:10] }}</span>
+                    {% else %}
+                      <span class="badge badge--neutral">무제한</span>
+                    {% endif %}
                   </td>
                   <td>
                     <div class="row-actions">

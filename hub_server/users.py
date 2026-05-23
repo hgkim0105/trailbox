@@ -24,6 +24,7 @@ from .db import Database, utc_now_iso
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._\-]{2,40}$")
 _MIN_PASSWORD_LEN = 8
+_STRONG_MIN_LEN = 12
 
 # A small deny-list catches the most embarrassing reuses without trying to be
 # a full password-strength estimator. Keep it short on purpose — anything
@@ -83,6 +84,22 @@ def validate_password(password: str, username: str = "") -> None:
         raise PasswordPolicyError("password must not contain the username")
     if password.lower() in _COMMON_PASSWORDS:
         raise PasswordPolicyError("password is in the common-password deny list")
+
+
+def check_strong_password(password: str) -> bool:
+    """Return True if *password* meets the strong policy (12+ chars, upper,
+    lower, digit, special). Used at login time when the setting is enabled."""
+    if len(password) < _STRONG_MIN_LEN:
+        return False
+    if not re.search(r"[A-Z]", password):
+        return False
+    if not re.search(r"[a-z]", password):
+        return False
+    if not re.search(r"\d", password):
+        return False
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return False
+    return True
 
 
 class UserStore:
@@ -182,6 +199,13 @@ class UserStore:
             conn.execute(
                 "UPDATE users SET pw_hash=?, must_change_password=? WHERE id=?",
                 (pw_hash, 1 if must_change else 0, user_id),
+            )
+
+    def set_must_change(self, user_id: int) -> None:
+        with self.db.write() as conn:
+            conn.execute(
+                "UPDATE users SET must_change_password=1 WHERE id=?",
+                (user_id,),
             )
 
     def clear_must_change(self, user_id: int) -> None:

@@ -39,7 +39,13 @@ from ..settings_store import SettingsStore
 from ..shares import ShareStore
 from ..storage import Storage
 from ..tokens import ApiTokenStore
-from ..users import PasswordPolicyError, User, UserStore, validate_username
+from ..users import (
+    PasswordPolicyError,
+    User,
+    UserStore,
+    check_strong_password,
+    validate_username,
+)
 from ..view_helpers import (
     derive_device,
     derive_device_label,
@@ -224,6 +230,12 @@ def build_router(
                 status_code=status.HTTP_403_FORBIDDEN,
             )
         lockout.clear(username)
+        if (
+            not u.must_change_password
+            and settings.get_bool("enforce_strong_password")
+            and not check_strong_password(password)
+        ):
+            users.set_must_change(u.id)
         ws = sessions.create(u.id)
         target = next if (next and next.startswith("/")) else "/sessions"
         resp = RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
@@ -496,18 +508,25 @@ def build_router(
         return RedirectResponse("/sessions", status_code=status.HTTP_303_SEE_OTHER)
 
     @router.post("/sessions/{session_id}/share")
-    def session_share(request: Request, session_id: str):
+    def session_share(
+        request: Request,
+        session_id: str,
+        expires_days: str = Form(default="0"),
+    ):
         user = _require_user(request)
         if not storage.exists(session_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
         if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
-        token = shares.create(session_id)
+        try:
+            exp = int(expires_days)
+        except ValueError:
+            exp = 0
+        token = shares.create(session_id, expires_in_days=exp if exp > 0 else None)
         audit.record(
             "share_created", actor_id=user.id, target=session_id,
-            detail={"via": "web", "token_prefix": token[:8]},
+            detail={"via": "web", "token_prefix": token[:8], "expires_days": exp or None},
         )
-        # Pass the token via query param so the detail page can flash it once.
         return RedirectResponse(
             f"/sessions/{session_id}?new_share={token}",
             status_code=status.HTTP_303_SEE_OTHER,
@@ -802,22 +821,51 @@ def build_router(
     def admin_settings(request: Request):
         _require_admin(request)
         import sys as _sys
+        from datetime import datetime, timedelta, timezone as _tz
+        from ..retention import _is_expired
         env_info = {
             "hub_version": HUB_VERSION,
             "data_root": str(cfg.data_root),
             "bind": f"{cfg.host}:{cfg.port}",
             "max_upload_bytes": cfg.max_upload_bytes,
-            "retention_days": cfg.retention_days,
             "python": f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}",
             "auth_enabled": cfg.auth_enabled,
         }
+        all_settings = settings.all()
+        summaries = storage.list_summaries()
+
+        oversized: list = []
+        max_mb_raw = all_settings.get("max_session_size_mb", "0")
+        try:
+            max_mb = int(max_mb_raw)
+        except ValueError:
+            max_mb = 0
+        if max_mb > 0:
+            limit_bytes = max_mb * 1024 * 1024
+            oversized = [s for s in summaries if s.size_bytes > limit_bytes]
+
+        expired: list = []
+        ret_raw = all_settings.get("retention_days", "0")
+        try:
+            ret_days = int(ret_raw)
+        except ValueError:
+            ret_days = 0
+        if ret_days > 0:
+            cutoff = datetime.now(_tz.utc) - timedelta(days=ret_days)
+            expired = [
+                s for s in summaries
+                if _is_expired(s.started_at, storage.session_dir(s.session_id), cutoff)
+            ]
+
         return templates.TemplateResponse(
             request,
             "admin/settings.html",
             _ctx(
                 request,
-                settings=settings.all(),
+                settings=all_settings,
                 env_info=env_info,
+                oversized_sessions=oversized,
+                expired_sessions=expired,
                 active_nav="admin-settings",
             ),
         )
@@ -826,16 +874,83 @@ def build_router(
     def admin_settings_save(
         request: Request,
         auto_approve_registration: str = Form(default=""),
+        enforce_strong_password: str = Form(default=""),
+        max_session_size_mb: str = Form(default=""),
+        retention_days: str = Form(default=""),
     ):
         admin = _require_admin(request)
-        new_value = "1" if auto_approve_registration == "1" else "0"
-        old = settings.get("auto_approve_registration")
-        settings.set("auto_approve_registration", new_value)
-        if old != new_value:
+        changes: dict = {}
+        for key, raw in [
+            ("auto_approve_registration", auto_approve_registration),
+            ("enforce_strong_password", enforce_strong_password),
+        ]:
+            new_value = "1" if raw == "1" else "0"
+            old = settings.get(key)
+            if old != new_value:
+                changes[key] = new_value
+            settings.set(key, new_value)
+
+        raw_size = max_session_size_mb.strip()
+        if raw_size:
+            try:
+                val = max(0, int(raw_size))
+            except ValueError:
+                val = 0
+            new_s = str(val)
+            if settings.get("max_session_size_mb") != new_s:
+                changes["max_session_size_mb"] = new_s
+            settings.set("max_session_size_mb", new_s)
+
+        raw_ret = retention_days.strip()
+        if raw_ret:
+            try:
+                val = max(0, int(raw_ret))
+            except ValueError:
+                val = 0
+            new_r = str(val)
+            if settings.get("retention_days") != new_r:
+                changes["retention_days"] = new_r
+            settings.set("retention_days", new_r)
+
+        if changes:
             audit.record(
                 "settings_changed", actor_id=admin.id,
-                detail={"via": "web", "auto_approve_registration": new_value},
+                detail={"via": "web", **changes},
             )
+        return RedirectResponse("/admin/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+    @router.post("/admin/settings/purge-expired")
+    def admin_purge_expired(request: Request):
+        from datetime import datetime, timedelta, timezone as _tz
+        from ..retention import _is_expired
+        admin = _require_admin(request)
+        ret_raw = settings.get("retention_days", "0")
+        try:
+            ret_days = int(ret_raw)
+        except ValueError:
+            ret_days = 0
+        deleted: list[str] = []
+        if ret_days > 0:
+            cutoff = datetime.now(_tz.utc) - timedelta(days=ret_days)
+            for s in storage.list_summaries():
+                if _is_expired(s.started_at, storage.session_dir(s.session_id), cutoff):
+                    if storage.delete(s.session_id):
+                        shares.revoke_for_session(s.session_id)
+                        deleted.append(s.session_id)
+        if deleted:
+            audit.record(
+                "bulk_purge", actor_id=admin.id,
+                detail={"via": "web", "count": len(deleted), "sessions": deleted[:20]},
+            )
+        return RedirectResponse("/admin/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+    @router.post("/admin/settings/purge-session/{session_id}")
+    def admin_purge_single(request: Request, session_id: str):
+        admin = _require_admin(request)
+        if storage.exists(session_id):
+            storage.delete(session_id)
+            shares.revoke_for_session(session_id)
+            audit.record("session_delete", actor_id=admin.id, target=session_id, detail={"via": "web", "from": "settings"})
         return RedirectResponse("/admin/settings", status_code=status.HTTP_303_SEE_OTHER)
 
     @router.get("/admin/audit", response_class=HTMLResponse)

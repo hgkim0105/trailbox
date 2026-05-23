@@ -249,16 +249,25 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
         tmp_path = Path(tmp.name)
         try:
             written = 0
+            max_bytes = cfg.max_upload_bytes
+            raw_limit = settings.get("max_session_size_mb")
+            if raw_limit:
+                try:
+                    db_limit = int(raw_limit) * 1024 * 1024
+                    if db_limit > 0:
+                        max_bytes = min(max_bytes, db_limit)
+                except ValueError:
+                    pass
             try:
                 while True:
                     chunk = await file.read(1024 * 1024)
                     if not chunk:
                         break
                     written += len(chunk)
-                    if written > cfg.max_upload_bytes:
+                    if written > max_bytes:
                         raise HTTPException(
                             status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                            f"upload exceeds {cfg.max_upload_bytes} bytes",
+                            f"upload exceeds {max_bytes} bytes",
                         )
                     tmp.write(chunk)
             finally:
@@ -369,10 +378,19 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid session_id")
         if total <= 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "total_size must be > 0")
-        if total > cfg.max_upload_bytes:
+        max_bytes = cfg.max_upload_bytes
+        raw_limit = settings.get("max_session_size_mb")
+        if raw_limit:
+            try:
+                db_limit = int(raw_limit) * 1024 * 1024
+                if db_limit > 0:
+                    max_bytes = min(max_bytes, db_limit)
+            except ValueError:
+                pass
+        if total > max_bytes:
             raise HTTPException(
                 status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                f"total_size exceeds cap {cfg.max_upload_bytes}",
+                f"total_size exceeds cap {max_bytes}",
             )
         existing_owner = owners.get(sid)
         if existing_owner is not None and existing_owner != user.id and user.role != "admin":
@@ -531,7 +549,6 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
     def view_static(token: str, path: str) -> FileResponse:
         return _serve_share_path(token, path)
 
-    if cfg.retention_enabled:
-        start_background_sweep(storage, shares, cfg.retention_days)
+    start_background_sweep(storage, shares, cfg.retention_days, settings)
 
     return app

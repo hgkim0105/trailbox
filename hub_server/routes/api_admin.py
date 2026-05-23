@@ -29,7 +29,12 @@ from ..users import (
 )
 
 
-_ALLOWED_SETTINGS = {"auto_approve_registration"}
+_ALLOWED_SETTINGS = {
+    "auto_approve_registration",
+    "enforce_strong_password",
+    "max_session_size_mb",
+    "retention_days",
+}
 
 
 def build_router(

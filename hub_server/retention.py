@@ -4,6 +4,11 @@ Cadence is fixed at 1h. Each tick walks ``storage.list_summaries()`` and drops
 anything whose ``started_at`` (or filesystem mtime as fallback) is older than
 ``retention_days`` days ago. Cascade-revokes any share tokens that pointed at
 the deleted sessions.
+
+The effective retention_days is resolved as:
+  1. DB setting ``retention_days`` (admin-editable via settings page)
+  2. Env-var fallback ``cfg.retention_days``
+Either being 0 (or absent) means "disabled".
 """
 from __future__ import annotations
 
@@ -12,9 +17,13 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .shares import ShareStore
 from .storage import Storage
+
+if TYPE_CHECKING:
+    from .settings_store import SettingsStore
 
 log = logging.getLogger("trailbox.hub.retention")
 
@@ -42,11 +51,31 @@ def _is_expired(started_at: str | None, session_dir: Path, cutoff: datetime) -> 
         return False
 
 
-def sweep_once(storage: Storage, shares: ShareStore, retention_days: int) -> list[str]:
+def _effective_retention(
+    env_days: int,
+    settings: "SettingsStore | None" = None,
+) -> int:
+    if settings is not None:
+        raw = settings.get("retention_days")
+        if raw is not None:
+            try:
+                return max(0, int(raw))
+            except ValueError:
+                pass
+    return env_days
+
+
+def sweep_once(
+    storage: Storage,
+    shares: ShareStore,
+    retention_days: int,
+    settings: "SettingsStore | None" = None,
+) -> list[str]:
     """Run a single sweep. Returns the list of deleted session_ids."""
-    if retention_days <= 0:
+    days = _effective_retention(retention_days, settings)
+    if days <= 0:
         return []
-    cutoff = _session_age_cutoff_iso(retention_days)
+    cutoff = _session_age_cutoff_iso(days)
     deleted: list[str] = []
     for summary in storage.list_summaries():
         session_dir = storage.session_dir(summary.session_id)
@@ -63,20 +92,22 @@ def sweep_once(storage: Storage, shares: ShareStore, retention_days: int) -> lis
 
 
 def start_background_sweep(
-    storage: Storage, shares: ShareStore, retention_days: int
+    storage: Storage,
+    shares: ShareStore,
+    retention_days: int,
+    settings: "SettingsStore | None" = None,
 ) -> threading.Thread:
     """Spawn a daemon thread that runs the sweep once per hour."""
 
     def _loop() -> None:
-        # Sweep immediately on startup, then every interval.
         while True:
             try:
-                sweep_once(storage, shares, retention_days)
+                sweep_once(storage, shares, retention_days, settings)
             except Exception:  # noqa: BLE001 - never let the loop die
                 log.exception("retention sweep tick failed")
             time.sleep(_SWEEP_INTERVAL_SECS)
 
     t = threading.Thread(target=_loop, name="trailbox-retention", daemon=True)
     t.start()
-    log.info("retention sweep enabled (TTL=%dd, cadence=1h)", retention_days)
+    log.info("retention sweep enabled (env TTL=%dd, cadence=1h)", retention_days)
     return t
