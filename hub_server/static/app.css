@@ -891,9 +891,7 @@ input, select, textarea { font: inherit; color: inherit; }
   .detail-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (min-width: 1800px) {
-  /* Very wide displays — let the side column breathe a bit and cap the
-     viewer column so it doesn't stretch into a too-wide letterbox. */
-  .detail-grid { grid-template-columns: minmax(0, 1fr) 480px; max-width: 1720px; }
+  .detail-grid { grid-template-columns: minmax(0, 1fr) 480px; }
 }
 /* Detail header actions: wrap onto their own row on narrow viewports
    so the session_id stays readable instead of getting squeezed. */
@@ -902,13 +900,21 @@ input, select, textarea { font: inherit; color: inherit; }
   .detail-header > div[style*="margin-left:auto"] { margin-left: 0 !important; width: 100%; }
 }
 
-/* ── Viewer mock ──────────────────────────── */
+/* ── Viewer ──────────────────────────── */
 .viewer {
   background: oklch(0.13 0.01 270);
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border);
   position: relative;
+}
+.viewer-embed {
+  position: relative;
+  background: oklch(0.08 0.01 270);
+  height: clamp(480px, calc(100vh - 200px), 1200px);
+}
+@media (max-width: 1100px) {
+  .viewer-embed { height: clamp(320px, 56vw, 600px); }
 }
 .viewer__stage {
   aspect-ratio: 16/9;

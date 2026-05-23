@@ -78,7 +78,7 @@
        Falls back to a thumbnail+message card when has_viewer is false. #}
     <div class="viewer" style="position:relative">
       {% if session.has_viewer %}
-        <div style="position:relative; aspect-ratio:16/9; background:oklch(0.08 0.01 270)">
+        <div class="viewer-embed">
           <iframe src="/sessions/{{ session.session_id }}/v/"
                   title="{{ session.session_id }} viewer"
                   loading="lazy"
@@ -190,26 +190,44 @@
         <div class="card__body">
           <dl class="kv" style="grid-template-columns:90px 1fr; font-size:13px">
             {% set sys = session_meta.get('system') or {} %}
-            {% if sys.get('platform') or sys.get('os') %}
+            {# OS — nested {platform,release,build} or legacy flat string #}
+            {% if sys.os is mapping %}
+              <dt>OS</dt><dd>{{ sys.os.platform or sys.os.release or '' }}</dd>
+            {% elif sys.get('platform') or sys.get('os') %}
               <dt>OS</dt><dd>{{ sys.get('platform') or sys.get('os') }}</dd>
             {% endif %}
-            {% if sys.get('cpu') %}
+            {# CPU — nested {name,physical_cores,logical_cores,max_mhz} or legacy string #}
+            {% if sys.cpu is mapping %}
+              <dt>CPU</dt>
+              <dd>{{ sys.cpu.name or 'CPU' }}
+                {%- if sys.cpu.logical_cores %} ({{ sys.cpu.logical_cores }} cores
+                  {%- if sys.cpu.max_mhz %} @ {{ '%.1f'|format(sys.cpu.max_mhz / 1000) }} GHz{% endif -%}
+                ){% endif -%}
+              </dd>
+            {% elif sys.get('cpu') %}
               <dt>CPU</dt><dd>{{ sys.cpu }}</dd>
             {% endif %}
-            {% if sys.get('ram_gb') %}
+            {# RAM — nested {total_mb, available_mb_at_start} or legacy ram_gb #}
+            {% if sys.ram is mapping and sys.ram.total_mb %}
+              <dt>RAM</dt><dd>{{ '%.1f'|format(sys.ram.total_mb / 1024) }} GB</dd>
+            {% elif sys.get('ram_gb') %}
               <dt>RAM</dt><dd>{{ sys.ram_gb }} GB</dd>
             {% endif %}
-            {% if sys.get('gpu') %}
+            {# GPU — gpus array or legacy flat string #}
+            {% if sys.get('gpus') %}
+              <dt>GPU</dt><dd>{{ sys.gpus | join(', ') }}</dd>
+            {% elif sys.get('gpu') %}
               <dt>GPU</dt><dd>{{ sys.gpu }}</dd>
             {% endif %}
-            {% if sys.get('vram_gb') %}
-              <dt>VRAM</dt><dd>{{ sys.vram_gb }} GB</dd>
-            {% endif %}
-            {% if sys.get('display') %}
+            {# Display — displays array of objects or legacy flat string #}
+            {% if sys.get('displays') %}
+              <dt>Display</dt>
+              <dd>{% for d in sys.displays %}{% if not loop.first %} · {% endif %}{{ '★ ' if d.primary else '' }}{{ d.name or '' }} {{ d.width }}×{{ d.height }}{% if d.refresh_hz %} @ {{ d.refresh_hz|int }}Hz{% endif %}{% endfor %}</dd>
+            {% elif sys.get('display') %}
               <dt>Display</dt><dd>{{ sys.display }}</dd>
             {% endif %}
-            {% if sys.get('python_version') %}
-              <dt>Python</dt><dd class="mono">{{ sys.python_version }}</dd>
+            {% if sys.get('python') or sys.get('python_version') %}
+              <dt>Python</dt><dd class="mono">{{ sys.get('python') or sys.get('python_version') }}</dd>
             {% endif %}
             {% if sys.get('trailbox_version') %}
               <dt>Trailbox</dt><dd class="mono">{{ sys.trailbox_version }}</dd>
