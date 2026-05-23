@@ -51,7 +51,7 @@ from ..web_sessions import COOKIE_NAME, SESSION_TTL_DAYS, WebSessionStore
 
 log = logging.getLogger("trailbox.hub.web")
 
-HUB_VERSION = "0.7.0"
+HUB_VERSION = "0.9.0"
 
 
 def _resource_dir(name: str) -> Path:
