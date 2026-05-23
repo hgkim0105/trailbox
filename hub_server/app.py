@@ -44,6 +44,7 @@ from .session_owners import SessionOwnerStore
 from .settings_store import SettingsStore
 from .shares import ShareStore
 from .storage import Storage, is_valid_session_id
+from .thumbnails import ensure_thumbnail
 from .tokens import ApiTokenStore
 from .uploads import UploadStore
 from .users import User, UserStore
@@ -279,6 +280,26 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
             headers={
                 "Content-Disposition": f'attachment; filename="{session_id}.zip"'
             },
+        )
+
+    @app.get("/api/sessions/{session_id}/thumb.jpg")
+    def session_thumbnail(session_id: str, user: User = Depends(user_dep)):
+        """Lazy-generated session thumbnail (5-second frame from screen.mp4).
+
+        First request triggers ffmpeg extraction and caches thumb.jpg in
+        the session dir; subsequent requests serve the cached file.
+        Returns 404 when no thumbnail can be produced (no video, ffmpeg
+        unavailable, or decode failure) so the UI can fall back to its
+        gradient+icon placeholder via <img onerror>.
+        """
+        _require_visible(user, session_id)
+        thumb = ensure_thumbnail(storage.session_dir(session_id))
+        if thumb is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no thumbnail")
+        return FileResponse(
+            thumb,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=3600"},
         )
 
     @app.delete(

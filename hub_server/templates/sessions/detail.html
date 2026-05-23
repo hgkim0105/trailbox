@@ -61,7 +61,8 @@
     <div class="viewer">
       <div class="viewer__stage" style="display:flex; align-items:center; justify-content:center; position:relative">
         <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.28 0.12 {{ view.thumb_kind|thumb_hue }}), oklch(0.16 0.06 200))"></div>
-        <div style="position:relative; text-align:center; color:white; padding:24px">
+        <img class="viewer__frame" src="/api/sessions/{{ session.session_id }}/thumb.jpg" alt="" onerror="this.remove()" />
+        <div style="position:relative; text-align:center; color:white; padding:18px 22px; background:oklch(0 0 0 / 0.45); border-radius:12px; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px)">
           <div style="opacity:0.6; margin-bottom:14px">
             {% if view.device == 'Android' %}
               <svg width="56" height="56" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><path d="M7 12.5h2"/></svg>

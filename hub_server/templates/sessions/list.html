@@ -108,6 +108,7 @@
               <svg width="44" height="44" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1"/><path d="M5.5 14h5M8 11.5V14"/></svg>
             {% endif %}
           </div>
+          <img class="thumb__img" src="/api/sessions/{{ s.session_id }}/thumb.jpg" alt="" loading="lazy" onerror="this.remove()" />
           <div class="thumb__overlay"></div>
           <div class="thumb__badges">
             <span class="badge badge--outline" style="background:oklch(0.15 0.01 270 / 0.5); color:white; border-color:oklch(1 0 0 / 0.25)">{{ view.device }}</span>
@@ -178,11 +179,12 @@
                 data-search="{{ (s.session_id ~ ' ' ~ (s.exe_path or '') ~ ' ' ~ view.device_label)|lower }}">
               <td>
                 <a href="/sessions/{{ s.session_id }}" style="text-decoration:none; display:block">
-                  <div style="width:42px; height:26px; border-radius:4px; overflow:hidden; position:relative">
+                  <div class="session-row-thumb" style="width:42px; height:26px; border-radius:4px; overflow:hidden; position:relative">
                     <div style="position:absolute; inset:0; background: linear-gradient(135deg, oklch(0.35 0.14 {{ view.thumb_kind|thumb_hue }}), oklch(0.22 0.08 200))"></div>
                     <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:white">
                       {% if view.device == 'Android' %}{{ icon_phone }}{% else %}{{ icon_pc }}{% endif %}
                     </div>
+                    <img src="/api/sessions/{{ s.session_id }}/thumb.jpg" alt="" loading="lazy" onerror="this.remove()" />
                   </div>
                 </a>
               </td>
@@ -261,6 +263,7 @@
             <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:white; opacity:0.85">
               {% if view.device == 'Android' %}<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/></svg>{% else %}<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="2.5" width="13" height="9" rx="1"/></svg>{% endif %}
             </div>
+            <img src="/api/sessions/{{ s.session_id }}/thumb.jpg" alt="" loading="lazy" onerror="this.remove()" />
           </div>
           <div style="display:flex; flex-direction:column; gap:1px; min-width:0">
             <span class="sessions-compact__id">{{ s.session_id }}</span>
