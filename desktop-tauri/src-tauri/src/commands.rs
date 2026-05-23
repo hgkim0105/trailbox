@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn output_root() -> PathBuf {
     let exe_dir = std::env::current_exe()
@@ -155,4 +156,69 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
         return Err("path traversal blocked".to_string());
     }
     fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+}
+
+// ── Python bridge helpers ──────────────────────────────────────────
+
+fn project_root() -> PathBuf {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+    // Dev: src-tauri/target/debug → project root is ../../../..
+    let candidates = [
+        exe_dir.join("..").join("..").join("..").join(".."),
+        exe_dir.join("..").join("..").join(".."),
+        exe_dir.join(".."),
+        PathBuf::from("."),
+    ];
+    for c in &candidates {
+        if c.join("main.py").is_file() {
+            return c.canonicalize().unwrap_or_else(|_| c.clone());
+        }
+    }
+    PathBuf::from(".")
+}
+
+fn python_exe() -> PathBuf {
+    let root = project_root();
+    let venv = root.join(".venv").join("Scripts").join("python.exe");
+    if venv.is_file() { return venv; }
+    PathBuf::from("python")
+}
+
+fn call_bridge(subcommand: &str) -> Result<serde_json::Value, String> {
+    let root = project_root();
+    let bridge = root.join("desktop-tauri").join("bridge.py");
+    if !bridge.is_file() {
+        return Err(format!("bridge.py not found at {}", bridge.display()));
+    }
+    let output = Command::new(python_exe())
+        .arg(&bridge)
+        .arg(subcommand)
+        .current_dir(&root)
+        .output()
+        .map_err(|e| format!("failed to spawn bridge: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!("bridge exited {}: {} {}", output.status, stdout, stderr));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout).map_err(|e| format!("invalid JSON from bridge: {}", e))
+}
+
+#[tauri::command]
+pub fn enumerate_windows() -> Result<serde_json::Value, String> {
+    call_bridge("enumerate-windows")
+}
+
+#[tauri::command]
+pub fn list_android_devices() -> Result<serde_json::Value, String> {
+    call_bridge("list-devices")
+}
+
+#[tauri::command]
+pub fn get_system_info() -> Result<serde_json::Value, String> {
+    call_bridge("system-info")
 }

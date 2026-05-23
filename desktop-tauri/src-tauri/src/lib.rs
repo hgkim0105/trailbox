@@ -8,6 +8,9 @@ pub fn run() {
             commands::open_viewer,
             commands::get_output_root,
             commands::delete_session,
+            commands::enumerate_windows,
+            commands::list_android_devices,
+            commands::get_system_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
