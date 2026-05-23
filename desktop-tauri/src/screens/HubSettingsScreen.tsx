@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
 import type { HubState } from '../data/mock';
 
@@ -77,7 +78,7 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
                   <dt>청크 크기</dt><dd>64 MB</dd>
                 </dl>
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                  <a className="tbd-btn" href={url} target="_blank" rel="noopener">{Icon.Eye()}브라우저에서 열기</a>
+                  <button className="tbd-btn" onClick={() => invoke('open_url', { url })}>{Icon.Eye()}브라우저에서 열기</button>
                   <button className="tbd-btn tbd-btn--danger" onClick={disconnect}>연결 해제</button>
                 </div>
               </>
