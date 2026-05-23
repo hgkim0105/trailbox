@@ -15,6 +15,11 @@ pub fn run() {
             commands::start_recording,
             commands::stop_recording,
             commands::read_recording_status,
+            commands::hub_healthz,
+            commands::hub_login,
+            commands::hub_list_sessions,
+            commands::hub_upload,
+            commands::hub_share,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

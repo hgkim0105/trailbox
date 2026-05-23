@@ -190,7 +190,7 @@ fn python_exe() -> PathBuf {
     PathBuf::from("python")
 }
 
-fn call_bridge(subcommand: &str) -> Result<serde_json::Value, String> {
+fn call_bridge(args: &[&str]) -> Result<serde_json::Value, String> {
     let root = project_root();
     let bridge = root.join("desktop-tauri").join("bridge.py");
     if !bridge.is_file() {
@@ -198,7 +198,7 @@ fn call_bridge(subcommand: &str) -> Result<serde_json::Value, String> {
     }
     let output = Command::new(python_exe())
         .arg(&bridge)
-        .arg(subcommand)
+        .args(args)
         .current_dir(&root)
         .output()
         .map_err(|e| format!("failed to spawn bridge: {}", e))?;
@@ -213,17 +213,42 @@ fn call_bridge(subcommand: &str) -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub fn enumerate_windows() -> Result<serde_json::Value, String> {
-    call_bridge("enumerate-windows")
+    call_bridge(&["enumerate-windows"])
 }
 
 #[tauri::command]
 pub fn list_android_devices() -> Result<serde_json::Value, String> {
-    call_bridge("list-devices")
+    call_bridge(&["list-devices"])
 }
 
 #[tauri::command]
 pub fn get_system_info() -> Result<serde_json::Value, String> {
-    call_bridge("system-info")
+    call_bridge(&["system-info"])
+}
+
+#[tauri::command]
+pub fn hub_healthz(url: String, token: String) -> Result<serde_json::Value, String> {
+    call_bridge(&["hub-healthz", &url, &token])
+}
+
+#[tauri::command]
+pub fn hub_login(url: String, username: String, password: String) -> Result<serde_json::Value, String> {
+    call_bridge(&["hub-login", &url, &username, &password])
+}
+
+#[tauri::command]
+pub fn hub_list_sessions(url: String, token: String) -> Result<serde_json::Value, String> {
+    call_bridge(&["hub-list-sessions", &url, &token])
+}
+
+#[tauri::command]
+pub fn hub_upload(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
+    call_bridge(&["hub-upload", &url, &token, &session_id])
+}
+
+#[tauri::command]
+pub fn hub_share(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
+    call_bridge(&["hub-share", &url, &token, &session_id])
 }
 
 // ── Recording subprocess management ────────────────────────────────
