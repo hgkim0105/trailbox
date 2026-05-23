@@ -7,10 +7,10 @@ export default defineConfig({
   // Tauri 2.x prefers a fixed port and exits if it can't bind.
   clearScreen: false,
   server: {
-    port: 1420,
+    port: 1430,
     strictPort: true,
     host: false,
-    hmr: { protocol: 'ws', host: 'localhost', port: 1421 },
+    hmr: { protocol: 'ws', host: 'localhost', port: 1431 },
   },
   // Build artifacts ship inside the Tauri bundle; keep them deterministic.
   build: {
