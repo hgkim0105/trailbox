@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>20260523-114108-7af3 · Trailbox Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <template id="__bundler_thumbnail">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="100" fill="oklch(0.15 0.02 270)"/>
+      <rect x="10" y="20" width="50" height="32" rx="3" fill="oklch(0.25 0.04 280)"/>
+      <polygon points="28,32 28,42 38,37" fill="white"/>
+      <rect x="64" y="20" width="26" height="14" rx="2" fill="oklch(0.55 0.18 282)" opacity="0.5"/>
+      <rect x="64" y="38" width="26" height="14" rx="2" fill="oklch(0.6 0.18 25)" opacity="0.5"/>
+      <rect x="10" y="60" width="80" height="3" rx="1" fill="oklch(0.3 0 0)"/>
+      <rect x="10" y="66" width="50" height="3" rx="1" fill="oklch(0.3 0 0)"/>
+      <rect x="10" y="72" width="65" height="3" rx="1" fill="oklch(0.3 0 0)"/>
+    </svg>
+  </template>
+  <style>
+    :root, [data-theme="light"] {
+      --bg: oklch(0.985 0.003 270);
+      --bg-2: oklch(0.97 0.005 270);
+      --surface: oklch(1 0 0);
+      --surface-2: oklch(0.97 0.005 270);
+      --surface-hover: oklch(0.95 0.006 270);
+      --border: oklch(0.91 0.006 270);
+      --border-muted: oklch(0.94 0.005 270);
+      --fg: oklch(0.22 0.018 275);
+      --fg-2: oklch(0.4 0.015 275);
+      --muted: oklch(0.55 0.014 275);
+      --subtle: oklch(0.7 0.012 275);
+      --accent: oklch(0.55 0.18 282);
+      --accent-soft: oklch(0.96 0.035 282);
+      --success: oklch(0.55 0.14 150);
+      --danger: oklch(0.55 0.19 25);
+      --warning: oklch(0.7 0.16 75);
+      --info: oklch(0.55 0.14 240);
+      color-scheme: light;
+    }
+    [data-theme="dark"] {
+      --bg: oklch(0.155 0.012 275);
+      --bg-2: oklch(0.18 0.013 275);
+      --surface: oklch(0.21 0.014 275);
+      --surface-2: oklch(0.245 0.014 275);
+      --surface-hover: oklch(0.27 0.015 275);
+      --border: oklch(0.3 0.016 275);
+      --border-muted: oklch(0.255 0.014 275);
+      --fg: oklch(0.96 0.006 275);
+      --fg-2: oklch(0.85 0.008 275);
+      --muted: oklch(0.65 0.012 275);
+      --subtle: oklch(0.5 0.012 275);
+      --accent: oklch(0.7 0.17 282);
+      --accent-soft: oklch(0.3 0.08 282);
+      --success: oklch(0.72 0.14 150);
+      --danger: oklch(0.72 0.18 25);
+      --warning: oklch(0.8 0.14 75);
+      --info: oklch(0.7 0.13 240);
+      color-scheme: dark;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); height: 100%; font-family: 'Geist', system-ui, sans-serif; font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+    .mono, code, kbd { font-family: 'Geist Mono', ui-monospace, monospace; }
+    button { font: inherit; cursor: pointer; }
+    button:focus { outline: none; }
+
+    /* Layout */
+    .app { display: grid; grid-template-rows: 48px 1fr; height: 100vh; }
+    .top {
+      display: flex; align-items: center; gap: 14px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-2);
+    }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .brand-mark {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent), oklch(0.45 0.2 240));
+      position: relative;
+    }
+    .brand-mark::before {
+      content: '';
+      position: absolute;
+      inset: 5px 4px;
+      background: white;
+      clip-path: polygon(0 30%, 40% 30%, 40% 0, 60% 0, 60% 30%, 100% 30%, 100% 70%, 60% 70%, 60% 100%, 40% 100%, 40% 70%, 0 70%);
+    }
+    .session-id {
+      font-family: 'Geist Mono'; font-size: 13px;
+      font-weight: 600; color: var(--fg);
+      padding: 4px 10px; background: var(--surface-2);
+      border-radius: 6px; border: 1px solid var(--border);
+    }
+    .top-stats { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+    .top-stat { display: flex; flex-direction: column; line-height: 1.2; }
+    .top-stat .v { font-family: 'Geist Mono'; font-size: 12.5px; font-weight: 600; color: var(--fg); }
+    .top-stat .l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--subtle); margin-top: 1px; }
+    .top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px; height: 28px;
+      padding: 0 11px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--fg); font-size: 12.5px; font-weight: 500;
+    }
+    .btn:hover { background: var(--surface-hover); }
+    .btn--icon { width: 28px; padding: 0; justify-content: center; }
+    .btn svg { width: 13px; height: 13px; }
+
+    /* Two-column main layout */
+    .main { display: grid; grid-template-columns: minmax(0, 1fr) 420px; min-height: 0; }
+    @media (max-width: 1100px) { .main { grid-template-columns: 1fr; } }
+
+    /* Video pane */
+    .video-pane { display: flex; flex-direction: column; background: oklch(0.05 0.01 270); min-height: 0; }
+    .video-stage {
+      flex: 1; min-height: 0;
+      position: relative;
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .video-stage canvas, .video-stage svg.mock-game {
+      width: 100%; height: 100%; display: block;
+    }
+    .video-cursor {
+      position: absolute;
+      width: 18px; height: 18px;
+      pointer-events: none;
+      filter: drop-shadow(0 1px 2px black);
+      transition: left 0.05s linear, top 0.05s linear;
+    }
+    .video-controls {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px;
+      background: oklch(0.1 0.01 270);
+      border-top: 1px solid oklch(0.2 0.01 270);
+    }
+    .ctl-btn {
+      width: 32px; height: 32px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid oklch(0.25 0.01 270);
+      background: transparent; color: white; border-radius: 6px;
+    }
+    .ctl-btn:hover { background: oklch(0.2 0.01 270); }
+    .ctl-time { font-family: 'Geist Mono'; font-size: 12px; color: oklch(0.85 0.01 270); font-variant-numeric: tabular-nums; }
+    .scrub {
+      flex: 1; height: 24px;
+      position: relative; cursor: pointer;
+      display: flex; align-items: center;
+    }
+    .scrub-track { width: 100%; height: 5px; background: oklch(0.22 0.01 270); border-radius: 999px; position: relative; }
+    .scrub-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 999px; }
+    .scrub-marker { position: absolute; top: -3px; bottom: -3px; width: 2px; pointer-events: none; opacity: 0.7; }
+    .scrub-handle {
+      position: absolute; top: 50%;
+      width: 14px; height: 14px; background: white;
+      border-radius: 50%; transform: translate(-50%, -50%);
+      box-shadow: 0 1px 4px oklch(0 0 0 / 0.5);
+    }
+    .speed {
+      display: inline-flex; height: 28px; align-items: center;
+      gap: 1px; padding: 2px;
+      border: 1px solid oklch(0.25 0.01 270); border-radius: 6px;
+    }
+    .speed button {
+      height: 22px; padding: 0 7px;
+      background: transparent; border: 0;
+      color: oklch(0.75 0.01 270); font-size: 11px; font-weight: 500;
+      border-radius: 3px;
+    }
+    .speed button.active { background: oklch(0.25 0.01 270); color: white; }
+
+    /* Side panel */
+    .side {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      border-left: 1px solid var(--border);
+      background: var(--bg);
+      min-height: 0;
+    }
+    .metrics {
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-2);
+      padding: 4px 0;
+    }
+    .metrics-head { padding: 8px 14px 4px; display: flex; align-items: center; gap: 8px; }
+    .metrics-head h3 {
+      margin: 0; font-size: 10.5px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    }
+    .metric-row {
+      display: grid; grid-template-columns: 48px 1fr 70px;
+      align-items: center; gap: 10px;
+      padding: 5px 14px;
+      font-size: 11.5px;
+    }
+    .metric-row__label {
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .metric-row__chart { height: 28px; width: 100%; }
+    .metric-row__value {
+      text-align: right;
+      font-family: 'Geist Mono';
+      font-size: 12px; font-weight: 600;
+      color: var(--fg);
+      font-variant-numeric: tabular-nums;
+    }
+    .metric-row__value small { color: var(--muted); margin-left: 1px; font-size: 9.5px; font-weight: 400; }
+
+    /* Events panel */
+    .events {
+      min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .events-toolbar {
+      padding: 8px 12px;
+      display: flex; align-items: center; gap: 6px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-2);
+    }
+    .events-search {
+      flex: 1; height: 26px; padding: 0 10px 0 26px;
+      border: 1px solid var(--border); border-radius: 5px;
+      background: var(--surface); color: var(--fg);
+      font-family: inherit; font-size: 12px;
+      position: relative;
+    }
+    .search-wrap { position: relative; flex: 1; }
+    .search-wrap svg {
+      position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+      width: 12px; height: 12px; color: var(--subtle); pointer-events: none;
+    }
+    .filter-btn {
+      height: 26px; padding: 0 8px;
+      font-size: 11.5px; font-weight: 500;
+      border: 1px solid var(--border); border-radius: 5px;
+      background: var(--surface); color: var(--muted);
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .filter-btn.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+    .filter-btn .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .filter-btn.log .dot { background: var(--info); }
+    .filter-btn.input .dot { background: var(--accent); }
+    .filter-btn.warn .dot { background: var(--warning); }
+    .filter-btn.error .dot { background: var(--danger); }
+    .filter-btn.all .dot { background: var(--muted); }
+
+    .events-list {
+      flex: 1; overflow-y: auto;
+      font-family: 'Geist Mono';
+      font-size: 11.5px;
+    }
+    .event-row {
+      display: grid; grid-template-columns: 60px 1fr;
+      gap: 8px;
+      padding: 4px 12px;
+      border-bottom: 1px solid var(--border-muted);
+      cursor: pointer;
+      align-items: baseline;
+    }
+    .event-row:hover { background: var(--surface-2); }
+    .event-row.active { background: var(--accent-soft); }
+    .event-row__t { color: var(--muted); white-space: nowrap; font-size: 10.5px; }
+    .event-row__t::before {
+      content: '';
+      display: inline-block;
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    .event-row[data-kind="log"] .event-row__t::before { background: var(--info); }
+    .event-row[data-kind="input"] .event-row__t::before { background: var(--accent); }
+    .event-row[data-kind="warn"] .event-row__t::before { background: var(--warning); }
+    .event-row[data-kind="error"] .event-row__t::before { background: var(--danger); }
+    .event-row__msg {
+      color: var(--fg-2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .event-row[data-kind="error"] .event-row__msg { color: var(--danger); }
+    .event-row[data-kind="warn"] .event-row__msg { color: oklch(0.7 0.14 75); }
+    [data-theme="light"] .event-row[data-kind="warn"] .event-row__msg { color: oklch(0.45 0.13 75); }
+    .event-row__msg .src { color: var(--accent); }
+
+    /* System spec collapsible */
+    .spec {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-2);
+      font-size: 11.5px;
+    }
+    .spec-head {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; user-select: none;
+      color: var(--fg-2); font-weight: 500;
+    }
+    .spec-head .chev { transition: transform 0.15s; }
+    .spec.open .spec-head .chev { transform: rotate(90deg); }
+    .spec-body { display: none; margin-top: 8px; }
+    .spec.open .spec-body { display: grid; grid-template-columns: 70px 1fr; gap: 4px 12px; font-size: 11.5px; }
+    .spec-body dt { color: var(--muted); }
+    .spec-body dd { margin: 0; font-family: 'Geist Mono'; color: var(--fg); }
+
+    /* Tabs above events list */
+    .tabs { display: flex; gap: 0; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+    .tab {
+      padding: 8px 12px; font-size: 12.5px; font-weight: 500;
+      color: var(--muted); border: 0; background: transparent;
+      border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .tab:hover { color: var(--fg); }
+    .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+    .tab .count {
+      background: var(--surface-2); color: var(--muted);
+      padding: 0 6px; border-radius: 999px;
+      font-size: 10.5px; font-weight: 600;
+    }
+    .tab.active .count { background: var(--accent-soft); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="app">
+
+    <!-- Top bar -->
+    <header class="top">
+      <a class="brand" href="#" style="text-decoration: none; color: inherit;">
+        <div class="brand-mark"></div>
+        <span>Trailbox</span>
+        <span style="color: var(--muted); font-weight: 500;">Viewer</span>
+      </a>
+      <div class="session-id">20260523-114108-7af3</div>
+
+      <div class="top-stats">
+        <div class="top-stat"><span class="v">10:12</span><span class="l">Duration</span></div>
+        <div class="top-stat"><span class="v">7,349</span><span class="l">Frames</span></div>
+        <div class="top-stat"><span class="v">8.4k</span><span class="l">Logs</span></div>
+        <div class="top-stat"><span class="v">1.9k</span><span class="l">Inputs</span></div>
+        <div class="top-stat"><span class="v">17 ms</span><span class="l">Δ p99</span></div>
+        <div class="top-stat"><span class="v">16 cores</span><span class="l">CPU</span></div>
+      </div>
+
+      <div class="top-right">
+        <button class="btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M4 7l4 4 4-4M2.5 13.5h11"/></svg>zip</button>
+        <button class="btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="3.5" r="1.5"/><circle cx="4" cy="8" r="1.5"/><circle cx="12" cy="12.5" r="1.5"/><path d="M10.7 4.4 5.3 7.1M5.3 8.9l5.4 2.7"/></svg>공유 링크</button>
+        <button class="btn btn--icon" id="theme-toggle" title="테마">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="main">
+      <!-- Video pane -->
+      <div class="video-pane">
+        <div class="video-stage" id="video-stage">
+          <!-- Mock game scene (since we don't have a real mp4) -->
+          <svg class="mock-game" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+            <defs>
+              <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="oklch(0.4 0.14 280)" />
+                <stop offset="0.7" stop-color="oklch(0.25 0.08 240)" />
+                <stop offset="1" stop-color="oklch(0.15 0.05 220)" />
+              </linearGradient>
+              <radialGradient id="sun" cx="0.7" cy="0.3">
+                <stop offset="0" stop-color="oklch(0.85 0.16 60)" stop-opacity="0.6" />
+                <stop offset="1" stop-color="oklch(0.85 0.16 60)" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="oklch(0.2 0.04 200)" />
+                <stop offset="1" stop-color="oklch(0.1 0.02 200)" />
+              </linearGradient>
+            </defs>
+            <rect width="1600" height="900" fill="url(#sky)"/>
+            <rect width="1600" height="900" fill="url(#sun)"/>
+            <!-- mountains -->
+            <polygon points="0,600 200,420 400,520 600,380 850,500 1100,400 1350,540 1600,460 1600,900 0,900" fill="oklch(0.12 0.04 240)" opacity="0.95"/>
+            <polygon points="0,650 250,520 500,600 750,490 1000,580 1250,510 1500,600 1600,560 1600,900 0,900" fill="oklch(0.16 0.05 230)" opacity="0.85"/>
+            <rect y="700" width="1600" height="200" fill="url(#ground)"/>
+            <!-- character silhouette -->
+            <g id="character" transform="translate(700, 540)">
+              <ellipse cx="100" cy="200" rx="50" ry="14" fill="oklch(0 0 0)" opacity="0.4"/>
+              <rect x="80" y="80" width="40" height="120" rx="14" fill="oklch(0.35 0.1 240)"/>
+              <circle cx="100" cy="60" r="22" fill="oklch(0.5 0.05 50)"/>
+              <rect x="74" y="100" width="14" height="60" rx="4" fill="oklch(0.4 0.1 250)"/>
+              <rect x="114" y="100" width="14" height="60" rx="4" fill="oklch(0.4 0.1 250)"/>
+            </g>
+            <!-- HUD -->
+            <g font-family="Geist Mono, monospace" fill="white" opacity="0.9">
+              <text x="24" y="40" font-size="20" font-weight="700">AURORA</text>
+              <text x="24" y="60" font-size="13" opacity="0.7">build 412 · level_07 · pack_alpha_03</text>
+            </g>
+            <!-- Health bar -->
+            <g transform="translate(1280, 30)">
+              <rect x="0" y="0" width="280" height="8" rx="4" fill="oklch(0.18 0.01 0 / 0.5)"/>
+              <rect x="0" y="0" width="195" height="8" rx="4" fill="oklch(0.65 0.18 25)"/>
+              <text x="0" y="-6" fill="white" font-size="11" opacity="0.85" font-family="Geist Mono">HP 195/280</text>
+              <rect x="0" y="18" width="220" height="6" rx="3" fill="oklch(0.18 0.01 0 / 0.5)"/>
+              <rect x="0" y="18" width="170" height="6" rx="3" fill="oklch(0.65 0.18 240)"/>
+            </g>
+            <!-- Action bar -->
+            <g transform="translate(640, 820)">
+              <g id="ab-1"><rect x="0" y="0" width="48" height="48" rx="6" fill="oklch(0.2 0 0 / 0.7)" stroke="oklch(0.5 0 0 / 0.4)"/><text x="6" y="14" fill="white" opacity="0.6" font-size="11" font-family="Geist Mono">1</text></g>
+              <g id="ab-2" transform="translate(56, 0)"><rect x="0" y="0" width="48" height="48" rx="6" fill="oklch(0.55 0.18 282)" stroke="oklch(0.7 0.18 282)"/><text x="6" y="14" fill="white" font-size="11" font-family="Geist Mono">2</text></g>
+              <g transform="translate(112, 0)"><rect x="0" y="0" width="48" height="48" rx="6" fill="oklch(0.2 0 0 / 0.7)" stroke="oklch(0.5 0 0 / 0.4)"/><text x="6" y="14" fill="white" opacity="0.6" font-size="11" font-family="Geist Mono">3</text></g>
+              <g transform="translate(168, 0)"><rect x="0" y="0" width="48" height="48" rx="6" fill="oklch(0.2 0 0 / 0.7)" stroke="oklch(0.5 0 0 / 0.4)"/><text x="6" y="14" fill="white" opacity="0.6" font-size="11" font-family="Geist Mono">4</text></g>
+              <g transform="translate(224, 0)"><rect x="0" y="0" width="48" height="48" rx="6" fill="oklch(0.2 0 0 / 0.7)" stroke="oklch(0.5 0 0 / 0.4)"/><text x="6" y="14" fill="white" opacity="0.6" font-size="11" font-family="Geist Mono">5</text></g>
+            </g>
+            <!-- Minimap -->
+            <g transform="translate(1440, 760)">
+              <rect x="0" y="0" width="130" height="100" rx="6" fill="oklch(0.15 0.02 200 / 0.75)" stroke="oklch(0.5 0 0 / 0.3)"/>
+              <circle cx="65" cy="50" r="3" fill="oklch(0.7 0.18 60)" />
+            </g>
+          </svg>
+          <svg class="video-cursor" id="cursor" viewBox="0 0 16 16" style="left: 50%; top: 50%;">
+            <path d="M2 2l4.5 11 2-4.5 4.5-2z" fill="white" stroke="black" stroke-width="0.8" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <div class="video-controls">
+          <button class="ctl-btn" id="prev" title="이전 이벤트 (←)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 3.5v9"/><path d="M13 3.5v9L5.5 8z" fill="currentColor"/></svg></button>
+          <button class="ctl-btn" id="play" title="재생/일시정지 (space)">
+            <svg viewBox="0 0 16 16" fill="currentColor" id="play-icon"><path d="M5 3.5v9l7-4.5z"/></svg>
+          </button>
+          <button class="ctl-btn" id="next" title="다음 이벤트 (→)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3.5v9"/><path d="M3 3.5v9L10.5 8z" fill="currentColor"/></svg></button>
+          <span class="ctl-time" id="ctl-time">00:00.0 / 10:12.4</span>
+          <div class="scrub" id="scrub">
+            <div class="scrub-track">
+              <div class="scrub-fill" id="scrub-fill" style="width: 8%"></div>
+              <div class="scrub-handle" id="scrub-handle" style="left: 8%"></div>
+              <!-- event markers drawn by JS -->
+              <div id="scrub-markers"></div>
+            </div>
+          </div>
+          <div class="speed" id="speed">
+            <button data-rate="0.5">0.5×</button>
+            <button data-rate="1" class="active">1×</button>
+            <button data-rate="2">2×</button>
+            <button data-rate="4">4×</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Side panel -->
+      <aside class="side">
+        <div class="metrics">
+          <div class="metrics-head">
+            <h3>메트릭 · t=<span id="metric-t" class="mono">00:48.6</span></h3>
+            <span style="margin-left: auto; font-size: 10.5px; color: var(--muted); font-family: 'Geist Mono';">612 samples</span>
+          </div>
+          <div id="metrics-rows"></div>
+        </div>
+
+        <div class="events">
+          <div class="tabs">
+            <button class="tab active" data-tab="events">이벤트 <span class="count" id="events-count">10,368</span></button>
+            <button class="tab" data-tab="logs">로그만 <span class="count">8,421</span></button>
+            <button class="tab" data-tab="inputs">입력만 <span class="count">1,947</span></button>
+          </div>
+
+          <div class="events-toolbar">
+            <div class="search-wrap">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+              <input class="events-search" id="search" placeholder="메시지·파일경로·소스명 검색…" />
+            </div>
+            <button class="filter-btn all active" data-kind="all">전체</button>
+            <button class="filter-btn log" data-kind="log"><span class="dot"></span>log</button>
+            <button class="filter-btn input" data-kind="input"><span class="dot"></span>in</button>
+            <button class="filter-btn warn" data-kind="warn"><span class="dot"></span>warn</button>
+            <button class="filter-btn error" data-kind="error"><span class="dot"></span>err</button>
+          </div>
+
+          <div class="events-list" id="events-list"></div>
+
+          <details class="spec" id="spec">
+            <summary class="spec-head" style="list-style:none;">
+              <svg class="chev" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+              사양
+            </summary>
+            <dl class="spec-body" style="display: grid;">
+              <dt>OS</dt><dd>Windows 11 Pro · 23H2</dd>
+              <dt>CPU</dt><dd>Ryzen 9 7950X · 16C/32T</dd>
+              <dt>RAM</dt><dd>64 GB DDR5-6000</dd>
+              <dt>GPU</dt><dd>RTX 4070 · 12 GB</dd>
+              <dt>Display</dt><dd>3840×2160 @ 144Hz</dd>
+              <dt>EXE</dt><dd>Aurora.exe</dd>
+              <dt>Trailbox</dt><dd>v0.4.2</dd>
+            </dl>
+          </details>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+  // ============================================================
+  // Mock data + lightweight interactive viewer
+  // ============================================================
+  const DURATION = 612.4;
+  const METRIC_SAMPLES = 612;
+
+  function seedRand(s) {
+    let x = s;
+    return () => { x = (x * 9301 + 49297) % 233280; return x / 233280; };
+  }
+  function spark(seed, n, min, max) {
+    const r = seedRand(seed);
+    const arr = [];
+    let v = (min + max) / 2;
+    for (let i = 0; i < n; i++) {
+      v += (r() - 0.5) * (max - min) * 0.16;
+      v = Math.max(min, Math.min(max, v));
+      arr.push(v);
+    }
+    return arr;
+  }
+  const CPU = spark(1, METRIC_SAMPLES, 12, 92);
+  const GPU = spark(2, METRIC_SAMPLES, 20, 78);
+  const RAM = spark(3, METRIC_SAMPLES, 40, 65);
+  const VRAM = spark(4, METRIC_SAMPLES, 55, 88);
+  const FPS = spark(5, METRIC_SAMPLES, 45, 60);
+
+  const METRICS = [
+    { id: 'cpu', label: 'CPU', data: CPU, unit: '%', color: 'oklch(0.65 0.18 25)' },
+    { id: 'gpu', label: 'GPU', data: GPU, unit: '%', color: 'oklch(0.65 0.18 280)' },
+    { id: 'ram', label: 'RAM', data: RAM, unit: 'GB', color: 'oklch(0.65 0.18 150)', scale: 0.1 },
+    { id: 'vram', label: 'VRAM', data: VRAM, unit: '%', color: 'oklch(0.65 0.18 60)' },
+    { id: 'fps', label: 'FPS', data: FPS, unit: '', color: 'oklch(0.65 0.18 200)' },
+  ];
+
+  // Event timeline — a few hundred fake events spread across the duration
+  const SAMPLE_TEMPLATES = [
+    { kind: 'log',   src: 'Aurora', msg: 'Loading scene: level_07' },
+    { kind: 'log',   src: 'Aurora', msg: 'Streaming assets: 142 mb' },
+    { kind: 'log',   src: 'Aurora', msg: 'Quest accept: tutorial_03' },
+    { kind: 'log',   src: 'Aurora', msg: 'Autosave checkpoint' },
+    { kind: 'log',   src: 'net',    msg: 'Heartbeat 32 ms · 14/14 lobby slots' },
+    { kind: 'log',   src: 'net',    msg: 'Player joined: alyc (rtt 28ms)' },
+    { kind: 'input', src: 'mouse',  msg: 'click @ (924, 412) — "Start"' },
+    { kind: 'input', src: 'mouse',  msg: 'click @ (1140, 220) — "Inventory"' },
+    { kind: 'input', src: 'mouse',  msg: 'mouse move (812, 304) → (240, 510)' },
+    { kind: 'input', src: 'mouse',  msg: 'wheel +3 ticks' },
+    { kind: 'input', src: 'kbd',    msg: 'key down: W' },
+    { kind: 'input', src: 'kbd',    msg: 'key down: Shift' },
+    { kind: 'input', src: 'kbd',    msg: 'key down: Tab' },
+    { kind: 'input', src: 'kbd',    msg: 'key down: Space' },
+    { kind: 'warn',  src: 'render', msg: 'Allocator pressure 82% — paged tier' },
+    { kind: 'warn',  src: 'audio',  msg: 'WASAPI loopback underflow · 12 ms' },
+    { kind: 'error', src: 'gpu',    msg: 'device hung 1× — recovered, frame skipped' },
+    { kind: 'error', src: 'script', msg: 'NaN in damage calc — clamped to 0' },
+    { kind: 'log',   src: 'Aurora', msg: 'Combat begin: pack_alpha_03' },
+    { kind: 'log',   src: 'Aurora', msg: 'Enemy defeated · 250 xp' },
+  ];
+
+  function generateEvents() {
+    const out = [];
+    const r = seedRand(7);
+    // Inject specific markers at key moments
+    out.push({ t: 0.4, kind: 'log', src: 'Aurora', msg: '[Aurora] Engine initialized · build 412' });
+    out.push({ t: 18.4, kind: 'warn', src: 'render', msg: '[render] Allocator pressure 82% — paged tier' });
+    out.push({ t: 22.1, kind: 'warn', src: 'render', msg: '[render] Allocator pressure 84% — paged tier' });
+    out.push({ t: 24.8, kind: 'warn', src: 'render', msg: '[render] Allocator pressure 86% — paged tier' });
+    out.push({ t: 34.5, kind: 'error', src: 'gpu', msg: '[gpu] device hung 1× — recovered, frame skipped' });
+    out.push({ t: 48.6, kind: 'log', src: 'Aurora', msg: '[Aurora] Combat begin: pack_alpha_03' });
+    out.push({ t: 88.6, kind: 'error', src: 'script', msg: '[script] NaN in damage calc — clamped to 0' });
+    // Fill in noise
+    for (let i = 0; i < 220; i++) {
+      const t = r() * DURATION;
+      const tpl = SAMPLE_TEMPLATES[Math.floor(r() * SAMPLE_TEMPLATES.length)];
+      out.push({ t, kind: tpl.kind, src: tpl.src, msg: `[${tpl.src}] ${tpl.msg}` });
+    }
+    out.sort((a, b) => a.t - b.t);
+    return out;
+  }
+  const EVENTS = generateEvents();
+  document.getElementById('events-count').textContent = EVENTS.length.toLocaleString();
+
+  // ── State ──
+  const state = {
+    t: 48.6,
+    playing: false,
+    rate: 1,
+    filter: 'all',
+    query: '',
+  };
+
+  // ── Helpers ──
+  function fmtT(t) {
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    const d = Math.floor((t - Math.floor(t)) * 10);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`;
+  }
+
+  // ── Sparkline ──
+  function renderSpark(data, color, t) {
+    const w = 200, h = 28;
+    const max = Math.max(...data), min = Math.min(...data);
+    const range = max - min || 1;
+    const pts = data.map((v, i) => [
+      (i / (data.length - 1)) * w,
+      h - ((v - min) / range) * (h - 4) - 2,
+    ]);
+    let d = '';
+    pts.forEach(([x, y], i) => {
+      if (i === 0) d += `M${x},${y}`;
+      else {
+        const [px, py] = pts[i - 1];
+        const cx = px + (x - px) / 2;
+        d += ` C${cx},${py} ${cx},${y} ${x},${y}`;
+      }
+    });
+    const idx = Math.min(data.length - 1, Math.floor((t / DURATION) * data.length));
+    const [cx, cy] = pts[idx];
+    return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="metric-row__chart" style="overflow: visible;">
+      <path d="${d}" fill="none" stroke="${color}" stroke-width="1.3" opacity="0.85" />
+      <line x1="${cx}" y1="0" x2="${cx}" y2="${h}" stroke="var(--accent)" stroke-width="1" opacity="0.5" />
+      <circle cx="${cx}" cy="${cy}" r="2.4" fill="${color}" />
+    </svg>`;
+  }
+
+  function renderMetrics() {
+    const idx = Math.min(METRIC_SAMPLES - 1, Math.floor((state.t / DURATION) * METRIC_SAMPLES));
+    const root = document.getElementById('metrics-rows');
+    document.getElementById('metric-t').textContent = fmtT(state.t);
+    root.innerHTML = METRICS.map(m => {
+      const v = m.data[idx] * (m.scale || 1);
+      return `<div class="metric-row">
+        <span class="metric-row__label">${m.label}</span>
+        ${renderSpark(m.data, m.color, state.t)}
+        <span class="metric-row__value">${v.toFixed(m.unit === 'GB' ? 1 : 0)}<small>${m.unit}</small></span>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Events list ──
+  function renderEvents() {
+    const list = document.getElementById('events-list');
+    const filtered = EVENTS.filter(e => {
+      if (state.filter !== 'all' && e.kind !== state.filter) return false;
+      if (state.query && !e.msg.toLowerCase().includes(state.query.toLowerCase())) return false;
+      return true;
+    });
+    // Find active event (closest before t)
+    let activeIdx = -1;
+    for (let i = filtered.length - 1; i >= 0; i--) {
+      if (filtered[i].t <= state.t) { activeIdx = i; break; }
+    }
+    // Render up to ~120 visible rows for performance
+    const showCount = Math.min(filtered.length, 120);
+    let html = '';
+    for (let i = 0; i < showCount; i++) {
+      const e = filtered[i];
+      const cls = i === activeIdx ? 'event-row active' : 'event-row';
+      html += `<div class="${cls}" data-kind="${e.kind}" data-t="${e.t}">
+        <span class="event-row__t">${fmtT(e.t)}</span>
+        <span class="event-row__msg">${escapeHtml(e.msg)}</span>
+      </div>`;
+    }
+    list.innerHTML = html;
+    list.querySelectorAll('.event-row').forEach(row => {
+      row.addEventListener('click', () => {
+        state.t = parseFloat(row.dataset.t);
+        update();
+      });
+    });
+    // Scroll active into view if not visible
+    const active = list.querySelector('.event-row.active');
+    if (active) {
+      const rect = active.getBoundingClientRect();
+      const parent = list.getBoundingClientRect();
+      if (rect.top < parent.top + 20 || rect.bottom > parent.bottom - 20) {
+        active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      }
+    }
+  }
+  function escapeHtml(s) {
+    return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  // ── Scrub + playhead ──
+  function renderScrub() {
+    const pct = (state.t / DURATION) * 100;
+    document.getElementById('scrub-fill').style.width = pct + '%';
+    document.getElementById('scrub-handle').style.left = pct + '%';
+    document.getElementById('ctl-time').textContent = `${fmtT(state.t)} / ${fmtT(DURATION)}`;
+  }
+
+  // Event markers on the scrub track
+  function renderMarkers() {
+    const c = document.getElementById('scrub-markers');
+    const errors = EVENTS.filter(e => e.kind === 'error');
+    const warns = EVENTS.filter(e => e.kind === 'warn');
+    c.innerHTML =
+      errors.map(e => `<div class="scrub-marker" style="left: ${(e.t / DURATION) * 100}%; background: var(--danger);"></div>`).join('') +
+      warns.map(e => `<div class="scrub-marker" style="left: ${(e.t / DURATION) * 100}%; background: var(--warning); opacity: 0.5;"></div>`).join('');
+  }
+
+  // ── Cursor animation in mock video ──
+  function renderCursor() {
+    const stage = document.getElementById('video-stage');
+    const cursor = document.getElementById('cursor');
+    const w = stage.clientWidth, h = stage.clientHeight;
+    // pseudo-noise path so cursor wanders
+    const t = state.t;
+    const x = (w * (0.3 + 0.2 * Math.sin(t * 0.3) + 0.1 * Math.cos(t * 0.7)));
+    const y = (h * (0.4 + 0.15 * Math.cos(t * 0.4) + 0.08 * Math.sin(t * 1.2)));
+    cursor.style.left = x + 'px';
+    cursor.style.top = y + 'px';
+  }
+
+  function update() {
+    renderScrub();
+    renderMetrics();
+    renderEvents();
+    renderCursor();
+  }
+
+  // ── Play loop ──
+  let lastT = 0;
+  function loop(ts) {
+    if (state.playing) {
+      const dt = (ts - lastT) / 1000;
+      state.t += dt * state.rate;
+      if (state.t >= DURATION) { state.t = DURATION; state.playing = false; updatePlayIcon(); }
+      update();
+    }
+    lastT = ts;
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  function updatePlayIcon() {
+    const ic = document.getElementById('play-icon');
+    if (state.playing) {
+      ic.innerHTML = '<rect x="4.5" y="3" width="2.5" height="10" rx="0.5"/><rect x="9" y="3" width="2.5" height="10" rx="0.5"/>';
+    } else {
+      ic.innerHTML = '<path d="M5 3.5v9l7-4.5z"/>';
+    }
+  }
+
+  // ── Event wiring ──
+  document.getElementById('play').addEventListener('click', () => {
+    state.playing = !state.playing;
+    updatePlayIcon();
+  });
+  document.getElementById('prev').addEventListener('click', () => {
+    const earlier = EVENTS.filter(e => e.t < state.t - 0.5).sort((a, b) => b.t - a.t)[0];
+    if (earlier) { state.t = earlier.t; update(); }
+  });
+  document.getElementById('next').addEventListener('click', () => {
+    const later = EVENTS.find(e => e.t > state.t + 0.5);
+    if (later) { state.t = later.t; update(); }
+  });
+
+  document.getElementById('scrub').addEventListener('click', (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    state.t = ((e.clientX - rect.left) / rect.width) * DURATION;
+    state.t = Math.max(0, Math.min(DURATION, state.t));
+    update();
+  });
+
+  document.getElementById('speed').querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.rate = parseFloat(btn.dataset.rate);
+      document.querySelectorAll('.speed button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.filter = btn.dataset.kind;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b === btn));
+      renderEvents();
+    });
+  });
+
+  document.getElementById('search').addEventListener('input', (e) => {
+    state.query = e.target.value;
+    renderEvents();
+  });
+
+  // Theme toggle
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const t = document.documentElement.getAttribute('data-theme');
+    document.documentElement.setAttribute('data-theme', t === 'dark' ? 'light' : 'dark');
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === ' ') { e.preventDefault(); document.getElementById('play').click(); }
+    if (e.key === 'ArrowLeft') document.getElementById('prev').click();
+    if (e.key === 'ArrowRight') document.getElementById('next').click();
+  });
+
+  // Initial render
+  renderMarkers();
+  update();
+  </script>
+</body>
+</html>
