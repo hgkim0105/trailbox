@@ -54,6 +54,69 @@ def cmd_system_info() -> dict:
     return gather()
 
 
+def cmd_pick_window_click() -> dict:
+    import time
+    import win32api
+    import win32con
+    import win32gui
+    time.sleep(0.3)
+    # Wait for a left-click
+    while True:
+        if win32api.GetAsyncKeyState(win32con.VK_LBUTTON) & 0x8000:
+            break
+        time.sleep(0.02)
+    pt = win32api.GetCursorPos()
+    hwnd = win32gui.WindowFromPoint(pt)
+    # Walk up to the top-level window
+    while True:
+        parent = win32gui.GetParent(hwnd)
+        if parent == 0:
+            break
+        hwnd = parent
+    title = win32gui.GetWindowText(hwnd)
+    import psutil
+    import win32process
+    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+    exe_path = ""
+    process_name = ""
+    try:
+        p = psutil.Process(pid)
+        process_name = p.name()
+        exe_path = p.exe() or ""
+    except Exception:
+        pass
+    return {"hwnd": hwnd, "title": title, "pid": pid, "process_name": process_name, "exe_path": exe_path, "label": f"{title}  —  {process_name}  [hwnd 0x{hwnd:X}]"}
+
+
+def cmd_find_window_for_log() -> dict | None:
+    log_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+    if not log_dir:
+        return {"error": "log_dir required"}
+    from pathlib import Path as _P
+    from core.process_detector import find_pids_for_log_dir
+    from core.window_picker import enumerate_windows
+    pids = find_pids_for_log_dir(_P(log_dir))
+    if not pids:
+        return None
+    windows = enumerate_windows()
+    for w in windows:
+        if w.pid in pids:
+            return {"hwnd": w.hwnd, "title": w.title, "pid": w.pid, "process_name": w.process_name, "exe_path": w.exe_path, "label": w.label}
+    return None
+
+
+def cmd_launch_exe() -> dict:
+    exe_path = sys.argv[3] if len(sys.argv) > 3 else ""
+    if not exe_path:
+        return {"error": "exe_path required"}
+    import subprocess
+    try:
+        proc = subprocess.Popen([exe_path], creationflags=0x00000008)  # DETACHED_PROCESS
+        return {"pid": proc.pid, "exe_path": exe_path}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def cmd_hub_healthz() -> dict:
     url, token = _hub_args()
     from core.hub_client import HubClient
@@ -110,6 +173,9 @@ COMMANDS = {
     "enumerate-windows": cmd_enumerate_windows,
     "list-devices": cmd_list_devices,
     "system-info": cmd_system_info,
+    "pick-window-click": cmd_pick_window_click,
+    "find-window-for-log": cmd_find_window_for_log,
+    "launch-exe": cmd_launch_exe,
     "hub-healthz": cmd_hub_healthz,
     "hub-login": cmd_hub_login,
     "hub-list-sessions": cmd_hub_list_sessions,

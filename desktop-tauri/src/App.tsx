@@ -126,7 +126,7 @@ export default function App() {
       );
       break;
     case 'sessions':
-      screen = <SessionsScreen hub={hub} />;
+      screen = <SessionsScreen hub={hub} active />;
       break;
     case 'hub':
       screen = <HubSettingsScreen hub={hub} setHub={setHub} />;

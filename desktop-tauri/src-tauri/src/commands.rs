@@ -166,6 +166,31 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
     fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
+// ── Window picker / app launcher ───────────────────────────────────
+
+#[tauri::command]
+pub fn pick_window_click(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.minimize();
+    }
+    let result = call_bridge(&["pick-window-click"]);
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+    result
+}
+
+#[tauri::command]
+pub fn find_window_for_log(log_dir: String) -> Result<serde_json::Value, String> {
+    call_bridge(&["find-window-for-log", &log_dir])
+}
+
+#[tauri::command]
+pub fn launch_exe(exe_path: String) -> Result<serde_json::Value, String> {
+    call_bridge(&["launch-exe", &exe_path])
+}
+
 // ── Overlay window control ─────────────────────────────────────────
 
 #[tauri::command]

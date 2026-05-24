@@ -43,27 +43,24 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
   const [input, setInput] = useState(true);
   const [metrics, setMetrics] = useState(true);
   const [autoUpload, setAutoUpload] = useState(false);
+  const [windows, setWindows] = useState<WindowInfo[]>(WINDOWS);
+  const [devices, setDevices] = useState<AdbDevice[]>(ANDROID_DEVICES);
+  const [lastSession, setLastSession] = useState<{ id: string; rel: string; dur: string } | null>(null);
+  const [launching, setLaunching] = useState(false);
 
-  // Sync config to parent ref so App.startRecording can read it
   useEffect(() => {
-    const selectedWin = windows.find(w => w.hwnd === hwnd);
+    const selected = windows.find(w => w.hwnd === hwnd);
     configRef.current = {
       target: target === 'window'
-        ? { kind: 'window', hwnd, title: selectedWin?.title ?? '' }
+        ? { kind: 'window', hwnd, title: selected?.title ?? selected?.label ?? '' }
         : { kind: 'monitor', index: 0 },
-      exe_path: exe || selectedWin?.exe_path || '',
+      exe_path: exe || selected?.exe_path || selected?.exe || '',
       log_dirs: [logDir, ...extraDirs].filter(Boolean),
-      max_fps: fps,
-      audio,
-      input,
-      metrics,
+      max_fps: fps, audio, input, metrics,
       log_recursive: recursive,
       log_extensions: exts.split(',').map(e => e.trim()).filter(Boolean).map(e => e.startsWith('.') ? e : `.${e}`),
     };
   });
-
-  const [windows, setWindows] = useState<WindowInfo[]>(WINDOWS);
-  const [devices, setDevices] = useState<AdbDevice[]>(ANDROID_DEVICES);
 
   const refreshWindows = useCallback(async () => {
     try {
@@ -72,43 +69,87 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
         setWindows(list);
         if (!hwnd || !list.find(w => w.hwnd === hwnd)) setHwnd(list[0].hwnd);
       }
-    } catch { /* fall back to mock */ }
+    } catch { /* mock fallback */ }
   }, [hwnd]);
 
   const refreshDevices = useCallback(async () => {
     try {
       const list = await invoke<AdbDevice[]>('list_android_devices');
-      if (Array.isArray(list)) {
-        setDevices(list.length > 0 ? list : ANDROID_DEVICES);
-        if (list.length > 0 && !list.find(d => d.serial === serial)) setSerial(list[0].serial);
+      if (Array.isArray(list) && list.length > 0) {
+        setDevices(list);
+        if (!list.find(d => d.serial === serial)) setSerial(list[0].serial);
       }
-    } catch { /* fall back to mock */ }
+    } catch { /* mock fallback */ }
   }, [serial]);
 
-  useEffect(() => { refreshWindows(); }, []);
+  const pickWindowClick = async () => {
+    try {
+      const win = await invoke<WindowInfo>('pick_window_click');
+      if (win && win.hwnd) {
+        const exists = windows.find(w => w.hwnd === win.hwnd);
+        if (!exists) setWindows(prev => [win, ...prev]);
+        setHwnd(win.hwnd);
+        if (win.exe_path) setExe(win.exe_path);
+      }
+    } catch { /* cancelled or error */ }
+  };
+
+  const findWindowForLog = async () => {
+    if (!logDir) return;
+    try {
+      const win = await invoke<WindowInfo | null>('find_window_for_log', { logDir });
+      if (win && win.hwnd) {
+        const exists = windows.find(w => w.hwnd === win.hwnd);
+        if (!exists) setWindows(prev => [win, ...prev]);
+        setHwnd(win.hwnd);
+      }
+    } catch { /* not found */ }
+  };
+
+  const launchExe = async () => {
+    if (!exe) return;
+    setLaunching(true);
+    try {
+      await invoke('launch_exe', { exePath: exe });
+      setTimeout(() => { refreshWindows(); setLaunching(false); }, 1500);
+    } catch {
+      setLaunching(false);
+    }
+  };
 
   const pickFile = async () => {
     try {
       const path = await invoke<string | null>('pick_file');
       if (path) setExe(path);
-    } catch { /* dialog plugin not available */ }
+    } catch { /* no dialog */ }
   };
 
   const pickFolder = async () => {
     try {
       const path = await invoke<string | null>('pick_folder');
       if (path) setLogDir(path);
-    } catch { /* dialog plugin not available */ }
+    } catch { /* no dialog */ }
   };
 
+  useEffect(() => { refreshWindows(); }, []);
+
+  // Fetch last session on mount
+  useEffect(() => {
+    invoke<any[]>('list_local_sessions').then(list => {
+      if (list && list.length > 0) {
+        const s = list[0];
+        const dur = s.duration_seconds ? `${Math.floor(s.duration_seconds / 60)}:${String(Math.floor(s.duration_seconds % 60)).padStart(2, '0')}` : '';
+        setLastSession({ id: s.session_id, rel: s.started_at ?? '', dur });
+      }
+    }).catch(() => {});
+  }, [recording]); // re-fetch when recording state changes (after stop)
+
   const btnState = transition ? 'transition' : recording ? 'recording' : '';
+
   return (
     <div>
       <div className="section-header">
-        <div>
-          <h1>캡처</h1>
-          <p>대상 애플리케이션 · 캡처 대상 · 녹화 시작</p>
-        </div>
+        <div><h1>캡처</h1><p>대상 애플리케이션 · 캡처 대상 · 녹화 시작</p></div>
       </div>
 
       <div className="capture-grid">
@@ -122,7 +163,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                 <div style={{ display: 'flex', gap: 6 }}>
                   <input className="tbd-input mono" placeholder="exe 경로" value={exe} onChange={e => setExe(e.target.value)} style={{ flex: 1 }} />
                   <button className="tbd-btn" onClick={pickFile}>{Icon.Folder()}찾기</button>
-                  <button className="tbd-btn tbd-btn--primary">{Icon.Play()}앱 실행</button>
+                  <button className="tbd-btn tbd-btn--primary" onClick={launchExe} disabled={!exe || launching}>{Icon.Play()}{launching ? '실행 중…' : '앱 실행'}</button>
                 </div>
               </div>
               <div className="tbd-form-row">
@@ -130,7 +171,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                 <div style={{ display: 'flex', gap: 6 }}>
                   <input className="tbd-input mono" placeholder="로그 폴더 경로" value={logDir} onChange={e => setLogDir(e.target.value)} style={{ flex: 1 }} />
                   <button className="tbd-btn" onClick={pickFolder}>{Icon.Folder()}찾기</button>
-                  <button className="tbd-btn">{Icon.Search()}창 찾기</button>
+                  <button className="tbd-btn" onClick={findWindowForLog} disabled={!logDir}>{Icon.Search()}창 찾기</button>
                 </div>
               </div>
               {extraDirs.length > 0 && (
@@ -182,7 +223,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                     <button className="tbd-btn tbd-btn--icon" onClick={refreshWindows}>{Icon.Refresh()}</button>
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <button className="tbd-btn">{Icon.Crosshair()}창 클릭으로 선택</button>
+                    <button className="tbd-btn" onClick={pickWindowClick}>{Icon.Crosshair()}창 클릭으로 선택</button>
                     <span style={{ fontSize: 11, color: 'var(--subtle)' }}>
                       <kbd style={{ padding: '1px 4px', border: '1px solid var(--border)', borderRadius: 3, fontFamily: 'Geist Mono', fontSize: 10 }}>Ctrl+Shift+P</kbd>
                     </span>
@@ -274,12 +315,10 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
               {recording ? (
                 <>
                   <dl className="tbd-meta-list">
-                    <dt>Session</dt><dd>{sessionId ?? `capture_${new Date().toISOString().slice(0,10).replace(/-/g,'')}`}</dd>
+                    <dt>Session</dt><dd>{sessionId ?? '—'}</dd>
                     <dt>경과</dt><dd>{fmtElapsed(elapsed)}</dd>
                     <dt>프레임</dt><dd>{(elapsed * 30).toLocaleString()}</dd>
                     <dt>이벤트</dt><dd>{(elapsed * 26).toLocaleString()}</dd>
-                    <dt>CPU</dt><dd>42%</dd>
-                    <dt>RAM</dt><dd>2.1 GB</dd>
                   </dl>
                   <div style={{ marginTop: 8 }}><MiniSpark color="oklch(0.65 0.18 25)" /></div>
                 </>
@@ -292,14 +331,20 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
           <div className="tbd-card" style={{ marginTop: 14 }}>
             <div className="tbd-card__head"><h3>마지막 세션</h3></div>
             <div className="tbd-card__body">
-              <dl className="tbd-meta-list">
-                <dt>Session</dt><dd>aurora_20260523_114108</dd>
-                <dt>시작</dt><dd>15분 전 · 8:07</dd>
-              </dl>
-              <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                <button className="tbd-btn tbd-btn--sm" onClick={() => invoke('open_viewer', { sessionId: 'aurora_20260523_114108' }).catch(() => {})}>{Icon.Eye()}뷰어</button>
-                <button className="tbd-btn tbd-btn--sm">{Icon.Share()}공유</button>
-              </div>
+              {lastSession ? (
+                <>
+                  <dl className="tbd-meta-list">
+                    <dt>Session</dt><dd>{lastSession.id}</dd>
+                    <dt>길이</dt><dd>{lastSession.dur}</dd>
+                  </dl>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                    <button className="tbd-btn tbd-btn--sm" onClick={() => invoke('open_viewer', { sessionId: lastSession.id }).catch(() => {})}>{Icon.Eye()}뷰어</button>
+                    <button className="tbd-btn tbd-btn--sm">{Icon.Share()}공유</button>
+                  </div>
+                </>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '12px 0', color: 'var(--muted)', fontSize: 12 }}>아직 녹화된 세션이 없습니다</div>
+              )}
             </div>
           </div>
         </div>
