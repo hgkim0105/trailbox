@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
-import { REMOTE_SESSIONS, type HubState, type LocalSession, type RemoteSession } from '../data/mock';
+import { type HubState, type LocalSession, type RemoteSession } from '../data/mock';
 
 type Source = 'local' | 'remote';
 type Props = { hub: HubState; localSessions: any[] };
@@ -37,7 +37,7 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions }: Props) 
     uploaded: false,
     shares: 0,
   }));
-  const [remoteSessions, setRemoteSessions] = useState<RemoteSession[]>(REMOTE_SESSIONS);
+  const [remoteSessions, setRemoteSessions] = useState<RemoteSession[]>([]);
   const [loading, setLoading] = useState(false);
 
   const fetchRemote = useCallback(async () => {
