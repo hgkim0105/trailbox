@@ -55,7 +55,7 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
     if (!hub.configured) return;
     setLoading(true);
     try {
-      const list = await invoke<any[]>('hub_list_sessions', { url: hub.url, token: '' });
+      const list = await invoke<any[]>('hub_list_sessions', { url: hub.url, token: hub.token });
       if (Array.isArray(list) && list.length > 0) {
         setRemoteSessions(list.map(s => ({
           session_id: s.session_id ?? '',
@@ -91,7 +91,7 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
     if (!hub.configured) return;
     setUploadProg({ sid, done: 0, total: 100 });
     try {
-      await invoke('hub_upload', { url: hub.url, token: '', sessionId: sid });
+      await invoke('hub_upload', { url: hub.url, token: hub.token, sessionId: sid });
       setUploadProg({ sid, done: 100, total: 100 });
       setTimeout(() => setUploadProg(null), 800);
       fetchLocal();

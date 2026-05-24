@@ -23,10 +23,9 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
     try {
       const result = await invoke<{ user: any; token: any }>('hub_login', { url, username: user, password: pw });
       const issuedToken = result.token?.token ?? '';
-      if (issuedToken) { try { localStorage.setItem('trailbox_hub_token', issuedToken); } catch {} }
       setToken(issuedToken);
       setStatus({ tone: 'ok', msg: `토큰 발급 완료 — ${result.token?.label ?? '저장됨'}` });
-      setHub({ ...hub, url, username: user, configured: true });
+      setHub({ url, username: user, token: issuedToken, configured: true });
       setTab('status');
     } catch (e) {
       setStatus({ tone: 'err', msg: `로그인 실패: ${e}` });
@@ -35,7 +34,7 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
   };
 
   const disconnect = () => {
-    setHub({ ...hub, configured: false, username: '' });
+    setHub({ ...hub, configured: false, username: '', token: '' });
     setPw('');
     setTab('login');
     setStatus(null);

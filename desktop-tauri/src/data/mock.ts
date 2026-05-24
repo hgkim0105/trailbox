@@ -44,6 +44,7 @@ export type RemoteSession = {
 export type HubState = {
   url: string;
   username: string;
+  token: string;
   configured: boolean;
 };
 
@@ -76,8 +77,10 @@ export const REMOTE_SESSIONS: RemoteSession[] = [
   { session_id: 'chrome_20260522_091500', owner: 'mina', started: '2026-05-22 09:15:00', duration: 45.0, size: 12_800_000, has_viewer: false },
 ];
 
-export const HUB_INITIAL: HubState = {
-  url: 'http://hub.local:8765',
-  username: 'dev',
-  configured: true,
-};
+export const HUB_INITIAL: HubState = (() => {
+  try {
+    const saved = localStorage.getItem('trailbox_hub');
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return { url: 'http://127.0.0.1:8765', username: '', token: '', configured: false };
+})();

@@ -26,7 +26,11 @@ export default function App() {
   const [transition, setTransition] = useState<'starting' | 'stopping' | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [hub, setHub] = useState<HubState>(HUB_INITIAL);
+  const [hub, setHubRaw] = useState<HubState>(HUB_INITIAL);
+  const setHub = useCallback((h: HubState) => {
+    setHubRaw(h);
+    try { localStorage.setItem('trailbox_hub', JSON.stringify(h)); } catch {}
+  }, []);
   const [maximized, setMaximized] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -145,6 +149,7 @@ export default function App() {
           refreshKey={refreshKey}
           hubConfigured={hub.configured}
           hubUrl={hub.url}
+          hubToken={hub.token}
           showToast={showToast}
           liveStatus={liveStatus}
         />

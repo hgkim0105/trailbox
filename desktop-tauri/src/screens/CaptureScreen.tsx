@@ -16,6 +16,7 @@ type Props = {
   refreshKey: number;
   hubConfigured: boolean;
   hubUrl: string;
+  hubToken: string;
   showToast: (msg: string, tone: 'ok' | 'err' | 'info') => void;
   liveStatus: any;
 };
@@ -33,7 +34,7 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey, hubConfigured, hubUrl, showToast, liveStatus }: Props) {
+export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey, hubConfigured, hubUrl, hubToken, showToast, liveStatus }: Props) {
   const [target, setTarget] = useState<Target>('window');
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
@@ -144,9 +145,9 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
     if (!confirm(`세션 "${sid}"을(를) Hub에 업로드하고 공유 링크를 발급하시겠습니까?`)) return;
     showToast('Hub에 업로드 중…', 'info');
     try {
-      await invoke('hub_upload', { url: hubUrl, token: '', sessionId: sid });
+      await invoke('hub_upload', { url: hubUrl, token: hubToken, sessionId: sid });
       showToast('업로드 완료. 공유 링크 발급 중…', 'info');
-      const result = await invoke<any>('hub_share', { url: hubUrl, token: '', sessionId: sid });
+      const result = await invoke<any>('hub_share', { url: hubUrl, token: hubToken, sessionId: sid });
       const shareUrl = result?.url || result?.share_url || '';
       if (shareUrl) {
         await navigator.clipboard.writeText(shareUrl);
