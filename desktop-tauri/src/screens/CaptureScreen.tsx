@@ -163,10 +163,13 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
     }
   };
 
-  // Only fetch windows once on first mount, not on every tab switch
+  // Defer window fetch so the UI renders immediately on cold start
   const [initialized, setInitialized] = useState(false);
   useEffect(() => {
-    if (!initialized) { refreshWindows(); setInitialized(true); }
+    if (!initialized) {
+      const t = setTimeout(() => { refreshWindows(); setInitialized(true); }, 500);
+      return () => clearTimeout(t);
+    }
   }, [initialized]);
 
   // Fetch last session on mount

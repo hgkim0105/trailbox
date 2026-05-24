@@ -38,11 +38,15 @@ export default function App() {
   const [localSessions, setLocalSessions] = useState<any[]>([]);
   const captureConfigRef = useRef<any>(null);
 
-  // Fetch sessions once at mount + on refreshKey change
+  // Fetch sessions: deferred on first mount, immediate on refreshKey
   useEffect(() => {
-    invoke<any[]>('list_local_sessions').then(list => {
-      if (Array.isArray(list)) setLocalSessions(list);
-    }).catch(() => {});
+    const delay = refreshKey === 0 ? 800 : 0;
+    const t = setTimeout(() => {
+      invoke<any[]>('list_local_sessions').then(list => {
+        if (Array.isArray(list)) setLocalSessions(list);
+      }).catch(() => {});
+    }, delay);
+    return () => clearTimeout(t);
   }, [refreshKey]);
 
 
