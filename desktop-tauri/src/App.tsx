@@ -213,7 +213,7 @@ export default function App() {
         <div className="tbd-body no-side">
           <div className="tbd-main">
             <div className="content" style={{ display: route === 'capture' ? undefined : 'none' }}>{captureScreen}</div>
-            <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} sessionsLoading={sessionsLoading} hubSessionIds={hubSessionIds} /></div>
+            <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} sessionsLoading={sessionsLoading} hubSessionIds={hubSessionIds} onRefresh={() => setRefreshKey(k => k + 1)} /></div>
             <div className="content" style={{ display: route === 'hub' ? undefined : 'none' }}><HubSettingsScreen hub={hub} setHub={setHub} active={route === 'hub'} /></div>
           </div>
         </div>

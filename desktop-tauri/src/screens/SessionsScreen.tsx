@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon';
 import { type HubState, type LocalSession, type RemoteSession } from '../data/mock';
 
 type Source = 'local' | 'remote';
-type Props = { hub: HubState; localSessions: any[]; sessionsLoading?: boolean; hubSessionIds?: Set<string> };
+type Props = { hub: HubState; localSessions: any[]; sessionsLoading?: boolean; hubSessionIds?: Set<string>; onRefresh?: () => void };
 
 function fmtDur(s: number) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${String(sec).padStart(2, '0')}`; }
 function fmtSize(b: number) { if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`; if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`; return `${(b / 1e3).toFixed(0)} KB`; }
@@ -17,7 +17,7 @@ function relTime(s: string) {
   return `${Math.floor(d / 86400_000)}일 전`;
 }
 
-export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsLoading, hubSessionIds }: Props) {
+export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsLoading, hubSessionIds, onRefresh }: Props) {
   const [source, setSource] = useState<Source>('local');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -60,7 +60,7 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsL
   }, [hub]);
 
 
-  const refresh = () => { if (source === 'remote') fetchRemote(); };
+  const refresh = () => { if (source === 'remote') fetchRemote(); else onRefresh?.(); };
 
   const localFiltered = localSessions.filter(s =>
     !query || s.session_id.toLowerCase().includes(query.toLowerCase()) || s.exe.toLowerCase().includes(query.toLowerCase())
@@ -73,7 +73,7 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsL
   const doOpenViewer = async (sid: string) => { try { await invoke('open_viewer', { sessionId: sid }); } catch (e) { alert(`뷰어 열기 실패: ${e}`); } };
   const doDelete = async (sid: string) => {
     if (!confirm(`세션 ${sid}을(를) 삭제하시겠습니까?`)) return;
-    try { await invoke('delete_session', { sessionId: sid }); setSelected(null); } catch (e) { alert(`삭제 실패: ${e}`); }
+    try { await invoke('delete_session', { sessionId: sid }); setSelected(null); onRefresh?.(); } catch (e) { alert(`삭제 실패: ${e}`); }
   };
   const doUpload = async (sid: string) => {
     if (!hub.configured) return;
@@ -82,6 +82,7 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsL
       await invoke('hub_upload', { url: hub.url, token: hub.token, sessionId: sid });
       setUploadProg({ sid, done: 100, total: 100 });
       setTimeout(() => setUploadProg(null), 800);
+      onRefresh?.();
     } catch (e) {
       setUploadProg(null);
       alert(`업로드 실패: ${e}`);
