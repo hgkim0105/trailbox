@@ -141,6 +141,8 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
         const s = list[0];
         const dur = s.duration_seconds ? `${Math.floor(s.duration_seconds / 60)}:${String(Math.floor(s.duration_seconds % 60)).padStart(2, '0')}` : '';
         setLastSession({ id: s.session_id, rel: s.started_at ?? '', dur });
+      } else {
+        setLastSession(null);
       }
     }).catch(() => {});
   }, [refreshKey]);

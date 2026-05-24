@@ -30,7 +30,7 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
     setLoading(true);
     try {
       const list = await invoke<any[]>('list_local_sessions');
-      if (Array.isArray(list) && list.length > 0) {
+      if (Array.isArray(list)) {
         setLocalSessions(list.map(s => ({
           session_id: s.session_id,
           started: s.started_at ?? '',
@@ -47,7 +47,7 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
           shares: 0,
         })));
       }
-    } catch { /* keep mock */ }
+    } catch { /* keep mock on IPC failure */ }
     setLoading(false);
   }, []);
 
