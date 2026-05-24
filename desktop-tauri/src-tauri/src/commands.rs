@@ -6,6 +6,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn output_root() -> PathBuf {
     // Use project_root() which reliably finds the repo root via main.py
     let root = project_root();
@@ -299,10 +302,11 @@ fn bridge_record_command() -> (PathBuf, Vec<String>) {
 fn call_bridge(args: &[&str]) -> Result<serde_json::Value, String> {
     let root = project_root();
     let (cmd, cmd_args) = bridge_command(args);
-    let output = Command::new(&cmd)
-        .args(&cmd_args)
-        .current_dir(&root)
-        .output()
+    let mut c = Command::new(&cmd);
+    c.args(&cmd_args).current_dir(&root);
+    #[cfg(target_os = "windows")]
+    { use std::os::windows::process::CommandExt; c.creation_flags(CREATE_NO_WINDOW); }
+    let output = c.output()
         .map_err(|e| format!("failed to spawn bridge: {}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -390,13 +394,12 @@ pub fn start_recording(
     let root = project_root();
     let (cmd, cmd_args) = bridge_record_command();
 
-    let mut child = Command::new(&cmd)
-        .args(&cmd_args)
-        .current_dir(&root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+    let mut spawn_cmd = Command::new(&cmd);
+    spawn_cmd.args(&cmd_args).current_dir(&root)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    { use std::os::windows::process::CommandExt; spawn_cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = spawn_cmd.spawn()
         .map_err(|e| format!("failed to spawn recording bridge: {}", e))?;
 
     let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
