@@ -108,9 +108,6 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
                     {status.msg}
                   </div>
                 )}
-                <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--info-soft)', borderRadius: 6, fontSize: 11.5, color: 'var(--info)' }}>
-                  💡 데모 모드: 아무 username/password로 로그인하면 mock 토큰이 발급됩니다.
-                </div>
               </>
             )}
 

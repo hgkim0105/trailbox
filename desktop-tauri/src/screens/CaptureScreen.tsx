@@ -13,12 +13,12 @@ type Props = {
   fmtElapsed: (s: number) => string;
   sessionId: string | null;
   configRef: MutableRefObject<any>;
-  refreshKey: number;
   hubConfigured: boolean;
   hubUrl: string;
   hubToken: string;
   showToast: (msg: string, tone: 'ok' | 'err' | 'info') => void;
   liveStatus: any;
+  lastSession: any;
 };
 
 type Target = 'monitor' | 'window' | 'android';
@@ -34,7 +34,7 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey, hubConfigured, hubUrl, hubToken, showToast, liveStatus }: Props) {
+export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, hubConfigured, hubUrl, hubToken, showToast, liveStatus, lastSession: lastSessionProp }: Props) {
   const [target, setTarget] = useState<Target>('window');
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
@@ -51,8 +51,11 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
   const [autoUpload, setAutoUpload] = useState(false);
   const [windows, setWindows] = useState<WindowInfo[]>(WINDOWS);
   const [devices, setDevices] = useState<AdbDevice[]>(ANDROID_DEVICES);
-  const [lastSession, setLastSession] = useState<{ id: string; rel: string; dur: string } | null>(null);
   const [launching, setLaunching] = useState(false);
+  const lastSession = lastSessionProp ? {
+    id: lastSessionProp.session_id ?? '',
+    dur: lastSessionProp.duration_seconds ? `${Math.floor(lastSessionProp.duration_seconds / 60)}:${String(Math.floor(lastSessionProp.duration_seconds % 60)).padStart(2, '0')}` : '',
+  } : null;
 
   useEffect(() => {
     const selected = windows.find(w => w.hwnd === hwnd);
@@ -163,17 +166,6 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
   useEffect(() => { refreshWindows(); }, []);
 
   // Fetch last session on mount
-  useEffect(() => {
-    invoke<any[]>('list_local_sessions').then(list => {
-      if (list && list.length > 0) {
-        const s = list[0];
-        const dur = s.duration_seconds ? `${Math.floor(s.duration_seconds / 60)}:${String(Math.floor(s.duration_seconds % 60)).padStart(2, '0')}` : '';
-        setLastSession({ id: s.session_id, rel: s.started_at ?? '', dur });
-      } else {
-        setLastSession(null);
-      }
-    }).catch(() => {});
-  }, [refreshKey]);
 
   const btnState = transition ? 'transition' : recording ? 'recording' : '';
 

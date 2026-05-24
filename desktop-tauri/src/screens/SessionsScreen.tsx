@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
-import { LOCAL_SESSIONS, REMOTE_SESSIONS, type HubState, type LocalSession, type RemoteSession } from '../data/mock';
+import { REMOTE_SESSIONS, type HubState, type LocalSession, type RemoteSession } from '../data/mock';
 
 type Source = 'local' | 'remote';
-type Props = { hub: HubState; active?: boolean; refreshKey?: number };
+type Props = { hub: HubState; localSessions: any[] };
 
 function fmtDur(s: number) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${String(sec).padStart(2, '0')}`; }
 function fmtSize(b: number) { if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`; if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`; return `${(b / 1e3).toFixed(0)} KB`; }
@@ -17,39 +17,28 @@ function relTime(s: string) {
   return `${Math.floor(d / 86400_000)}일 전`;
 }
 
-export function SessionsScreen({ hub, active, refreshKey }: Props) {
+export function SessionsScreen({ hub, localSessions: rawLocalSessions }: Props) {
   const [source, setSource] = useState<Source>('local');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [uploadProg, setUploadProg] = useState<{ sid: string; done: number; total: number } | null>(null);
-  const [localSessions, setLocalSessions] = useState<LocalSession[]>(LOCAL_SESSIONS);
+  const localSessions: LocalSession[] = rawLocalSessions.map(s => ({
+    session_id: s.session_id,
+    started: s.started_at ?? '',
+    started_rel: s.started_at ? relTime(s.started_at) : '',
+    duration: s.duration_seconds ?? 0,
+    size: s.size_bytes ?? 0,
+    log_lines: s.log_lines ?? 0,
+    input_events: s.input_events ?? 0,
+    metric_samples: s.metric_samples ?? 0,
+    frames: s.screen_frames ?? 0,
+    exe: s.exe_path?.split('\\').pop()?.split('/').pop() ?? '',
+    device: (s.device as 'PC' | 'Android') ?? 'PC',
+    uploaded: false,
+    shares: 0,
+  }));
   const [remoteSessions, setRemoteSessions] = useState<RemoteSession[]>(REMOTE_SESSIONS);
   const [loading, setLoading] = useState(false);
-
-  const fetchLocal = useCallback(async () => {
-    setLoading(true);
-    try {
-      const list = await invoke<any[]>('list_local_sessions');
-      if (Array.isArray(list)) {
-        setLocalSessions(list.map(s => ({
-          session_id: s.session_id,
-          started: s.started_at ?? '',
-          started_rel: s.started_at ? relTime(s.started_at) : '',
-          duration: s.duration_seconds ?? 0,
-          size: s.size_bytes ?? 0,
-          log_lines: s.log_lines ?? 0,
-          input_events: s.input_events ?? 0,
-          metric_samples: s.metric_samples ?? 0,
-          frames: s.screen_frames ?? 0,
-          exe: s.exe_path?.split('\\').pop()?.split('/').pop() ?? '',
-          device: (s.device as 'PC' | 'Android') ?? 'PC',
-          uploaded: false,
-          shares: 0,
-        })));
-      }
-    } catch { /* keep mock on IPC failure */ }
-    setLoading(false);
-  }, []);
 
   const fetchRemote = useCallback(async () => {
     if (!hub.configured) return;
@@ -70,9 +59,8 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
     setLoading(false);
   }, [hub]);
 
-  useEffect(() => { if (active !== false) fetchLocal(); }, [active, refreshKey]);
 
-  const refresh = () => { if (source === 'local') fetchLocal(); else fetchRemote(); };
+  const refresh = () => { if (source === 'remote') fetchRemote(); };
 
   const localFiltered = localSessions.filter(s =>
     !query || s.session_id.toLowerCase().includes(query.toLowerCase()) || s.exe.toLowerCase().includes(query.toLowerCase())
@@ -85,7 +73,7 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
   const doOpenViewer = async (sid: string) => { try { await invoke('open_viewer', { sessionId: sid }); } catch (e) { alert(`뷰어 열기 실패: ${e}`); } };
   const doDelete = async (sid: string) => {
     if (!confirm(`세션 ${sid}을(를) 삭제하시겠습니까?`)) return;
-    try { await invoke('delete_session', { sessionId: sid }); setSelected(null); fetchLocal(); } catch (e) { alert(`삭제 실패: ${e}`); }
+    try { await invoke('delete_session', { sessionId: sid }); setSelected(null); } catch (e) { alert(`삭제 실패: ${e}`); }
   };
   const doUpload = async (sid: string) => {
     if (!hub.configured) return;
@@ -94,7 +82,6 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
       await invoke('hub_upload', { url: hub.url, token: hub.token, sessionId: sid });
       setUploadProg({ sid, done: 100, total: 100 });
       setTimeout(() => setUploadProg(null), 800);
-      fetchLocal();
     } catch (e) {
       setUploadProg(null);
       alert(`업로드 실패: ${e}`);
@@ -109,7 +96,7 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <div className="tbd-radio-group" style={{ flex: 0 }}>
-          <button className={`tbd-radio ${source === 'local' ? 'active' : ''}`} onClick={() => { setSource('local'); setSelected(null); fetchLocal(); }}>
+          <button className={`tbd-radio ${source === 'local' ? 'active' : ''}`} onClick={() => { setSource('local'); setSelected(null); }}>
             {Icon.PC()}로컬 · {localSessions.length}
           </button>
           <button className={`tbd-radio ${source === 'remote' ? 'active' : ''}`} onClick={() => { setSource('remote'); setSelected(null); fetchRemote(); }}>

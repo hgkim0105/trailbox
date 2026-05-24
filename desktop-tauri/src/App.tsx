@@ -35,7 +35,15 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [liveStatus, setLiveStatus] = useState<any>(null);
+  const [localSessions, setLocalSessions] = useState<any[]>([]);
   const captureConfigRef = useRef<any>(null);
+
+  // Fetch sessions once at mount + on refreshKey change
+  useEffect(() => {
+    invoke<any[]>('list_local_sessions').then(list => {
+      if (Array.isArray(list)) setLocalSessions(list);
+    }).catch(() => {});
+  }, [refreshKey]);
 
   const showToast = useCallback((msg: string, tone: Toast['tone'] = 'info') => {
     const id = ++toastId;
@@ -146,17 +154,17 @@ export default function App() {
           fmtElapsed={fmtElapsed}
           sessionId={sessionId}
           configRef={captureConfigRef}
-          refreshKey={refreshKey}
           hubConfigured={hub.configured}
           hubUrl={hub.url}
           hubToken={hub.token}
           showToast={showToast}
           liveStatus={liveStatus}
+          lastSession={localSessions[0] ?? null}
         />
       );
       break;
     case 'sessions':
-      screen = <SessionsScreen hub={hub} active refreshKey={refreshKey} />;
+      screen = <SessionsScreen hub={hub} localSessions={localSessions} />;
       break;
     case 'hub':
       screen = <HubSettingsScreen hub={hub} setHub={setHub} />;
