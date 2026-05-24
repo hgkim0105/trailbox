@@ -170,11 +170,11 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
 // ── Window picker / app launcher ───────────────────────────────────
 
 #[tauri::command]
-pub fn pick_window_click(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+pub async fn pick_window_click(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.minimize();
     }
-    let result = call_bridge(&["pick-window-click"]);
+    let result = call_bridge(vec!["pick-window-click".into()]).await;
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
         let _ = win.set_focus();
@@ -183,13 +183,13 @@ pub fn pick_window_click(app: tauri::AppHandle) -> Result<serde_json::Value, Str
 }
 
 #[tauri::command]
-pub fn find_window_for_log(log_dir: String) -> Result<serde_json::Value, String> {
-    call_bridge(&["find-window-for-log", &log_dir])
+pub async fn find_window_for_log(log_dir: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["find-window-for-log".into(), log_dir]).await
 }
 
 #[tauri::command]
-pub fn launch_exe(exe_path: String) -> Result<serde_json::Value, String> {
-    call_bridge(&["launch-exe", &exe_path])
+pub async fn launch_exe(exe_path: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["launch-exe".into(), exe_path]).await
 }
 
 // ── Overlay window control ─────────────────────────────────────────
@@ -299,7 +299,7 @@ fn bridge_record_command() -> (PathBuf, Vec<String>) {
     (python_exe(), vec![bridge_py.to_string_lossy().to_string()])
 }
 
-fn call_bridge(args: &[&str]) -> Result<serde_json::Value, String> {
+fn call_bridge_sync(args: &[&str]) -> Result<serde_json::Value, String> {
     let root = project_root();
     let (cmd, cmd_args) = bridge_command(args);
     let mut c = Command::new(&cmd);
@@ -317,44 +317,51 @@ fn call_bridge(args: &[&str]) -> Result<serde_json::Value, String> {
     serde_json::from_str(&stdout).map_err(|e| format!("invalid JSON from bridge: {}", e))
 }
 
-#[tauri::command]
-pub fn enumerate_windows() -> Result<serde_json::Value, String> {
-    call_bridge(&["enumerate-windows"])
+async fn call_bridge(args: Vec<String>) -> Result<serde_json::Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let str_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        call_bridge_sync(&str_args)
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn list_android_devices() -> Result<serde_json::Value, String> {
-    call_bridge(&["list-devices"])
+pub async fn enumerate_windows() -> Result<serde_json::Value, String> {
+    call_bridge(vec!["enumerate-windows".into()]).await
 }
 
 #[tauri::command]
-pub fn get_system_info() -> Result<serde_json::Value, String> {
-    call_bridge(&["system-info"])
+pub async fn list_android_devices() -> Result<serde_json::Value, String> {
+    call_bridge(vec!["list-devices".into()]).await
 }
 
 #[tauri::command]
-pub fn hub_healthz(url: String, token: String) -> Result<serde_json::Value, String> {
-    call_bridge(&["hub-healthz", &url, &token])
+pub async fn get_system_info() -> Result<serde_json::Value, String> {
+    call_bridge(vec!["system-info".into()]).await
 }
 
 #[tauri::command]
-pub fn hub_login(url: String, username: String, password: String) -> Result<serde_json::Value, String> {
-    call_bridge(&["hub-login", &url, &username, &password])
+pub async fn hub_healthz(url: String, token: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["hub-healthz".into(), url, token]).await
 }
 
 #[tauri::command]
-pub fn hub_list_sessions(url: String, token: String) -> Result<serde_json::Value, String> {
-    call_bridge(&["hub-list-sessions", &url, &token])
+pub async fn hub_login(url: String, username: String, password: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["hub-login".into(), url, username, password]).await
 }
 
 #[tauri::command]
-pub fn hub_upload(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
-    call_bridge(&["hub-upload", &url, &token, &session_id])
+pub async fn hub_list_sessions(url: String, token: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["hub-list-sessions".into(), url, token]).await
 }
 
 #[tauri::command]
-pub fn hub_share(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
-    call_bridge(&["hub-share", &url, &token, &session_id])
+pub async fn hub_upload(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["hub-upload".into(), url, token, session_id]).await
+}
+
+#[tauri::command]
+pub async fn hub_share(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["hub-share".into(), url, token, session_id]).await
 }
 
 // ── Recording subprocess management ────────────────────────────────

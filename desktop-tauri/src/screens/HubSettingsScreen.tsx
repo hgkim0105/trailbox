@@ -4,9 +4,9 @@ import { Icon } from '../components/Icon';
 import type { HubState } from '../data/mock';
 
 type Tab = 'status' | 'login' | 'register' | 'advanced';
-type Props = { hub: HubState; setHub: (h: HubState) => void };
+type Props = { hub: HubState; setHub: (h: HubState) => void; active: boolean };
 
-export function HubSettingsScreen({ hub, setHub }: Props) {
+export function HubSettingsScreen({ hub, setHub, active }: Props) {
   const [tab, setTab] = useState<Tab>(hub.configured ? 'status' : 'login');
   const [url, setUrl] = useState(hub.url);
   const [user, setUser] = useState('');
@@ -18,15 +18,15 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
   const [hubOnline, setHubOnline] = useState<boolean | null>(null);
   const checkedRef = useRef(false);
 
-  // Check connectivity once on mount (not on every tab switch)
+  // Check connectivity only when Hub tab is visible
   useEffect(() => {
-    if (checkedRef.current || !hub.configured) return;
+    if (!active || checkedRef.current || !hub.configured) return;
     checkedRef.current = true;
     setHubOnline(null);
     invoke('hub_healthz', { url: hub.url, token: hub.token })
       .then(() => setHubOnline(true))
       .catch(() => setHubOnline(false));
-  }, [hub.configured, hub.url]);
+  }, [active, hub.configured, hub.url]);
 
   // If configured, auto-switch to status tab
   useEffect(() => {

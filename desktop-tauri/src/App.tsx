@@ -40,7 +40,7 @@ export default function App() {
 
   // Fetch sessions: deferred on first mount, immediate on refreshKey
   useEffect(() => {
-    const delay = refreshKey === 0 ? 800 : 0;
+    const delay = refreshKey === 0 ? 2000 : 0;
     const t = setTimeout(() => {
       invoke<any[]>('list_local_sessions').then(list => {
         if (Array.isArray(list)) setLocalSessions(list);
@@ -196,7 +196,7 @@ export default function App() {
           <div className="tbd-main">
             <div className="content" style={{ display: route === 'capture' ? undefined : 'none' }}>{captureScreen}</div>
             <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} /></div>
-            <div className="content" style={{ display: route === 'hub' ? undefined : 'none' }}><HubSettingsScreen hub={hub} setHub={setHub} /></div>
+            <div className="content" style={{ display: route === 'hub' ? undefined : 'none' }}><HubSettingsScreen hub={hub} setHub={setHub} active={route === 'hub'} /></div>
           </div>
         </div>
       </div>

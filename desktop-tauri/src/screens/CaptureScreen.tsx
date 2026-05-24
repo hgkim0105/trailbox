@@ -167,7 +167,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
   const [initialized, setInitialized] = useState(false);
   useEffect(() => {
     if (!initialized) {
-      const t = setTimeout(() => { refreshWindows(); setInitialized(true); }, 500);
+      const t = setTimeout(() => { refreshWindows(); setInitialized(true); }, 1500);
       return () => clearTimeout(t);
     }
   }, [initialized]);
