@@ -209,7 +209,8 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                   <div style={{ maxHeight: 88, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {extraDirs.map((d, i) => (
                       <div key={i} style={{ display: 'flex', gap: 4 }}>
-                        <input className="tbd-input mono" value={d} readOnly style={{ flex: 1 }} />
+                        <input className="tbd-input mono" value={d} onChange={e => { const v = e.target.value; setExtraDirs(x => x.map((old, j) => j === i ? v : old)); }} style={{ flex: 1 }} />
+                        <button className="tbd-btn tbd-btn--sm" onClick={async () => { try { const p = await invoke<string | null>('pick_folder'); if (p) setExtraDirs(x => x.map((old, j) => j === i ? p : old)); } catch {} }}>{Icon.Folder()}찾기</button>
                         <button className="tbd-btn tbd-btn--sm tbd-btn--icon" onClick={() => setExtraDirs(x => x.filter((_, j) => j !== i))}>{Icon.Close()}</button>
                       </div>
                     ))}
@@ -219,10 +220,10 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
               <div className="tbd-form-row">
                 <label></label>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                  <button className="tbd-btn tbd-btn--sm" onClick={() => setExtraDirs(x => [...x, ''])}>{Icon.Plus()}폴더 추가</button>
+                  <button className="tbd-btn tbd-btn--sm" onClick={async () => { try { const p = await invoke<string | null>('pick_folder'); setExtraDirs(x => [...x, p ?? '']); } catch { setExtraDirs(x => [...x, '']); } }}>{Icon.Plus()}폴더 추가</button>
                   <label className="tbd-check" style={{ padding: '2px 0' }}>
                     <input type="checkbox" checked={recursive} onChange={e => setRecursive(e.target.checked)} />
-                    <span className="tbd-check__label">하위 폴더</span>
+                    <span className="tbd-check__label">하위폴더 포함</span>
                   </label>
                   <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                     <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>확장자</span>
