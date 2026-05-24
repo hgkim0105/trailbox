@@ -19,6 +19,7 @@ type Props = {
   showToast: (msg: string, tone: 'ok' | 'err' | 'info') => void;
   liveStatus: any;
   lastSession: any;
+  autoUploadRef: MutableRefObject<boolean>;
 };
 
 type Target = 'monitor' | 'window' | 'android';
@@ -34,7 +35,7 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, hubConfigured, hubUrl, hubToken, showToast, liveStatus, lastSession: lastSessionProp }: Props) {
+export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, hubConfigured, hubUrl, hubToken, showToast, liveStatus, lastSession: lastSessionProp, autoUploadRef }: Props) {
   const [target, setTarget] = useState<Target>('window');
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
@@ -334,7 +335,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
           <div className="tbd-card" style={{ marginTop: 14 }}>
             <div className="tbd-card__body" style={{ padding: '8px 14px' }}>
               <label className="tbd-check" style={{ padding: 0 }}>
-                <input type="checkbox" checked={autoUpload} onChange={e => setAutoUpload(e.target.checked)} />
+                <input type="checkbox" checked={autoUpload} onChange={e => { setAutoUpload(e.target.checked); autoUploadRef.current = e.target.checked; }} />
                 <div><div className="tbd-check__label">자동 업로드</div><div className="tbd-check__desc">녹화 종료 시 Hub에 자동 업로드</div></div>
               </label>
             </div>

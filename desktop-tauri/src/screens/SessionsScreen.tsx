@@ -142,7 +142,7 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsL
               <span className="mono" style={{ fontSize: 12, fontWeight: 500 }}>{selected}</span>
               {source === 'local' && selectedLocal && (
                 selectedLocal.uploaded ? <span className="tbd-badge tbd-badge--success"><span className="dot" />업로드됨</span>
-                  : <span className="tbd-badge tbd-badge--warning">로컬만</span>
+                  : <span className="tbd-badge" style={{ color: 'var(--muted)' }}>로컬</span>
               )}
             </div>
             {source === 'local' ? (
