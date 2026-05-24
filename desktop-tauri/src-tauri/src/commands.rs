@@ -166,6 +166,22 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
     fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
+// ── File picker dialogs ────────────────────────────────────────────
+
+#[tauri::command]
+pub fn pick_file() -> Result<Option<String>, String> {
+    let path = rfd::FileDialog::new()
+        .add_filter("Executable", &["exe"])
+        .pick_file();
+    Ok(path.map(|p| p.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub fn pick_folder() -> Result<Option<String>, String> {
+    let path = rfd::FileDialog::new().pick_folder();
+    Ok(path.map(|p| p.to_string_lossy().to_string()))
+}
+
 // ── Python bridge helpers ──────────────────────────────────────────
 
 fn project_root() -> PathBuf {

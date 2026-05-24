@@ -16,19 +16,19 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ tone: 'ok' | 'err' | 'info'; msg: string } | null>(null);
 
-  const doLogin = () => {
+  const doLogin = async () => {
     if (!user || !pw) return;
     setLoading(true);
     setStatus({ tone: 'info', msg: '로그인 중…' });
-    setTimeout(() => {
-      setStatus({ tone: 'info', msg: '토큰 발급 중…' });
-      setTimeout(() => {
-        setLoading(false);
-        setStatus({ tone: 'ok', msg: '토큰 발급 완료 — 저장됨' });
-        setHub({ ...hub, url, username: user, configured: true });
-        setTab('status');
-      }, 700);
-    }, 700);
+    try {
+      const result = await invoke<{ user: any; token: any }>('hub_login', { url, username: user, password: pw });
+      setStatus({ tone: 'ok', msg: `토큰 발급 완료 — ${result.token?.label ?? '저장됨'}` });
+      setHub({ ...hub, url, username: user, configured: true });
+      setTab('status');
+    } catch (e) {
+      setStatus({ tone: 'err', msg: `로그인 실패: ${e}` });
+    }
+    setLoading(false);
   };
 
   const disconnect = () => {
