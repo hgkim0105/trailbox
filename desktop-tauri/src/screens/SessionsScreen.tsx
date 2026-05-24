@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon';
 import { type HubState, type LocalSession, type RemoteSession } from '../data/mock';
 
 type Source = 'local' | 'remote';
-type Props = { hub: HubState; localSessions: any[] };
+type Props = { hub: HubState; localSessions: any[]; sessionsLoading?: boolean };
 
 function fmtDur(s: number) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${String(sec).padStart(2, '0')}`; }
 function fmtSize(b: number) { if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`; if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`; return `${(b / 1e3).toFixed(0)} KB`; }
@@ -17,7 +17,7 @@ function relTime(s: string) {
   return `${Math.floor(d / 86400_000)}일 전`;
 }
 
-export function SessionsScreen({ hub, localSessions: rawLocalSessions }: Props) {
+export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsLoading }: Props) {
   const [source, setSource] = useState<Source>('local');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -124,10 +124,12 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions }: Props) 
         </div>
         <div className="tbd-session-table__body">
           {source === 'local' ? (
+            sessionsLoading ? <LoadingRows /> :
             localFiltered.length > 0 ? localFiltered.map(s => (
               <LocalRow key={s.session_id} s={s} selected={selected === s.session_id} onClick={() => setSelected(s.session_id)} />
             )) : <EmptyRows query={query} source={source} />
           ) : (
+            loading ? <LoadingRows /> :
             remoteFiltered.length > 0 ? remoteFiltered.map(s => (
               <RemoteRow key={s.session_id} s={s} selected={selected === s.session_id} onClick={() => setSelected(s.session_id)} />
             )) : <EmptyRows query={query} source={source} />
@@ -201,6 +203,15 @@ function RemoteRow({ s, selected, onClick }: { s: RemoteSession; selected: boole
       <span className="tbd-session-row__num">{time}</span>
       <span style={{ textAlign: 'right' }}>{s.has_viewer && <span className="tbd-badge tbd-badge--success">{Icon.Check({ width: 10, height: 10 } as any)}</span>}</span>
       <span />
+    </div>
+  );
+}
+
+function LoadingRows() {
+  return (
+    <div className="tbd-empty">
+      <div style={{ width: 28, height: 28, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'tbd-spin 1s linear infinite' }} />
+      <p>로딩 중…</p>
     </div>
   );
 }

@@ -36,15 +36,17 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [liveStatus, setLiveStatus] = useState<any>(null);
   const [localSessions, setLocalSessions] = useState<any[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const captureConfigRef = useRef<any>(null);
 
   // Fetch sessions: deferred on first mount, immediate on refreshKey
   useEffect(() => {
     const delay = refreshKey === 0 ? 2000 : 0;
+    if (refreshKey === 0) setSessionsLoading(true);
     const t = setTimeout(() => {
       invoke<any[]>('list_local_sessions').then(list => {
         if (Array.isArray(list)) setLocalSessions(list);
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => setSessionsLoading(false));
     }, delay);
     return () => clearTimeout(t);
   }, [refreshKey]);
@@ -195,7 +197,7 @@ export default function App() {
         <div className="tbd-body no-side">
           <div className="tbd-main">
             <div className="content" style={{ display: route === 'capture' ? undefined : 'none' }}>{captureScreen}</div>
-            <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} /></div>
+            <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} sessionsLoading={sessionsLoading} /></div>
             <div className="content" style={{ display: route === 'hub' ? undefined : 'none' }}><HubSettingsScreen hub={hub} setHub={setHub} active={route === 'hub'} /></div>
           </div>
         </div>
