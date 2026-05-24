@@ -1,0 +1,15 @@
+version: "3.8"
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    container_name: trailbox-hub
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./hub_data:/data
+    environment:
+      - TRAILBOX_HUB_ADMIN_USER=admin
+      - TRAILBOX_HUB_ADMIN_PASS=changeme
