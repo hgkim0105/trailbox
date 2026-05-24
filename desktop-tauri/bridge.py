@@ -89,7 +89,7 @@ def cmd_pick_window_click() -> dict:
 
 
 def cmd_find_window_for_log() -> dict | None:
-    log_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+    log_dir = sys.argv[2] if len(sys.argv) > 2 else ""
     if not log_dir:
         return {"error": "log_dir required"}
     from pathlib import Path as _P
@@ -106,7 +106,7 @@ def cmd_find_window_for_log() -> dict | None:
 
 
 def cmd_launch_exe() -> dict:
-    exe_path = sys.argv[3] if len(sys.argv) > 3 else ""
+    exe_path = sys.argv[2] if len(sys.argv) > 2 else ""
     if not exe_path:
         return {"error": "exe_path required"}
     import subprocess
@@ -124,9 +124,9 @@ def cmd_hub_healthz() -> dict:
 
 
 def cmd_hub_login() -> dict:
-    url = sys.argv[3] if len(sys.argv) > 3 else ""
-    user = sys.argv[4] if len(sys.argv) > 4 else ""
-    pw = sys.argv[5] if len(sys.argv) > 5 else ""
+    url = sys.argv[2] if len(sys.argv) > 2 else ""
+    user = sys.argv[3] if len(sys.argv) > 3 else ""
+    pw = sys.argv[4] if len(sys.argv) > 4 else ""
     from core.hub_client import HubClient
     client = HubClient(base_url=url)
     user_info, cookies = client.login(user, pw)
@@ -142,7 +142,7 @@ def cmd_hub_list_sessions() -> list[dict]:
 
 def cmd_hub_upload() -> dict:
     url, token = _hub_args()
-    session_id = sys.argv[5] if len(sys.argv) > 5 else ""
+    session_id = sys.argv[4] if len(sys.argv) > 4 else ""
     from pathlib import Path as _P
     session_dir = _P(_REPO_ROOT / "output" / session_id)
     if not session_dir.is_dir():
@@ -153,14 +153,14 @@ def cmd_hub_upload() -> dict:
 
 def cmd_hub_share() -> dict:
     url, token = _hub_args()
-    session_id = sys.argv[5] if len(sys.argv) > 5 else ""
+    session_id = sys.argv[4] if len(sys.argv) > 4 else ""
     from core.hub_client import HubClient
     return HubClient(base_url=url, token=token).create_share(session_id)
 
 
 def _hub_args() -> tuple[str, str]:
-    url = sys.argv[3] if len(sys.argv) > 3 else ""
-    token = sys.argv[4] if len(sys.argv) > 4 else ""
+    url = sys.argv[2] if len(sys.argv) > 2 else ""
+    token = sys.argv[3] if len(sys.argv) > 3 else ""
     return url, token
 
 
