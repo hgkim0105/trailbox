@@ -125,6 +125,9 @@ export default function App() {
           sessionId={sessionId}
           configRef={captureConfigRef}
           refreshKey={refreshKey}
+          hubConfigured={hub.configured}
+          hubUrl={hub.url}
+          showToast={showToast}
         />
       );
       break;

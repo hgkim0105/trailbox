@@ -14,6 +14,9 @@ type Props = {
   sessionId: string | null;
   configRef: MutableRefObject<any>;
   refreshKey: number;
+  hubConfigured: boolean;
+  hubUrl: string;
+  showToast: (msg: string, tone: 'ok' | 'err' | 'info') => void;
 };
 
 type Target = 'monitor' | 'window' | 'android';
@@ -29,7 +32,7 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey }: Props) {
+export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey, hubConfigured, hubUrl, showToast }: Props) {
   const [target, setTarget] = useState<Target>('window');
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
@@ -130,6 +133,29 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
       const path = await invoke<string | null>('pick_folder');
       if (path) setLogDir(path);
     } catch { /* no dialog */ }
+  };
+
+  const shareSession = async (sid: string) => {
+    if (!hubConfigured) {
+      showToast('Hub 연결이 필요합니다. Hub 탭에서 설정하세요.', 'err');
+      return;
+    }
+    if (!confirm(`세션 "${sid}"을(를) Hub에 업로드하고 공유 링크를 발급하시겠습니까?`)) return;
+    showToast('Hub에 업로드 중…', 'info');
+    try {
+      await invoke('hub_upload', { url: hubUrl, token: '', sessionId: sid });
+      showToast('업로드 완료. 공유 링크 발급 중…', 'info');
+      const result = await invoke<any>('hub_share', { url: hubUrl, token: '', sessionId: sid });
+      const shareUrl = result?.url || result?.share_url || '';
+      if (shareUrl) {
+        await navigator.clipboard.writeText(shareUrl);
+        showToast(`공유 링크 클립보드에 복사됨`, 'ok');
+      } else {
+        showToast('공유 링크 발급 완료', 'ok');
+      }
+    } catch (e) {
+      showToast(`공유 실패: ${e}`, 'err');
+    }
   };
 
   useEffect(() => { refreshWindows(); }, []);
@@ -342,7 +368,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                   </dl>
                   <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                     <button className="tbd-btn tbd-btn--sm" onClick={() => invoke('open_viewer', { sessionId: lastSession.id }).catch(() => {})}>{Icon.Eye()}뷰어</button>
-                    <button className="tbd-btn tbd-btn--sm">{Icon.Share()}공유</button>
+                    <button className="tbd-btn tbd-btn--sm" onClick={() => shareSession(lastSession.id)}>{Icon.Share()}공유</button>
                   </div>
                 </>
               ) : (
