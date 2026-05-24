@@ -356,7 +356,9 @@ pub async fn hub_list_sessions(url: String, token: String) -> Result<serde_json:
 
 #[tauri::command]
 pub async fn hub_upload(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
-    call_bridge(vec!["hub-upload".into(), url, token, session_id]).await
+    let session_dir = output_root().join(&session_id);
+    let dir_str = session_dir.to_string_lossy().to_string();
+    call_bridge(vec!["hub-upload".into(), url, token, session_id, dir_str]).await
 }
 
 #[tauri::command]

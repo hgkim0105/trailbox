@@ -143,8 +143,9 @@ def cmd_hub_list_sessions() -> list[dict]:
 def cmd_hub_upload() -> dict:
     url, token = _hub_args()
     session_id = sys.argv[4] if len(sys.argv) > 4 else ""
+    session_dir_arg = sys.argv[5] if len(sys.argv) > 5 else ""
     from pathlib import Path as _P
-    session_dir = _P(_REPO_ROOT / "output" / session_id)
+    session_dir = _P(session_dir_arg) if session_dir_arg else _P(_REPO_ROOT / "output" / session_id)
     if not session_dir.is_dir():
         return {"error": f"session dir not found: {session_dir}"}
     from core.hub_client import HubClient
