@@ -106,6 +106,25 @@ _HUB_FLAGS = [
 ]
 
 
+# Bridge build for Tauri desktop app. Bundles bridge.py + bridge_record.py +
+# all core modules needed for recording, window enumeration, and Hub API calls.
+_BRIDGE_FLAGS = [
+    "--onefile",
+    "--console",
+    "--name", "trailbox-bridge",
+    "--icon", _ICON,
+    "--collect-data", "soundcard",
+    "--collect-data", "windows_capture",
+    "--collect-data", "imageio_ffmpeg",
+    "--collect-submodules", "comtypes",
+    "--collect-submodules", "pynput",
+    "--hidden-import", "httpx",
+    # Include the bridge modules as data so the entry point can import them
+    "--add-data", "desktop-tauri/bridge.py" + os.pathsep + ".",
+    "--add-data", "desktop-tauri/bridge_record.py" + os.pathsep + ".",
+]
+
+
 def _android_binary_flags(repo_root: Path) -> tuple[list[str], list[Path]]:
     """Return ``--add-binary`` args for the bundled Android tools, plus the
     list of bundled paths (for logging).
@@ -224,11 +243,14 @@ def main() -> int:
     )
     mcp_exe = _run_pyinstaller("mcp_entry.py", _MCP_FLAGS, ffmpeg_exe, repo_root)
     hub_exe = _run_pyinstaller("hub_entry.py", _HUB_FLAGS, ffmpeg_exe, repo_root)
+    bridge_exe = _run_pyinstaller(
+        "desktop-tauri/bridge_entry.py", _BRIDGE_FLAGS, ffmpeg_exe, repo_root
+    )
 
     installer_exe = _build_installer(repo_root)
 
     print("\n=== done ===")
-    outputs = [gui_exe, mcp_exe, hub_exe]
+    outputs = [gui_exe, mcp_exe, hub_exe, bridge_exe]
     if installer_exe is not None:
         outputs.append(installer_exe)
     for path in outputs:

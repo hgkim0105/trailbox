@@ -265,15 +265,42 @@ fn python_exe() -> PathBuf {
     PathBuf::from("python")
 }
 
+fn bridge_command(extra_args: &[&str]) -> (PathBuf, Vec<String>) {
+    let root = project_root();
+    let exe_dir = std::env::current_exe()
+        .ok().and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+    // Production: trailbox-bridge.exe next to the Tauri exe
+    let bridge_exe = exe_dir.join("trailbox-bridge.exe");
+    if bridge_exe.is_file() {
+        let args: Vec<String> = extra_args.iter().map(|s| s.to_string()).collect();
+        return (bridge_exe, args);
+    }
+    // Dev: python desktop-tauri/bridge.py
+    let bridge_py = root.join("desktop-tauri").join("bridge.py");
+    let mut args = vec![bridge_py.to_string_lossy().to_string()];
+    args.extend(extra_args.iter().map(|s| s.to_string()));
+    (python_exe(), args)
+}
+
+fn bridge_record_command() -> (PathBuf, Vec<String>) {
+    let root = project_root();
+    let exe_dir = std::env::current_exe()
+        .ok().and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+    let bridge_exe = exe_dir.join("trailbox-bridge.exe");
+    if bridge_exe.is_file() {
+        return (bridge_exe, vec!["record".to_string()]);
+    }
+    let bridge_py = root.join("desktop-tauri").join("bridge_record.py");
+    (python_exe(), vec![bridge_py.to_string_lossy().to_string()])
+}
+
 fn call_bridge(args: &[&str]) -> Result<serde_json::Value, String> {
     let root = project_root();
-    let bridge = root.join("desktop-tauri").join("bridge.py");
-    if !bridge.is_file() {
-        return Err(format!("bridge.py not found at {}", bridge.display()));
-    }
-    let output = Command::new(python_exe())
-        .arg(&bridge)
-        .args(args)
+    let (cmd, cmd_args) = bridge_command(args);
+    let output = Command::new(&cmd)
+        .args(&cmd_args)
         .current_dir(&root)
         .output()
         .map_err(|e| format!("failed to spawn bridge: {}", e))?;
@@ -361,13 +388,10 @@ pub fn start_recording(
     }
 
     let root = project_root();
-    let bridge = root.join("desktop-tauri").join("bridge_record.py");
-    if !bridge.is_file() {
-        return Err(format!("bridge_record.py not found at {}", bridge.display()));
-    }
+    let (cmd, cmd_args) = bridge_record_command();
 
-    let mut child = Command::new(python_exe())
-        .arg(&bridge)
+    let mut child = Command::new(&cmd)
+        .args(&cmd_args)
         .current_dir(&root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
