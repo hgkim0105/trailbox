@@ -97,10 +97,7 @@ Name: "{autodesktop}\Trailbox"; Filename: "{app}\Trailbox.exe"; Tasks: desktopic
 Name: "desktopicon"; Description: "Create a &desktop shortcut for Trailbox"; GroupDescription: "Additional shortcuts:"; Components: gui
 
 [Registry]
-; QSettings native format on Windows = HKCU\Software\<Org>\<App>\<group>\<key>
-; HubSettingsDialog reads from {hub}; pre-populate it from the installer config.
-Root: HKCU; Subkey: "Software\Trailbox\Trailbox\hub"; ValueType: string; ValueName: "url";   ValueData: "{code:GetHubUrl}";   Flags: uninsdeletevalue; Components: gui
-Root: HKCU; Subkey: "Software\Trailbox\Trailbox\hub"; ValueType: string; ValueName: "token"; ValueData: "{code:GetHubToken}"; Flags: uninsdeletevalue; Components: gui
+Root: HKCU; Subkey: "Software\Trailbox\Trailbox\hub"; ValueType: string; ValueName: "url"; ValueData: "{code:GetHubUrl}"; Flags: uninsdeletevalue; Components: gui
 
 [Run]
 ; Optional final-page checkbox to launch the GUI right after install.
@@ -114,57 +111,16 @@ Type: files;          Name: "{app}\hub-token.txt"
 Type: files;          Name: "{app}\hub.env"
 
 [Code]
-const
-  TOKEN_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-
 var
   HubConfigPage: TWizardPage;
   EditHubUrl:    TNewEdit;
-  EditHubToken:  TNewEdit;
   LabelHubHelp:  TNewStaticText;
-  BtnGenToken:   TNewButton;
-  BtnCopyToken:  TNewButton;
   // Phase 0.8.0 — Hub admin bootstrap page (shown only when 'hub' is selected).
   HubAdminPage:  TWizardPage;
   EditAdminUser: TNewEdit;
   EditAdminPass: TNewEdit;
   EditAdminPass2: TNewEdit;
   LabelAdminHelp: TNewStaticText;
-
-function RandToken: string;
-var
-  i, n: Integer;
-  s: string;
-begin
-  s := '';
-  n := Length(TOKEN_ALPHABET);
-  for i := 1 to 32 do
-    s := s + TOKEN_ALPHABET[Random(n) + 1];
-  Result := s;
-end;
-
-procedure OnGenerateTokenClick(Sender: TObject);
-begin
-  EditHubToken.Text := RandToken;
-end;
-
-procedure OnCopyTokenClick(Sender: TObject);
-var
-  TmpPath: string;
-  ResultCode: Integer;
-begin
-  if Length(EditHubToken.Text) = 0 then Exit;
-  // PascalScript has no native clipboard helper, so round-trip via clip.exe.
-  // SaveStringToFile + redirect avoids the trailing newline that `echo` adds.
-  TmpPath := ExpandConstant('{tmp}\trailbox-token-copy.txt');
-  if SaveStringToFile(TmpPath, EditHubToken.Text, False) then
-  begin
-    Exec(ExpandConstant('{cmd}'), '/c clip < "' + TmpPath + '"', '', SW_HIDE,
-         ewWaitUntilTerminated, ResultCode);
-    DeleteFile(TmpPath);
-    MsgBox('토큰이 클립보드에 복사되었습니다.', mbInformation, MB_OK);
-  end;
-end;
 
 function NeedsHubConfigPage: Boolean;
 begin
@@ -232,9 +188,8 @@ begin
   HubConfigPage := CreateCustomPage(
     wpSelectComponents,
     'Hub 연결 설정',
-    'Trailbox 클라이언트가 사용할 Hub 주소를 입력하세요.' + #13#10 +
-    '계정/토큰은 설치 후 Trailbox 의 «허브 설정» 다이얼로그에서 로그인 또는 ' +
-    '회원가입으로 발급받습니다. 기존 운영자 토큰이 있으면 여기에 미리 붙여넣을 수 있습니다.');
+    'Trailbox 클라이언트가 연결할 Hub 주소를 입력하세요.' + #13#10 +
+    '계정과 토큰은 설치 후 앱의 «Hub» 탭에서 로그인하면 자동 발급됩니다.');
 
   Y := 8;
 
@@ -243,23 +198,10 @@ begin
 
   Y := Y + 56;
 
-  MakeStaticText(HubConfigPage.Surface, 0, Y, 'API Token');
-  EditHubToken := MakeEdit(HubConfigPage.Surface, 0, Y + 18, HubConfigPage.SurfaceWidth - 220, '');
-
-  BtnGenToken := MakeButton(HubConfigPage.Surface, HubConfigPage.SurfaceWidth - 212, Y + 16, 100, 25, 'Generate');
-  BtnGenToken.OnClick := @OnGenerateTokenClick;
-
-  BtnCopyToken := MakeButton(HubConfigPage.Surface, HubConfigPage.SurfaceWidth - 104, Y + 16, 104, 25, '클립보드 복사');
-  BtnCopyToken.OnClick := @OnCopyTokenClick;
-
-  Y := Y + 56;
-
   LabelHubHelp := MakeStaticText(HubConfigPage.Surface, 0, Y,
-    '• Hub URL: 로컬 Hub 설치 시 그대로 두세요. 팀 공유 환경이면 Hub 호스트로 변경 ' +
-    '(예: http://hub.local:8765).' + #13#10 +
-    '• Token: 사용 안 함(권장). 운영자 service-token 호환이 필요하면 «Generate» 후 ' +
-    'Hub 와 클라이언트 모두에 동일하게 적용됩니다.' + #13#10 +
-    '• 설치 후 Trailbox 의 «허브 설정» 다이얼로그에서 로그인하여 자동 토큰 발급 가능.');
+    '• 로컬 Hub 설치 시 기본값 그대로 두세요.' + #13#10 +
+    '• 팀 공유 환경이면 Hub 호스트 주소로 변경하세요 (예: http://hub.local:8765).' + #13#10 +
+    '• 설치 후 앱의 Hub 탭에서 로그인하면 API 토큰이 자동 발급됩니다.');
   LabelHubHelp.AutoSize := False;
   LabelHubHelp.Width := HubConfigPage.SurfaceWidth;
   LabelHubHelp.Height := 80;
@@ -289,8 +231,8 @@ begin
   LabelAdminHelp := MakeStaticText(HubAdminPage.Surface, 0, Y,
     '• 8자 이상, username 을 포함하지 않을 것.' + #13#10 +
     '• 너무 흔한 비밀번호(password123, qwerty… 등)는 거부됩니다.' + #13#10 +
-    '• 분실 시 hub_data\hub.db 를 삭제하고 다시 설치하거나, ' +
-    '관리자 콘솔에서 setup-token 재발급 후 재설정해야 합니다.');
+    '• 재설치 시: 기존 hub_data\hub.db 가 있으면 이 설정은 무시됩니다 ' +
+    '(기존 admin 계정이 유지됨).');
   LabelAdminHelp.AutoSize := False;
   LabelAdminHelp.Width := HubAdminPage.SurfaceWidth;
   LabelAdminHelp.Height := 80;
@@ -366,30 +308,6 @@ begin
     Result := '';
 end;
 
-function GetHubToken(Param: string): string;
-begin
-  if (HubConfigPage <> nil) and (EditHubToken <> nil) then
-    Result := Trim(EditHubToken.Text)
-  else
-    Result := '';
-end;
-
-procedure WriteHubTokenFile;
-var
-  Path, Body: string;
-begin
-  if not WizardIsComponentSelected('hub') then Exit;
-  if Trim(EditHubToken.Text) = '' then Exit;
-
-  Path := ExpandConstant('{app}\hub-token.txt');
-  Body :=
-    '# Trailbox Hub - share this with your team' + #13#10 +
-    '# (or rotate via TRAILBOX_HUB_TOKEN env var)' + #13#10 +
-    'URL=' + Trim(EditHubUrl.Text) + #13#10 +
-    'TOKEN=' + Trim(EditHubToken.Text) + #13#10;
-  SaveStringToFile(Path, Body, False);
-end;
-
 procedure WriteStartHubBat;
 var
   Path, Body, AppDir: string;
@@ -401,8 +319,6 @@ begin
   Body :=
     '@echo off' + #13#10 +
     'REM Trailbox Hub launcher - generated by installer.' + #13#10 +
-    'REM Service-token (TRAILBOX_HUB_TOKEN) is optional; admin login is via web UI.' + #13#10 +
-    'set TRAILBOX_HUB_TOKEN=' + Trim(EditHubToken.Text) + #13#10 +
     'set TRAILBOX_HUB_DATA=' + AppDir + '\hub_data' + #13#10 +
     'set TRAILBOX_HUB_HOST=127.0.0.1' + #13#10 +
     'set TRAILBOX_HUB_PORT=8765' + #13#10 +
@@ -442,7 +358,6 @@ begin
   if CurStep = ssPostInstall then
   begin
     WriteStartHubBat;
-    WriteHubTokenFile;
     WriteHubEnvFile;
   end;
 end;
