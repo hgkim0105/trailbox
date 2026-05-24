@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
 import type { HubState } from '../data/mock';
@@ -12,9 +12,22 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
   const [user, setUser] = useState('');
   const [pw, setPw] = useState('');
   const [email, setEmail] = useState('');
-  const [token, setToken] = useState(() => { try { return localStorage.getItem('trailbox_hub_token') ?? ''; } catch { return ''; } });
+  const [token, setToken] = useState(hub.token || '');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ tone: 'ok' | 'err' | 'info'; msg: string } | null>(null);
+  const [hubOnline, setHubOnline] = useState<boolean | null>(null);
+
+  // Check actual Hub connectivity on mount and when tab switches to status
+  useEffect(() => {
+    if (!hub.configured) { setHubOnline(null); return; }
+    setHubOnline(null);
+    invoke('hub_healthz', { url: hub.url, token: hub.token })
+      .then(() => setHubOnline(true))
+      .catch(() => {
+        setHubOnline(false);
+        setStatus({ tone: 'err', msg: 'Hub 서버에 연결할 수 없습니다' });
+      });
+  }, [hub.configured, hub.url, tab]);
 
   const doLogin = async () => {
     if (!user || !pw) return;
@@ -69,9 +82,21 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
             {/* ── Status tab ── */}
             {tab === 'status' && hub.configured && (
               <>
-                <div className="tbd-status tbd-status--ok" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {Icon.Check()}연결됨 · 사용자 <strong>{hub.username}</strong> · 토큰 active
-                </div>
+                {hubOnline === null && (
+                  <div className="tbd-status tbd-status--info" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    연결 확인 중…
+                  </div>
+                )}
+                {hubOnline === true && (
+                  <div className="tbd-status tbd-status--ok" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {Icon.Check()}연결됨 · 사용자 <strong>{hub.username}</strong> · 토큰 active
+                  </div>
+                )}
+                {hubOnline === false && (
+                  <div className="tbd-status tbd-status--err" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {Icon.Close()}Hub 서버에 연결할 수 없습니다 · 설정된 사용자: <strong>{hub.username}</strong>
+                  </div>
+                )}
                 <dl className="tbd-meta-list" style={{ padding: '4px 0' }}>
                   <dt>Hub 버전</dt><dd>0.9.3</dd>
                   <dt>클라이언트</dt><dd>0.9.3</dd>
