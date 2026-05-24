@@ -87,14 +87,18 @@ export function SessionsScreen({ hub, active, refreshKey }: Props) {
     if (!confirm(`세션 ${sid}을(를) 삭제하시겠습니까?`)) return;
     try { await invoke('delete_session', { sessionId: sid }); setSelected(null); fetchLocal(); } catch (e) { alert(`삭제 실패: ${e}`); }
   };
-  const doUpload = (sid: string) => {
-    const total = 183; let done = 0;
-    setUploadProg({ sid, done, total });
-    const iv = setInterval(() => {
-      done += 12 + Math.random() * 8;
-      if (done >= total) { done = total; clearInterval(iv); setTimeout(() => setUploadProg(null), 800); }
-      setUploadProg({ sid, done: Math.min(done, total), total });
-    }, 120);
+  const doUpload = async (sid: string) => {
+    if (!hub.configured) return;
+    setUploadProg({ sid, done: 0, total: 100 });
+    try {
+      await invoke('hub_upload', { url: hub.url, token: '', sessionId: sid });
+      setUploadProg({ sid, done: 100, total: 100 });
+      setTimeout(() => setUploadProg(null), 800);
+      fetchLocal();
+    } catch (e) {
+      setUploadProg(null);
+      alert(`업로드 실패: ${e}`);
+    }
   };
 
   return (

@@ -42,7 +42,7 @@ def _output_root() -> Path:
 
 
 def main() -> int:
-    from core.screen_recorder import ScreenRecorder, WindowTarget, MonitorTarget
+    from core.screen_recorder import ScreenRecorder, WindowTarget, MonitorTarget, AndroidDeviceTarget
     from core.audio_recorder import AudioRecorder
     from core.input_recorder import InputRecorder
     from core.log_collector import LogCollector
@@ -91,19 +91,31 @@ def main() -> int:
             hwnd = target_cfg.get("hwnd", 0)
             title = target_cfg.get("title", "")
             target = WindowTarget(hwnd=hwnd, title=title)
+        elif kind == "android":
+            serial = target_cfg.get("serial", "")
+            capture_audio = target_cfg.get("capture_audio", True)
+            backend = target_cfg.get("backend", "auto")
+            target = AndroidDeviceTarget(
+                serial=serial, package=None,
+                capture_audio=capture_audio, backend=backend,
+            )
         else:
             target = MonitorTarget(index=0)
 
         if not exe_path:
             exe_path = f"capture_{kind}"
 
+        is_android = kind == "android"
+        app_name = f"android_{target_cfg.get('serial', 'dev')}" if is_android else None
+
         # Create session
         output_root = _output_root()
         session = Session(
-            exe_path=exe_path,
+            exe_path=exe_path if not is_android else None,
             log_dir=str(log_dirs[0]) if log_dirs else None,
             output_root=output_root,
             target_pid=None,
+            app_name=app_name,
         )
         try:
             session_id = session.start()

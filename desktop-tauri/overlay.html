@@ -44,16 +44,12 @@
 <script>
   const el = document.getElementById('time');
   let sec = 0;
-  setInterval(() => {
-    sec++;
+  function render() {
     const m = Math.floor(sec / 60), s = sec % 60;
     el.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  }, 1000);
-
-  // Listen for messages from the main window to sync elapsed time
-  window.addEventListener('message', (e) => {
-    if (e.data && typeof e.data.elapsed === 'number') sec = e.data.elapsed;
-  });
+  }
+  setInterval(() => { sec++; render(); }, 1000);
+  window.setElapsed = function(v) { sec = v; render(); };
 </script>
 </body>
 </html>

@@ -12,7 +12,7 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
   const [user, setUser] = useState('');
   const [pw, setPw] = useState('');
   const [email, setEmail] = useState('');
-  const [token, setToken] = useState('');
+  const [token, setToken] = useState(() => { try { return localStorage.getItem('trailbox_hub_token') ?? ''; } catch { return ''; } });
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<{ tone: 'ok' | 'err' | 'info'; msg: string } | null>(null);
 
@@ -22,6 +22,9 @@ export function HubSettingsScreen({ hub, setHub }: Props) {
     setStatus({ tone: 'info', msg: '로그인 중…' });
     try {
       const result = await invoke<{ user: any; token: any }>('hub_login', { url, username: user, password: pw });
+      const issuedToken = result.token?.token ?? '';
+      if (issuedToken) { try { localStorage.setItem('trailbox_hub_token', issuedToken); } catch {} }
+      setToken(issuedToken);
       setStatus({ tone: 'ok', msg: `토큰 발급 완료 — ${result.token?.label ?? '저장됨'}` });
       setHub({ ...hub, url, username: user, configured: true });
       setTab('status');

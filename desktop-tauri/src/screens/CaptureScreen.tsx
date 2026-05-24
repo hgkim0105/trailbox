@@ -17,6 +17,7 @@ type Props = {
   hubConfigured: boolean;
   hubUrl: string;
   showToast: (msg: string, tone: 'ok' | 'err' | 'info') => void;
+  liveStatus: any;
 };
 
 type Target = 'monitor' | 'window' | 'android';
@@ -32,7 +33,7 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey, hubConfigured, hubUrl, showToast }: Props) {
+export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey, hubConfigured, hubUrl, showToast, liveStatus }: Props) {
   const [target, setTarget] = useState<Target>('window');
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
@@ -346,9 +347,10 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                 <>
                   <dl className="tbd-meta-list">
                     <dt>Session</dt><dd>{sessionId ?? '—'}</dd>
-                    <dt>경과</dt><dd>{fmtElapsed(elapsed)}</dd>
-                    <dt>프레임</dt><dd>{(elapsed * 30).toLocaleString()}</dd>
-                    <dt>이벤트</dt><dd>{(elapsed * 26).toLocaleString()}</dd>
+                    <dt>경과</dt><dd>{liveStatus?.elapsed ? `${Math.round(liveStatus.elapsed)}초` : fmtElapsed(elapsed)}</dd>
+                    <dt>프레임</dt><dd>{(liveStatus?.frames ?? 0).toLocaleString()}</dd>
+                    <dt>CPU</dt><dd>{liveStatus?.cpu_pct != null ? `${liveStatus.cpu_pct}%` : '—'}</dd>
+                    <dt>RAM</dt><dd>{liveStatus?.rss_mb != null ? `${liveStatus.rss_mb.toFixed(1)} MB` : '—'}</dd>
                   </dl>
                   <div style={{ marginTop: 8 }}><MiniSpark color="oklch(0.65 0.18 25)" /></div>
                 </>

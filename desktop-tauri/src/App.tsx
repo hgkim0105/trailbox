@@ -30,6 +30,7 @@ export default function App() {
   const [maximized, setMaximized] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [liveStatus, setLiveStatus] = useState<any>(null);
   const captureConfigRef = useRef<any>(null);
 
   const showToast = useCallback((msg: string, tone: Toast['tone'] = 'info') => {
@@ -39,8 +40,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!recording) return;
-    const id = setInterval(() => setElapsed(e => e + 1), 1000);
+    if (!recording) { setLiveStatus(null); return; }
+    const id = setInterval(async () => {
+      setElapsed(e => {
+        const next = e + 1;
+        invoke('sync_overlay_time', { elapsed: next }).catch(() => {});
+        return next;
+      });
+      try {
+        const s = await invoke<any>('read_recording_status');
+        if (s) setLiveStatus(s);
+      } catch {}
+    }, 1000);
     return () => clearInterval(id);
   }, [recording]);
 
@@ -53,13 +64,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen('global-stop-recording', () => {
+    const u1 = listen('global-stop-recording', () => {
       if (recording && !transition) {
         stopRecording();
         showToast('Ctrl+Alt+R로 녹화 중지됨', 'ok');
       }
     });
-    return () => { unlisten.then(fn => fn()); };
+    const u2 = listen('global-pick-window', async () => {
+      setRoute('capture');
+      try {
+        const w = await invoke<any>('pick_window_click');
+        if (w && w.hwnd) showToast(`창 선택됨: ${w.title || w.process_name}`, 'ok');
+      } catch {}
+    });
+    return () => { u1.then(fn => fn()); u2.then(fn => fn()); };
   }, [recording, transition]);
 
   const startRecording = useCallback(async () => {
@@ -128,6 +146,7 @@ export default function App() {
           hubConfigured={hub.configured}
           hubUrl={hub.url}
           showToast={showToast}
+          liveStatus={liveStatus}
         />
       );
       break;

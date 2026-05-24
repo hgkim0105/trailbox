@@ -6,14 +6,19 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let stop_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyR);
+    let pick_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyP);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(commands::RecordingProcess::default())
         .setup(move |app| {
-            let handle = app.handle().clone();
+            let handle1 = app.handle().clone();
+            let handle2 = app.handle().clone();
             app.global_shortcut().on_shortcut(stop_shortcut, move |_app, _shortcut, _event| {
-                let _ = handle.emit("global-stop-recording", ());
+                let _ = handle1.emit("global-stop-recording", ());
+            })?;
+            app.global_shortcut().on_shortcut(pick_shortcut, move |_app, _shortcut, _event| {
+                let _ = handle2.emit("global-pick-window", ());
             })?;
             Ok(())
         })
@@ -23,6 +28,7 @@ pub fn run() {
             commands::open_url,
             commands::show_overlay,
             commands::hide_overlay,
+            commands::sync_overlay_time,
             commands::pick_file,
             commands::pick_folder,
             commands::get_output_root,
