@@ -37,6 +37,7 @@ pub fn run() {
             commands::pick_folder,
             commands::get_output_root,
             commands::delete_session,
+            commands::cleanup_synced_sessions,
             commands::enumerate_windows,
             commands::pick_window_click,
             commands::find_window_for_log,

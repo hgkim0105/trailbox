@@ -336,7 +336,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
             <div className="tbd-card__body" style={{ padding: '8px 14px' }}>
               <label className="tbd-check" style={{ padding: 0 }}>
                 <input type="checkbox" checked={autoUpload} onChange={e => { setAutoUpload(e.target.checked); autoUploadRef.current = e.target.checked; }} />
-                <div><div className="tbd-check__label">자동 업로드</div><div className="tbd-check__desc">녹화 종료 시 Hub에 자동 업로드</div></div>
+                <div><div className="tbd-check__label">자동 동기화</div><div className="tbd-check__desc">녹화 종료 시 Hub에 자동 동기화</div></div>
               </label>
             </div>
           </div>

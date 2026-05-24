@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
-import type { HubState } from '../data/mock';
+import type { HubState, CleanupPolicy } from '../data/mock';
 
 type Tab = 'status' | 'login' | 'register' | 'advanced';
 type Props = { hub: HubState; setHub: (h: HubState) => void; active: boolean };
@@ -42,7 +42,7 @@ export function HubSettingsScreen({ hub, setHub, active }: Props) {
       const issuedToken = result.token?.token ?? '';
       setToken(issuedToken);
       setStatus({ tone: 'ok', msg: `토큰 발급 완료 — ${result.token?.label ?? '저장됨'}` });
-      setHub({ url, username: user, token: issuedToken, configured: true });
+      setHub({ ...hub, url, username: user, token: issuedToken, configured: true });
       setHubOnline(true);
       setTab('status');
     } catch (e) {
@@ -64,14 +64,24 @@ export function HubSettingsScreen({ hub, setHub, active }: Props) {
   };
 
   const doSaveToken = () => {
-    setHub({ url, username: hub.username || 'manual', token, configured: true });
+    setHub({ ...hub, url, username: hub.username || 'manual', token, configured: true });
     setHubOnline(null);
     checkedRef.current = false;
     setTab('status');
   };
 
+  const runCleanup = async () => {
+    setStatus({ tone: 'info', msg: '동기화된 세션 정리 중…' });
+    try {
+      const result = await invoke<{ deleted: number }>('cleanup_synced_sessions', { policy: hub.cleanupPolicy || 'keep' });
+      setStatus({ tone: 'ok', msg: `${result?.deleted ?? 0}개 세션 정리됨` });
+    } catch (e) {
+      setStatus({ tone: 'err', msg: `정리 실패: ${e}` });
+    }
+  };
+
   const disconnect = () => {
-    setHub({ url: hub.url, username: '', token: '', configured: false });
+    setHub({ ...hub, username: '', token: '', configured: false });
     setHubOnline(null);
     checkedRef.current = false;
     setPw('');
@@ -122,8 +132,21 @@ export function HubSettingsScreen({ hub, setHub, active }: Props) {
                   <dt>Hub URL</dt><dd>{hub.url}</dd>
                   <dt>토큰</dt><dd>{hub.token ? `${hub.token.slice(0, 8)}…` : '없음'}</dd>
                 </dl>
-                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <div className="tbd-form-row" style={{ marginTop: 8 }}>
+                  <label>로컬 정리</label>
+                  <select className="tbd-select" value={hub.cleanupPolicy || 'keep'} onChange={e => setHub({ ...hub, cleanupPolicy: e.target.value as CleanupPolicy })}>
+                    <option value="keep">항상 유지</option>
+                    <option value="when_synced">동기화 완료 시 삭제</option>
+                    <option value="after7d">동기화 후 7일 뒤 삭제</option>
+                    <option value="after30d">동기화 후 30일 뒤 삭제</option>
+                  </select>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+                  Hub에 동기화된 세션의 로컬 복사본을 어떻게 관리할지 선택합니다.
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <button className="tbd-btn" onClick={() => invoke('open_url', { url: hub.url })}>{Icon.Eye()}브라우저에서 열기</button>
+                  <button className="tbd-btn" onClick={() => runCleanup()}>{Icon.Trash()}지금 정리</button>
                   <button className="tbd-btn tbd-btn--danger" onClick={disconnect}>연결 해제</button>
                 </div>
               </>

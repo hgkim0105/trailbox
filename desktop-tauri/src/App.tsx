@@ -140,10 +140,13 @@ export default function App() {
       setRefreshKey(k => k + 1);
       // Auto-upload if enabled
       if (autoUploadRef.current && hub.configured && result?.session_id) {
-        showToast('자동 업로드 중…', 'info');
+        showToast('Hub 동기화 중…', 'info');
         invoke('hub_upload', { url: hub.url, token: hub.token, sessionId: result.session_id })
-          .then(() => showToast('Hub 업로드 완료', 'ok'))
-          .catch((e) => showToast(`자동 업로드 실패: ${e}`, 'err'));
+          .then(() => {
+            showToast('Hub 동기화 완료', 'ok');
+            setRefreshKey(k => k + 1);
+          })
+          .catch((e) => showToast(`자동 동기화 실패: ${e}`, 'err'));
       }
     } catch (e) {
       setTransition(null);

@@ -170,6 +170,54 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
     fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
+// ── Cleanup synced sessions ────────────────────────────────────────
+
+#[tauri::command]
+pub fn cleanup_synced_sessions(policy: String) -> Result<serde_json::Value, String> {
+    let root = output_root();
+    if !root.is_dir() { return Ok(serde_json::json!({"deleted": 0})); }
+
+    let now = std::time::SystemTime::now();
+    let mut deleted = 0u32;
+
+    let entries = fs::read_dir(&root).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() { continue; }
+        let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if name.starts_with('_') || name.starts_with('.') { continue; }
+
+        let marker = dir.join(".uploaded");
+        if !marker.is_file() { continue; }
+
+        let should_delete = match policy.as_str() {
+            "when_synced" => true,
+            "after7d" | "after30d" => {
+                let days: u64 = if policy == "after7d" { 7 } else { 30 };
+                let age = marker.metadata().ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| now.duration_since(t).ok())
+                    .map(|d| d.as_secs() / 86400)
+                    .unwrap_or(0);
+                age >= days
+            }
+            _ => false, // "keep"
+        };
+
+        if should_delete {
+            let canonical = dir.canonicalize().unwrap_or(dir.clone());
+            let root_canonical = root.canonicalize().unwrap_or(root.clone());
+            if canonical.starts_with(&root_canonical) {
+                if fs::remove_dir_all(&dir).is_ok() {
+                    deleted += 1;
+                }
+            }
+        }
+    }
+
+    Ok(serde_json::json!({"deleted": deleted}))
+}
+
 // ── Window picker / app launcher ───────────────────────────────────
 
 #[tauri::command]

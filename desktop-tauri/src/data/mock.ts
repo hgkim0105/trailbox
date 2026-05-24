@@ -57,11 +57,14 @@ export type UnifiedSession = {
   has_viewer: boolean;
 };
 
+export type CleanupPolicy = 'keep' | 'after7d' | 'after30d' | 'when_synced';
+
 export type HubState = {
   url: string;
   username: string;
   token: string;
   configured: boolean;
+  cleanupPolicy: CleanupPolicy;
 };
 
 export const WINDOWS: WindowInfo[] = [
@@ -98,5 +101,5 @@ export const HUB_INITIAL: HubState = (() => {
     const saved = localStorage.getItem('trailbox_hub');
     if (saved) return JSON.parse(saved);
   } catch {}
-  return { url: 'http://127.0.0.1:8765', username: '', token: '', configured: false };
+  return { url: 'http://127.0.0.1:8765', username: '', token: '', configured: false, cleanupPolicy: 'keep' as CleanupPolicy };
 })();
