@@ -4,7 +4,7 @@ import { Icon } from '../components/Icon';
 import { type HubState, type LocalSession, type RemoteSession } from '../data/mock';
 
 type Source = 'local' | 'remote';
-type Props = { hub: HubState; localSessions: any[]; sessionsLoading?: boolean };
+type Props = { hub: HubState; localSessions: any[]; sessionsLoading?: boolean; hubSessionIds?: Set<string> };
 
 function fmtDur(s: number) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${String(sec).padStart(2, '0')}`; }
 function fmtSize(b: number) { if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`; if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`; return `${(b / 1e3).toFixed(0)} KB`; }
@@ -17,7 +17,7 @@ function relTime(s: string) {
   return `${Math.floor(d / 86400_000)}일 전`;
 }
 
-export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsLoading }: Props) {
+export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsLoading, hubSessionIds }: Props) {
   const [source, setSource] = useState<Source>('local');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
@@ -34,7 +34,7 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsL
     frames: s.screen_frames ?? 0,
     exe: s.exe_path?.split('\\').pop()?.split('/').pop() ?? '',
     device: (s.device as 'PC' | 'Android') ?? 'PC',
-    uploaded: false,
+    uploaded: s.uploaded || (hubSessionIds?.has(s.session_id) ?? false),
     shares: 0,
   }));
   const [remoteSessions, setRemoteSessions] = useState<RemoteSession[]>([]);

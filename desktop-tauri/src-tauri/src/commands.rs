@@ -40,6 +40,7 @@ pub struct SessionSummary {
     input_events: u64,
     metric_samples: u64,
     has_viewer: bool,
+    uploaded: bool,
     device: String,
 }
 
@@ -107,6 +108,7 @@ pub fn list_local_sessions() -> Result<Vec<SessionSummary>, String> {
         };
 
         let has_viewer = dir.join("viewer.html").is_file();
+        let uploaded = dir.join(".uploaded").is_file();
         let device = if name.starts_with("android_") {
             "Android".to_string()
         } else {
@@ -124,6 +126,7 @@ pub fn list_local_sessions() -> Result<Vec<SessionSummary>, String> {
             input_events: meta.input_events.unwrap_or(0),
             metric_samples: meta.metric_samples.unwrap_or(0),
             has_viewer,
+            uploaded,
             device,
         });
     }
@@ -358,7 +361,11 @@ pub async fn hub_list_sessions(url: String, token: String) -> Result<serde_json:
 pub async fn hub_upload(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
     let session_dir = output_root().join(&session_id);
     let dir_str = session_dir.to_string_lossy().to_string();
-    call_bridge(vec!["hub-upload".into(), url, token, session_id, dir_str]).await
+    let result = call_bridge(vec!["hub-upload".into(), url, token, session_id, dir_str.clone()]).await?;
+    // Write .uploaded marker on success
+    let marker = PathBuf::from(&dir_str).join(".uploaded");
+    let _ = fs::write(&marker, "");
+    Ok(result)
 }
 
 #[tauri::command]
