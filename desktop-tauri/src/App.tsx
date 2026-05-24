@@ -36,12 +36,12 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [liveStatus, setLiveStatus] = useState<any>(null);
   const [localSessions, setLocalSessions] = useState<any[]>([]);
+  const [remoteSessions, setRemoteSessions] = useState<any[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  const [hubSessionIds, setHubSessionIds] = useState<Set<string>>(new Set());
   const captureConfigRef = useRef<any>(null);
   const autoUploadRef = useRef(false);
 
-  // Fetch sessions: deferred on first mount, immediate on refreshKey
+  // Fetch both local + Hub sessions, deferred on first mount
   useEffect(() => {
     const delay = refreshKey === 0 ? 2000 : 0;
     if (refreshKey === 0) setSessionsLoading(true);
@@ -49,10 +49,9 @@ export default function App() {
       invoke<any[]>('list_local_sessions').then(list => {
         if (Array.isArray(list)) setLocalSessions(list);
       }).catch(() => {}).finally(() => setSessionsLoading(false));
-      // Fetch Hub session IDs for upload status cross-reference
       if (hub.configured && hub.token) {
         invoke<any[]>('hub_list_sessions', { url: hub.url, token: hub.token }).then(list => {
-          if (Array.isArray(list)) setHubSessionIds(new Set(list.map(s => s.session_id)));
+          if (Array.isArray(list)) setRemoteSessions(list);
         }).catch(() => {});
       }
     }, delay);
@@ -213,7 +212,7 @@ export default function App() {
         <div className="tbd-body no-side">
           <div className="tbd-main">
             <div className="content" style={{ display: route === 'capture' ? undefined : 'none' }}>{captureScreen}</div>
-            <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} sessionsLoading={sessionsLoading} hubSessionIds={hubSessionIds} onRefresh={() => setRefreshKey(k => k + 1)} /></div>
+            <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} remoteSessions={remoteSessions} sessionsLoading={sessionsLoading} onRefresh={() => setRefreshKey(k => k + 1)} /></div>
             <div className="content" style={{ display: route === 'hub' ? undefined : 'none' }}><HubSettingsScreen hub={hub} setHub={setHub} active={route === 'hub'} /></div>
           </div>
         </div>

@@ -1,15 +1,23 @@
-import { useState, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
-import { type HubState, type LocalSession, type RemoteSession } from '../data/mock';
+import { type HubState, type UnifiedSession } from '../data/mock';
 
-type Source = 'local' | 'remote';
-type Props = { hub: HubState; localSessions: any[]; sessionsLoading?: boolean; hubSessionIds?: Set<string>; onRefresh?: () => void };
+type Props = {
+  hub: HubState;
+  localSessions: any[];
+  remoteSessions: any[];
+  sessionsLoading?: boolean;
+  onRefresh?: () => void;
+};
+
+type Filter = 'all' | 'local' | 'synced' | 'cloud';
 
 function fmtDur(s: number) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${String(sec).padStart(2, '0')}`; }
 function fmtSize(b: number) { if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`; if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`; return `${(b / 1e3).toFixed(0)} KB`; }
 function fmtNum(n: number) { if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`; if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`; return String(n); }
 function relTime(s: string) {
+  if (!s) return '';
   const d = Date.now() - new Date(s.replace(' ', 'T')).getTime();
   if (d < 60_000) return '방금 전';
   if (d < 3600_000) return `${Math.floor(d / 60_000)}분 전`;
@@ -17,60 +25,102 @@ function relTime(s: string) {
   return `${Math.floor(d / 86400_000)}일 전`;
 }
 
-export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsLoading, hubSessionIds, onRefresh }: Props) {
-  const [source, setSource] = useState<Source>('local');
+function LocationIcon({ local, remote }: { local: boolean; remote: boolean }) {
+  if (local && remote) return <span title="로컬 + Hub 동기화됨" style={{ color: 'var(--success)' }}>{Icon.Check()}</span>;
+  if (remote) return <span title="Hub에만 존재" style={{ color: 'var(--accent)' }}>{Icon.Link()}</span>;
+  return <span title="로컬에만 존재" style={{ color: 'var(--muted)' }}>{Icon.PC()}</span>;
+}
+
+function LocationBadge({ local, remote }: { local: boolean; remote: boolean }) {
+  if (local && remote) return <span className="tbd-badge tbd-badge--success"><span className="dot" />동기화됨</span>;
+  if (remote) return <span className="tbd-badge tbd-badge--accent">클라우드</span>;
+  return <span className="tbd-badge" style={{ color: 'var(--muted)' }}>로컬</span>;
+}
+
+export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: rawRemote, sessionsLoading, onRefresh }: Props) {
+  const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [uploadProg, setUploadProg] = useState<{ sid: string; done: number; total: number } | null>(null);
-  const localSessions: LocalSession[] = rawLocalSessions.map(s => ({
-    session_id: s.session_id,
-    started: s.started_at ?? '',
-    started_rel: s.started_at ? relTime(s.started_at) : '',
-    duration: s.duration_seconds ?? 0,
-    size: s.size_bytes ?? 0,
-    log_lines: s.log_lines ?? 0,
-    input_events: s.input_events ?? 0,
-    metric_samples: s.metric_samples ?? 0,
-    frames: s.screen_frames ?? 0,
-    exe: s.exe_path?.split('\\').pop()?.split('/').pop() ?? '',
-    device: (s.device as 'PC' | 'Android') ?? 'PC',
-    uploaded: s.uploaded || (hubSessionIds?.has(s.session_id) ?? false),
-    shares: 0,
-  }));
-  const [remoteSessions, setRemoteSessions] = useState<RemoteSession[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  const fetchRemote = useCallback(async () => {
-    if (!hub.configured) return;
-    setLoading(true);
-    try {
-      const list = await invoke<any[]>('hub_list_sessions', { url: hub.url, token: hub.token });
-      if (Array.isArray(list) && list.length > 0) {
-        setRemoteSessions(list.map(s => ({
-          session_id: s.session_id ?? '',
+  // Merge local + remote into unified list
+  const sessions: UnifiedSession[] = useMemo(() => {
+    const map = new Map<string, UnifiedSession>();
+
+    // Local sessions first
+    for (const s of rawLocal) {
+      map.set(s.session_id, {
+        session_id: s.session_id,
+        local: true,
+        remote: s.uploaded || false,
+        started: s.started_at ?? '',
+        started_rel: s.started_at ? relTime(s.started_at) : '',
+        duration: s.duration_seconds ?? 0,
+        size: s.size_bytes ?? 0,
+        exe: s.exe_path?.split('\\').pop()?.split('/').pop() ?? '',
+        device: (s.device as 'PC' | 'Android') ?? 'PC',
+        frames: s.screen_frames ?? 0,
+        events: (s.input_events ?? 0) + (s.log_lines ?? 0),
+        owner: '',
+        has_viewer: s.has_viewer ?? false,
+      });
+    }
+
+    // Merge remote sessions
+    for (const s of rawRemote) {
+      const id = s.session_id ?? '';
+      const existing = map.get(id);
+      if (existing) {
+        existing.remote = true;
+        if (s.owner) existing.owner = s.owner;
+      } else {
+        map.set(id, {
+          session_id: id,
+          local: false,
+          remote: true,
+          started: s.started_at ?? s.started ?? '',
+          started_rel: relTime(s.started_at ?? s.started ?? ''),
+          duration: s.duration_seconds ?? s.duration ?? 0,
+          size: s.size_bytes ?? s.size ?? 0,
+          exe: '',
+          device: 'PC',
+          frames: 0,
+          events: 0,
           owner: s.owner ?? '',
-          started: s.started_at ?? '',
-          duration: s.duration_seconds ?? 0,
-          size: s.size_bytes ?? 0,
           has_viewer: s.has_viewer ?? false,
-        })));
+        });
       }
-    } catch { /* keep mock */ }
-    setLoading(false);
-  }, [hub]);
+    }
 
+    const list = Array.from(map.values());
+    list.sort((a, b) => b.started.localeCompare(a.started));
+    return list;
+  }, [rawLocal, rawRemote]);
 
-  const refresh = () => { if (source === 'remote') fetchRemote(); else onRefresh?.(); };
+  // Filter + search
+  const filtered = useMemo(() => {
+    return sessions.filter(s => {
+      if (filter === 'local' && !(s.local && !s.remote)) return false;
+      if (filter === 'synced' && !(s.local && s.remote)) return false;
+      if (filter === 'cloud' && !(!s.local && s.remote)) return false;
+      if (query) {
+        const q = query.toLowerCase();
+        if (!s.session_id.toLowerCase().includes(q) && !s.exe.toLowerCase().includes(q) && !s.owner.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [sessions, filter, query]);
 
-  const localFiltered = localSessions.filter(s =>
-    !query || s.session_id.toLowerCase().includes(query.toLowerCase()) || s.exe.toLowerCase().includes(query.toLowerCase())
-  );
-  const remoteFiltered = remoteSessions.filter(s =>
-    !query || s.session_id.toLowerCase().includes(query.toLowerCase()) || s.owner.toLowerCase().includes(query.toLowerCase())
-  );
-  const selectedLocal = localSessions.find(s => s.session_id === selected);
+  const selectedSession = sessions.find(s => s.session_id === selected);
 
-  const doOpenViewer = async (sid: string) => { try { await invoke('open_viewer', { sessionId: sid }); } catch (e) { alert(`뷰어 열기 실패: ${e}`); } };
+  // Counts
+  const localOnly = sessions.filter(s => s.local && !s.remote).length;
+  const synced = sessions.filter(s => s.local && s.remote).length;
+  const cloudOnly = sessions.filter(s => !s.local && s.remote).length;
+
+  const doOpenViewer = async (sid: string) => {
+    try { await invoke('open_viewer', { sessionId: sid }); } catch (e) { alert(`뷰어 열기 실패: ${e}`); }
+  };
   const doDelete = async (sid: string) => {
     if (!confirm(`세션 ${sid}을(를) 삭제하시겠습니까?`)) return;
     try { await invoke('delete_session', { sessionId: sid }); setSelected(null); onRefresh?.(); } catch (e) { alert(`삭제 실패: ${e}`); }
@@ -83,86 +133,84 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsL
       setUploadProg({ sid, done: 100, total: 100 });
       setTimeout(() => setUploadProg(null), 800);
       onRefresh?.();
-    } catch (e) {
-      setUploadProg(null);
-      alert(`업로드 실패: ${e}`);
-    }
+    } catch (e) { setUploadProg(null); alert(`업로드 실패: ${e}`); }
   };
 
   return (
     <div>
       <div className="section-header">
-        <div><h1>세션</h1><p>로컬 · Hub · 업로드 / 공유 / 뷰어</p></div>
+        <div><h1>세션</h1><p>로컬 · Hub 통합 목록</p></div>
       </div>
 
+      {/* Toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <div className="tbd-radio-group" style={{ flex: 0 }}>
-          <button className={`tbd-radio ${source === 'local' ? 'active' : ''}`} onClick={() => { setSource('local'); setSelected(null); }}>
-            {Icon.PC()}로컬 · {localSessions.length}
+          <button className={`tbd-radio ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
+            전체 · {sessions.length}
           </button>
-          <button className={`tbd-radio ${source === 'remote' ? 'active' : ''}`} onClick={() => { setSource('remote'); setSelected(null); fetchRemote(); }}>
-            {Icon.Link()}Hub · {remoteSessions.length}
+          <button className={`tbd-radio ${filter === 'local' ? 'active' : ''}`} onClick={() => setFilter('local')}>
+            {Icon.PC()}로컬 · {localOnly}
           </button>
+          <button className={`tbd-radio ${filter === 'synced' ? 'active' : ''}`} onClick={() => setFilter('synced')}>
+            {Icon.Check()}동기화 · {synced}
+          </button>
+          {cloudOnly > 0 && (
+            <button className={`tbd-radio ${filter === 'cloud' ? 'active' : ''}`} onClick={() => setFilter('cloud')}>
+              {Icon.Link()}클라우드 · {cloudOnly}
+            </button>
+          )}
         </div>
         <div style={{ position: 'relative', flex: 1, maxWidth: 220 }}>
           <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--subtle)' }}>
             {Icon.Search({ width: 12, height: 12 } as any)}
           </span>
-          <input className="tbd-input" placeholder="session_id 검색…" value={query} onChange={e => setQuery(e.target.value)} style={{ paddingLeft: 26 }} />
+          <input className="tbd-input" placeholder="검색…" value={query} onChange={e => setQuery(e.target.value)} style={{ paddingLeft: 26 }} />
         </div>
-        <button className="tbd-btn tbd-btn--icon" onClick={refresh} disabled={loading}>{Icon.Refresh()}</button>
+        <button className="tbd-btn tbd-btn--icon" onClick={() => onRefresh?.()} disabled={sessionsLoading}>{Icon.Refresh()}</button>
       </div>
 
+      {/* Table */}
       <div className="tbd-session-table">
         <div className="tbd-session-table__head">
-          <span></span><span>Session ID</span>
-          <span>{source === 'local' ? 'EXE' : '소유자'}</span>
+          <span></span>
+          <span>Session ID</span>
+          <span>EXE / 소유자</span>
           <span style={{ textAlign: 'right' }}>길이</span>
           <span style={{ textAlign: 'right' }}>크기</span>
-          <span style={{ textAlign: 'right' }}>{source === 'local' ? '프레임' : '시작'}</span>
-          <span style={{ textAlign: 'right' }}>{source === 'local' ? '이벤트' : '뷰어'}</span>
+          <span style={{ textAlign: 'right' }}>프레임</span>
+          <span style={{ textAlign: 'right' }}>이벤트</span>
           <span></span>
         </div>
         <div className="tbd-session-table__body">
-          {source === 'local' ? (
-            sessionsLoading ? <LoadingRows /> :
-            localFiltered.length > 0 ? localFiltered.map(s => (
-              <LocalRow key={s.session_id} s={s} selected={selected === s.session_id} onClick={() => setSelected(s.session_id)} />
-            )) : <EmptyRows query={query} source={source} />
-          ) : (
-            loading ? <LoadingRows /> :
-            remoteFiltered.length > 0 ? remoteFiltered.map(s => (
-              <RemoteRow key={s.session_id} s={s} selected={selected === s.session_id} onClick={() => setSelected(s.session_id)} />
-            )) : <EmptyRows query={query} source={source} />
-          )}
+          {sessionsLoading ? <LoadingRows /> :
+           filtered.length > 0 ? filtered.map(s => (
+            <SessionRow key={s.session_id} s={s} selected={selected === s.session_id} onClick={() => setSelected(s.session_id)} />
+          )) : <EmptyRows query={query} />}
         </div>
-        {selected && (
+
+        {/* Action bar */}
+        {selected && selectedSession && (
           <div className="tbd-session-actions">
             <div className="tbd-session-actions__info">
               <span style={{ color: 'var(--muted)', fontSize: 12 }}>선택됨:</span>
               <span className="mono" style={{ fontSize: 12, fontWeight: 500 }}>{selected}</span>
-              {source === 'local' && selectedLocal && (
-                selectedLocal.uploaded ? <span className="tbd-badge tbd-badge--success"><span className="dot" />업로드됨</span>
-                  : <span className="tbd-badge" style={{ color: 'var(--muted)' }}>로컬</span>
-              )}
+              <LocationBadge local={selectedSession.local} remote={selectedSession.remote} />
             </div>
-            {source === 'local' ? (
+            {selectedSession.local && (
               <>
-                <button className="tbd-btn" disabled={!hub.configured || (selectedLocal?.uploaded ?? false)} onClick={() => selected && doUpload(selected)}>{Icon.Upload()}Hub 업로드</button>
-                <button className="tbd-btn" disabled={!hub.configured}>{Icon.Share()}공유 링크</button>
-                <button className="tbd-btn tbd-btn--danger" onClick={() => selected && doDelete(selected)}>{Icon.Trash()}삭제</button>
-                <button className="tbd-btn tbd-btn--primary" onClick={() => selected && doOpenViewer(selected)}>{Icon.Eye()}뷰어 열기</button>
+                <button className="tbd-btn" disabled={!hub.configured || selectedSession.remote} onClick={() => doUpload(selected)}>{Icon.Upload()}Hub 업로드</button>
+                <button className="tbd-btn tbd-btn--danger" onClick={() => doDelete(selected)}>{Icon.Trash()}삭제</button>
+                <button className="tbd-btn tbd-btn--primary" onClick={() => doOpenViewer(selected)}>{Icon.Eye()}뷰어 열기</button>
               </>
-            ) : (
-              <>
-                <button className="tbd-btn">{Icon.Download()}다운로드</button>
-                <button className="tbd-btn tbd-btn--primary">{Icon.Download()}다운로드 + 뷰어</button>
-              </>
+            )}
+            {!selectedSession.local && selectedSession.remote && (
+              <button className="tbd-btn tbd-btn--primary">{Icon.Download()}다운로드</button>
             )}
           </div>
         )}
       </div>
 
+      {/* Upload progress */}
       {uploadProg && (
         <div className="tbd-upload-pop">
           <div className="tbd-upload-pop__head">
@@ -177,32 +225,21 @@ export function SessionsScreen({ hub, localSessions: rawLocalSessions, sessionsL
   );
 }
 
-function LocalRow({ s, selected, onClick }: { s: LocalSession; selected: boolean; onClick: () => void }) {
+function SessionRow({ s, selected, onClick }: { s: UnifiedSession; selected: boolean; onClick: () => void }) {
   return (
     <div className={`tbd-session-row ${selected ? 'selected' : ''}`} onClick={onClick}>
-      <span className="tbd-session-row__icon">{s.device === 'Android' ? Icon.Phone() : Icon.PC()}</span>
-      <div><div className="tbd-session-row__id">{s.session_id}</div><div className="tbd-session-row__sub">{s.started_rel}</div></div>
-      <span className="mono" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.exe}</span>
+      <span className="tbd-session-row__icon"><LocationIcon local={s.local} remote={s.remote} /></span>
+      <div>
+        <div className="tbd-session-row__id">{s.session_id}</div>
+        <div className="tbd-session-row__sub">{s.started_rel}</div>
+      </div>
+      <span className="mono" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {s.exe || s.owner || '—'}
+      </span>
       <span className="tbd-session-row__num">{fmtDur(s.duration)}</span>
       <span className="tbd-session-row__num">{fmtSize(s.size)}</span>
-      <span className="tbd-session-row__num">{fmtNum(s.frames)}</span>
-      <span className="tbd-session-row__num">{fmtNum(s.input_events + s.log_lines)}</span>
-      <span style={{ textAlign: 'right' }}>{s.shares > 0 && <span className="tbd-badge tbd-badge--accent">{s.shares}</span>}</span>
-    </div>
-  );
-}
-
-function RemoteRow({ s, selected, onClick }: { s: RemoteSession; selected: boolean; onClick: () => void }) {
-  const time = s.started.split(' ')[1]?.slice(0, 5) ?? '';
-  return (
-    <div className={`tbd-session-row ${selected ? 'selected' : ''}`} onClick={onClick}>
-      <span className="tbd-session-row__icon">{Icon.Link()}</span>
-      <div><div className="tbd-session-row__id">{s.session_id}</div><div className="tbd-session-row__sub">{s.started.split(' ')[0]}</div></div>
-      <span style={{ fontSize: 12 }}>{s.owner}</span>
-      <span className="tbd-session-row__num">{fmtDur(s.duration)}</span>
-      <span className="tbd-session-row__num">{fmtSize(s.size)}</span>
-      <span className="tbd-session-row__num">{time}</span>
-      <span style={{ textAlign: 'right' }}>{s.has_viewer && <span className="tbd-badge tbd-badge--success">{Icon.Check({ width: 10, height: 10 } as any)}</span>}</span>
+      <span className="tbd-session-row__num">{s.frames ? fmtNum(s.frames) : '—'}</span>
+      <span className="tbd-session-row__num">{s.events ? fmtNum(s.events) : '—'}</span>
       <span />
     </div>
   );
@@ -217,12 +254,12 @@ function LoadingRows() {
   );
 }
 
-function EmptyRows({ query, source }: { query: string; source: Source }) {
+function EmptyRows({ query }: { query: string }) {
   return (
     <div className="tbd-empty">
       {Icon.Sessions({ width: 28, height: 28, style: { opacity: 0.4 } } as any)}
       <h2>표시할 세션이 없습니다</h2>
-      <p>{query ? '검색어를 조정해보세요' : source === 'local' ? '캡처를 시작하면 여기에 나타납니다' : 'Hub에 업로드된 세션이 없습니다'}</p>
+      <p>{query ? '검색어를 조정해보세요' : '캡처를 시작하면 여기에 나타납니다'}</p>
     </div>
   );
 }

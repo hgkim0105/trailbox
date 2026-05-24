@@ -41,6 +41,22 @@ export type RemoteSession = {
   has_viewer: boolean;
 };
 
+export type UnifiedSession = {
+  session_id: string;
+  local: boolean;
+  remote: boolean;
+  started: string;
+  started_rel: string;
+  duration: number;
+  size: number;
+  exe: string;
+  device: 'PC' | 'Android';
+  frames: number;
+  events: number;
+  owner: string;
+  has_viewer: boolean;
+};
+
 export type HubState = {
   url: string;
   username: string;
