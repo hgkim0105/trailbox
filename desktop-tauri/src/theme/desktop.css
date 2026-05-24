@@ -465,3 +465,4 @@ button { font: inherit; cursor: pointer; background: none; border: 0; color: inh
   50% { box-shadow: 0 0 0 8px oklch(from var(--danger) l c h / 0.08); }
 }
 @keyframes tbd-spin { to { transform: rotate(360deg); } }
+@keyframes tbd-toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

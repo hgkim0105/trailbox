@@ -1,9 +1,22 @@
 mod commands;
 
+use tauri::Emitter;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let stop_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyR);
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(commands::RecordingProcess::default())
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            app.global_shortcut().on_shortcut(stop_shortcut, move |_app, _shortcut, _event| {
+                let _ = handle.emit("global-stop-recording", ());
+            })?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::list_local_sessions,
             commands::open_viewer,

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
 import { ThemeToggle } from './components/ThemeToggle';
 import { Icon } from './components/Icon';
 import { CaptureScreen } from './screens/CaptureScreen';
@@ -15,6 +16,9 @@ const TABS: { key: Route; label: string; icon: (p?: any) => React.ReactNode }[] 
   { key: 'hub', label: 'Hub', icon: Icon.Hub },
 ];
 
+type Toast = { id: number; msg: string; tone: 'ok' | 'err' | 'info' };
+let toastId = 0;
+
 export default function App() {
   const [route, setRoute] = useState<Route>('capture');
   const [recording, setRecording] = useState(false);
@@ -22,6 +26,13 @@ export default function App() {
   const [elapsed, setElapsed] = useState(0);
   const [hub, setHub] = useState<HubState>(HUB_INITIAL);
   const [maximized, setMaximized] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const showToast = useCallback((msg: string, tone: Toast['tone'] = 'info') => {
+    const id = ++toastId;
+    setToasts(t => [...t, { id, msg, tone }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500);
+  }, []);
 
   useEffect(() => {
     if (!recording) return;
@@ -36,6 +47,17 @@ export default function App() {
     const unlisten = win.onResized(() => { check(); });
     return () => { unlisten.then(fn => fn()); };
   }, []);
+
+  // Global hotkey: Ctrl+Alt+R → stop recording
+  useEffect(() => {
+    const unlisten = listen('global-stop-recording', () => {
+      if (recording && !transition) {
+        stopRecording();
+        showToast('Ctrl+Alt+R로 녹화 중지됨', 'ok');
+      }
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, [recording, transition]);
 
   const startRecording = useCallback(() => {
     setTransition('starting');
@@ -75,49 +97,47 @@ export default function App() {
   return (
     <div className="tbd-app">
       <div className="tbd-window">
-        {/* Custom titlebar (44px) — integrated tabs, no separate sidebar */}
         <div className="tbd-titlebar--custom" data-tauri-drag-region>
           <a className="tbd-brand" href="#" onClick={e => { e.preventDefault(); setRoute('capture'); }} style={{ WebkitAppRegion: 'no-drag' } as any}>
             <div className="sidebar__brand-mark" style={{ width: 20, height: 20, borderRadius: 5 }} />
             <span style={{ fontWeight: 600, fontSize: 13 }}>Trailbox</span>
           </a>
-
           <div className="tbd-tabs" style={{ WebkitAppRegion: 'no-drag' } as any}>
             {TABS.map(t => (
               <button key={t.key} className={`tbd-tab ${route === t.key ? 'active' : ''}`} onClick={() => setRoute(t.key)}>
-                {t.icon()}
-                <span>{t.label}</span>
+                {t.icon()}<span>{t.label}</span>
               </button>
             ))}
           </div>
-
           {recording && (
             <span className="tbd-rec-pill" style={{ marginLeft: 12 }}>
-              <span className="dot" />
-              REC {fmtElapsed(elapsed)}
+              <span className="dot" />REC {fmtElapsed(elapsed)}
             </span>
           )}
-
           <div className="tbd-titlebar__controls" style={{ WebkitAppRegion: 'no-drag' } as any}>
             <ThemeToggle />
-            <button onClick={() => win.minimize()} title="최소화">
-              {Icon.Minimize()}
-            </button>
-            <button onClick={() => win.toggleMaximize()} title={maximized ? '이전 크기로' : '최대화'}>
-              {Icon.Maximize()}
-            </button>
-            <button className="close" onClick={() => win.close()} title="닫기">
-              {Icon.Close()}
-            </button>
+            <button onClick={() => win.minimize()} title="최소화">{Icon.Minimize()}</button>
+            <button onClick={() => win.toggleMaximize()} title={maximized ? '이전 크기로' : '최대화'}>{Icon.Maximize()}</button>
+            <button className="close" onClick={() => win.close()} title="닫기">{Icon.Close()}</button>
           </div>
         </div>
-
         <div className="tbd-body no-side">
           <div className="tbd-main">
             <div className="content">{screen}</div>
           </div>
         </div>
       </div>
+
+      {/* Toast notifications */}
+      {toasts.length > 0 && (
+        <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 300, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {toasts.map(t => (
+            <div key={t.id} className={`tbd-status tbd-status--${t.tone}`} style={{ padding: '8px 16px', borderRadius: 8, boxShadow: 'var(--shadow-pop)', minWidth: 240, textAlign: 'center', animation: 'tbd-toast-in 0.2s ease-out' }}>
+              {t.msg}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
