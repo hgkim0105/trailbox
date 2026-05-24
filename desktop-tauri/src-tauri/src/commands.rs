@@ -7,24 +7,22 @@ use std::sync::Mutex;
 use tauri::{Manager, State};
 
 fn output_root() -> PathBuf {
+    // Use project_root() which reliably finds the repo root via main.py
+    let root = project_root();
+    let from_root = root.join("output");
+    if from_root.is_dir() {
+        return from_root.canonicalize().unwrap_or(from_root);
+    }
+    // Fallback for production: next to the exe
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-    // Dev: project root's output/
-    // Prod: next to the .exe
-    let candidates = [
-        exe_dir.join("output"),
-        exe_dir.join("..").join("..").join("..").join("output"), // dev: src-tauri/target/debug -> project root
-        PathBuf::from("output"),
-    ];
-    for c in &candidates {
-        if c.is_dir() {
-            return c.canonicalize().unwrap_or_else(|_| c.clone());
-        }
+        .unwrap_or_default();
+    let from_exe = exe_dir.join("output");
+    if from_exe.is_dir() {
+        return from_exe.canonicalize().unwrap_or(from_exe);
     }
-    candidates[0].clone()
+    from_root
 }
 
 #[derive(Serialize)]
