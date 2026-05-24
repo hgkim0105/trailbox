@@ -7,6 +7,12 @@ build/
 dist/
 *.spec
 
+# Tauri build artifacts
+desktop-tauri/src-tauri/target/
+desktop-tauri/node_modules/
+desktop-tauri/dist/
+desktop-tauri/.tsbuild-node/
+
 # Claude Code internal state (sessions, schedules, etc.)
 .claude/
 
