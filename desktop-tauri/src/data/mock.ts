@@ -2,7 +2,10 @@ export type WindowInfo = {
   hwnd: number;
   label: string;
   exe: string;
+  exe_path?: string;
+  title?: string;
   pid: number;
+  process_name?: string;
 };
 
 export type AdbDevice = {

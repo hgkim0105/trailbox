@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, type MutableRefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
 import { WINDOWS, ANDROID_DEVICES } from '../data/mock';
@@ -11,6 +11,8 @@ type Props = {
   onStop: () => void;
   elapsed: number;
   fmtElapsed: (s: number) => string;
+  sessionId: string | null;
+  configRef: MutableRefObject<any>;
 };
 
 type Target = 'monitor' | 'window' | 'android';
@@ -26,7 +28,7 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed }: Props) {
+export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef }: Props) {
   const [target, setTarget] = useState<Target>('window');
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
@@ -42,9 +44,26 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
   const [metrics, setMetrics] = useState(true);
   const [autoUpload, setAutoUpload] = useState(false);
 
+  // Sync config to parent ref so App.startRecording can read it
+  useEffect(() => {
+    const selectedWin = windows.find(w => w.hwnd === hwnd);
+    configRef.current = {
+      target: target === 'window'
+        ? { kind: 'window', hwnd, title: selectedWin?.title ?? '' }
+        : { kind: 'monitor', index: 0 },
+      exe_path: exe || selectedWin?.exe_path || '',
+      log_dirs: [logDir, ...extraDirs].filter(Boolean),
+      max_fps: fps,
+      audio,
+      input,
+      metrics,
+      log_recursive: recursive,
+      log_extensions: exts.split(',').map(e => e.trim()).filter(Boolean).map(e => e.startsWith('.') ? e : `.${e}`),
+    };
+  });
+
   const [windows, setWindows] = useState<WindowInfo[]>(WINDOWS);
   const [devices, setDevices] = useState<AdbDevice[]>(ANDROID_DEVICES);
-  const [sessionId] = useState<string | null>(null);
 
   const refreshWindows = useCallback(async () => {
     try {

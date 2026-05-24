@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { ThemeToggle } from './components/ThemeToggle';
@@ -24,9 +25,11 @@ export default function App() {
   const [recording, setRecording] = useState(false);
   const [transition, setTransition] = useState<'starting' | 'stopping' | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [hub, setHub] = useState<HubState>(HUB_INITIAL);
   const [maximized, setMaximized] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const captureConfigRef = useRef<any>(null);
 
   const showToast = useCallback((msg: string, tone: Toast['tone'] = 'info') => {
     const id = ++toastId;
@@ -48,7 +51,6 @@ export default function App() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // Global hotkey: Ctrl+Alt+R → stop recording
   useEffect(() => {
     const unlisten = listen('global-stop-recording', () => {
       if (recording && !transition) {
@@ -59,16 +61,42 @@ export default function App() {
     return () => { unlisten.then(fn => fn()); };
   }, [recording, transition]);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback(async () => {
+    const config = captureConfigRef.current;
+    if (!config) {
+      showToast('캡처 설정을 먼저 구성하세요', 'err');
+      return;
+    }
     setTransition('starting');
-    setTimeout(() => { setTransition(null); setRecording(true); setElapsed(0); }, 900);
-  }, []);
+    try {
+      const sid = await invoke<string>('start_recording', { config });
+      setSessionId(sid);
+      setTransition(null);
+      setRecording(true);
+      setElapsed(0);
+      invoke('show_overlay').catch(() => {});
+      showToast(`녹화 시작: ${sid}`, 'ok');
+    } catch (e) {
+      setTransition(null);
+      showToast(`녹화 시작 실패: ${e}`, 'err');
+    }
+  }, [showToast]);
 
-  const stopRecording = useCallback(() => {
+  const stopRecording = useCallback(async () => {
     setTransition('stopping');
     setRecording(false);
-    setTimeout(() => setTransition(null), 1200);
-  }, []);
+    invoke('hide_overlay').catch(() => {});
+    try {
+      const result = await invoke<any>('stop_recording');
+      setTransition(null);
+      const dur = result?.duration ? `${Math.round(result.duration)}초` : '';
+      const frames = result?.frames ? `, ${result.frames} 프레임` : '';
+      showToast(`녹화 완료${dur ? ` (${dur}${frames})` : ''}`, 'ok');
+    } catch (e) {
+      setTransition(null);
+      showToast(`녹화 중지 오류: ${e}`, 'err');
+    }
+  }, [showToast]);
 
   const fmtElapsed = (s: number) => {
     const h = Math.floor(s / 3600);
@@ -84,7 +112,18 @@ export default function App() {
   let screen: React.ReactNode;
   switch (route) {
     case 'capture':
-      screen = <CaptureScreen recording={recording} transition={transition} onStart={startRecording} onStop={stopRecording} elapsed={elapsed} fmtElapsed={fmtElapsed} />;
+      screen = (
+        <CaptureScreen
+          recording={recording}
+          transition={transition}
+          onStart={startRecording}
+          onStop={stopRecording}
+          elapsed={elapsed}
+          fmtElapsed={fmtElapsed}
+          sessionId={sessionId}
+          configRef={captureConfigRef}
+        />
+      );
       break;
     case 'sessions':
       screen = <SessionsScreen hub={hub} />;
@@ -128,7 +167,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Toast notifications */}
       {toasts.length > 0 && (
         <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 300, display: 'flex', flexDirection: 'column', gap: 6 }}>
           {toasts.map(t => (
