@@ -142,35 +142,24 @@ export default function App() {
 
   const win = getCurrentWindow();
 
-  let screen: React.ReactNode;
-  switch (route) {
-    case 'capture':
-      screen = (
-        <CaptureScreen
-          recording={recording}
-          transition={transition}
-          onStart={startRecording}
-          onStop={stopRecording}
-          elapsed={elapsed}
-          fmtElapsed={fmtElapsed}
-          sessionId={sessionId}
-          configRef={captureConfigRef}
-          hubConfigured={hub.configured}
-          hubUrl={hub.url}
-          hubToken={hub.token}
-          showToast={showToast}
-          liveStatus={liveStatus}
-          lastSession={localSessions[0] ?? null}
-        />
-      );
-      break;
-    case 'sessions':
-      screen = <SessionsScreen hub={hub} localSessions={localSessions} />;
-      break;
-    case 'hub':
-      screen = <HubSettingsScreen hub={hub} setHub={setHub} />;
-      break;
-  }
+  const captureScreen = (
+    <CaptureScreen
+      recording={recording}
+      transition={transition}
+      onStart={startRecording}
+      onStop={stopRecording}
+      elapsed={elapsed}
+      fmtElapsed={fmtElapsed}
+      sessionId={sessionId}
+      configRef={captureConfigRef}
+      hubConfigured={hub.configured}
+      hubUrl={hub.url}
+      hubToken={hub.token}
+      showToast={showToast}
+      liveStatus={liveStatus}
+      lastSession={localSessions[0] ?? null}
+    />
+  );
 
   return (
     <div className="tbd-app">
@@ -201,7 +190,9 @@ export default function App() {
         </div>
         <div className="tbd-body no-side">
           <div className="tbd-main">
-            <div className="content">{screen}</div>
+            <div className="content" style={{ display: route === 'capture' ? undefined : 'none' }}>{captureScreen}</div>
+            <div className="content" style={{ display: route === 'sessions' ? undefined : 'none' }}><SessionsScreen hub={hub} localSessions={localSessions} /></div>
+            <div className="content" style={{ display: route === 'hub' ? undefined : 'none' }}><HubSettingsScreen hub={hub} setHub={setHub} /></div>
           </div>
         </div>
       </div>

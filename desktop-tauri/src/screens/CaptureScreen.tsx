@@ -163,7 +163,11 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
     }
   };
 
-  useEffect(() => { refreshWindows(); }, []);
+  // Only fetch windows once on first mount, not on every tab switch
+  const [initialized, setInitialized] = useState(false);
+  useEffect(() => {
+    if (!initialized) { refreshWindows(); setInitialized(true); }
+  }, [initialized]);
 
   // Fetch last session on mount
 
