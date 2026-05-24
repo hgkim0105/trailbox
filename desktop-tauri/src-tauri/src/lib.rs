@@ -14,12 +14,16 @@ pub fn run() {
         .setup(move |app| {
             let handle1 = app.handle().clone();
             let handle2 = app.handle().clone();
-            app.global_shortcut().on_shortcut(stop_shortcut, move |_app, _shortcut, _event| {
+            if let Err(e) = app.global_shortcut().on_shortcut(stop_shortcut, move |_app, _shortcut, _event| {
                 let _ = handle1.emit("global-stop-recording", ());
-            })?;
-            app.global_shortcut().on_shortcut(pick_shortcut, move |_app, _shortcut, _event| {
+            }) {
+                eprintln!("warn: failed to register Ctrl+Alt+R: {e}");
+            }
+            if let Err(e) = app.global_shortcut().on_shortcut(pick_shortcut, move |_app, _shortcut, _event| {
                 let _ = handle2.emit("global-pick-window", ());
-            })?;
+            }) {
+                eprintln!("warn: failed to register Ctrl+Shift+P: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
