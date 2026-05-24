@@ -29,6 +29,7 @@ export default function App() {
   const [hub, setHub] = useState<HubState>(HUB_INITIAL);
   const [maximized, setMaximized] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
   const captureConfigRef = useRef<any>(null);
 
   const showToast = useCallback((msg: string, tone: Toast['tone'] = 'info') => {
@@ -92,6 +93,7 @@ export default function App() {
       const dur = result?.duration ? `${Math.round(result.duration)}초` : '';
       const frames = result?.frames ? `, ${result.frames} 프레임` : '';
       showToast(`녹화 완료${dur ? ` (${dur}${frames})` : ''}`, 'ok');
+      setRefreshKey(k => k + 1);
     } catch (e) {
       setTransition(null);
       showToast(`녹화 중지 오류: ${e}`, 'err');
@@ -122,11 +124,12 @@ export default function App() {
           fmtElapsed={fmtElapsed}
           sessionId={sessionId}
           configRef={captureConfigRef}
+          refreshKey={refreshKey}
         />
       );
       break;
     case 'sessions':
-      screen = <SessionsScreen hub={hub} active />;
+      screen = <SessionsScreen hub={hub} active refreshKey={refreshKey} />;
       break;
     case 'hub':
       screen = <HubSettingsScreen hub={hub} setHub={setHub} />;

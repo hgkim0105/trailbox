@@ -13,6 +13,7 @@ type Props = {
   fmtElapsed: (s: number) => string;
   sessionId: string | null;
   configRef: MutableRefObject<any>;
+  refreshKey: number;
 };
 
 type Target = 'monitor' | 'window' | 'android';
@@ -28,7 +29,7 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef }: Props) {
+export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, refreshKey }: Props) {
   const [target, setTarget] = useState<Target>('window');
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
@@ -142,7 +143,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
         setLastSession({ id: s.session_id, rel: s.started_at ?? '', dur });
       }
     }).catch(() => {});
-  }, [recording]); // re-fetch when recording state changes (after stop)
+  }, [refreshKey]);
 
   const btnState = transition ? 'transition' : recording ? 'recording' : '';
 
