@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write as IoWrite};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
 
 fn output_root() -> PathBuf {
     let exe_dir = std::env::current_exe()
@@ -164,6 +164,30 @@ pub fn delete_session(session_id: String) -> Result<(), String> {
         return Err("path traversal blocked".to_string());
     }
     fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+}
+
+// ── Overlay window control ─────────────────────────────────────────
+
+#[tauri::command]
+pub fn show_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("overlay") {
+        // Position at top-right of primary monitor
+        let _ = win.set_position(tauri::PhysicalPosition::new(
+            win.primary_monitor().ok().flatten()
+                .map(|m| m.size().width as i32 - 280).unwrap_or(1640),
+            16,
+        ));
+        win.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn hide_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("overlay") {
+        win.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // ── File picker dialogs ────────────────────────────────────────────

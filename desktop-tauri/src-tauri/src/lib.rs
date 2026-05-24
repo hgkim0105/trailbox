@@ -8,6 +8,8 @@ pub fn run() {
             commands::list_local_sessions,
             commands::open_viewer,
             commands::open_url,
+            commands::show_overlay,
+            commands::hide_overlay,
             commands::pick_file,
             commands::pick_folder,
             commands::get_output_root,

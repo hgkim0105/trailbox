@@ -22,6 +22,22 @@
         "fullscreen": false,
         "center": true,
         "decorations": false
+      },
+      {
+        "label": "overlay",
+        "title": "",
+        "url": "/overlay.html",
+        "width": 260,
+        "height": 44,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false,
+        "x": -1,
+        "y": 16
       }
     ],
     "security": {
