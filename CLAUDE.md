@@ -125,7 +125,7 @@ Backend selection (`__main__.py:_pick_backend`):
 - `TRAILBOX_HUB_URL` set, no local output → `HubBackend` (HTTP-only)
 - No env var → `LocalBackend` (filesystem-only)
 
-Tools: `list_sessions`, `get_session`, `query_events`, `get_metrics`, `search_logs`, `get_frame_at`, `get_viewer_path`, `get_frame_stats`. The last one reads `metrics/frames.jsonl` for FPS/jitter/stutter analysis. `get_metrics` summary includes GPU (gpu_max/avg, vram_max_mb) and thread/handle counts alongside CPU/RSS.
+Tools: `list_sessions`, `get_session`, `query_events`, `get_metrics`, `search_logs`, `get_frame_at`, `get_viewer_path`, `get_frame_stats`. The last one reads `metrics/frames.jsonl` for FPS/jitter/stutter analysis. `get_metrics` summary includes GPU (gpu_max/avg, vram_max_mb) and thread/handle counts alongside CPU/RSS. `list_sessions` includes `owner` (Hub username) and `description` (user-editable via Hub web UI or `PATCH /api/sessions/{id}`).
 
 Capture control via MCP (start/stop a session from an AI) is deliberately not implemented. Adding it requires either a headless recording mode or IPC to a running Trailbox — both are nontrivial.
 
@@ -140,7 +140,7 @@ Auth dependencies (`hub_server/auth.py`):
 - `require_user` / `require_admin` — resolve the caller via cookie session → per-user API token (`X-Trailbox-Token`) → legacy service token (`TRAILBOX_HUB_TOKEN`, maps to first admin for back-compat).
 - `require_user_active` / `require_admin_active` — same as above plus a `must_change_password` gate. Use these by default; the relaxed variants exist only for `/api/auth/me` and `/api/auth/password` so a force-reset user can still self-recover.
 
-DB schema lives in `hub_server/db.py` with a `user_version`-based migration ladder (v1 created all tables, v2 added `must_change_password`). The migration helper is idempotent — second boot on the same DB is a no-op. **Add new schema versions by appending to the `if version < N` ladder, never by editing prior steps.**
+DB schema lives in `hub_server/db.py` with a `user_version`-based migration ladder (v1 created all tables, v2 added `must_change_password`, v3 added `session_tags`, v4 added `description` to `session_owners`). The migration helper is idempotent — second boot on the same DB is a no-op. **Add new schema versions by appending to the `if version < N` ladder, never by editing prior steps.**
 
 Web UI templates are at `hub_server/templates/` and bundled into `Trailbox-hub.exe` via `--add-data` in `build.py`. Both `hub_server/app.py` and `hub_server/routes/web.py` resolve their directories via a `_MEIPASS` fallback so the same code works in source and frozen.
 

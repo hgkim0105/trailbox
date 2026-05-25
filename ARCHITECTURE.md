@@ -213,7 +213,7 @@ TRAILBOX_HUB_URL 설정됨?
 
 | 도구 | 설명 |
 |------|------|
-| `list_sessions` | 최근 세션 목록 (platform, device_kind, system_summary 포함) |
+| `list_sessions` | 최근 세션 목록 (platform, device_kind, system_summary, owner, description 포함) |
 | `get_session` | 세션 메타 + 파일 경로 + 시스템 스냅샷 |
 | `query_events` | 시간/종류/텍스트 필터로 로그+입력 이벤트 조회 |
 | `get_metrics` | CPU/RSS/GPU/VRAM/threads/handles 텔레메트리 + 요약 |
@@ -268,8 +268,10 @@ hub_server/
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| GET | `/api/sessions` | 세션 목록 (소유자 필터) |
+| GET | `/api/sessions` | 세션 목록 (소유자 필터, owner/description 포함) |
+| GET | `/api/sessions/{id}` | 세션 상세 (owner/description 포함) |
 | POST | `/api/sessions/{id}` | 세션 업로드 (zip) |
+| PATCH | `/api/sessions/{id}` | 세션 설명 수정 (`{"description": "..."}`) |
 | GET | `/api/sessions/{id}/zip` | 세션 다운로드 |
 | GET | `/api/sessions/{id}/files/{path}` | 개별 파일 조회 |
 | GET | `/api/sessions/{id}/frame?t=N` | JPEG 프레임 추출 |
