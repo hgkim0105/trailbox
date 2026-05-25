@@ -216,7 +216,7 @@ export default function App() {
       <div className="tbd-window">
         <div className="tbd-titlebar--custom" data-tauri-drag-region>
           <a className="tbd-brand" href="#" onClick={e => { e.preventDefault(); setRoute('capture'); }} style={{ WebkitAppRegion: 'no-drag' } as any}>
-            <div className="sidebar__brand-mark" style={{ width: 20, height: 20, borderRadius: 5 }} />
+            <img src="/trailbox.png" alt="" style={{ width: 20, height: 20, borderRadius: 5 }} />
             <span style={{ fontWeight: 600, fontSize: 13 }}>Trailbox</span>
           </a>
           <div className="tbd-tabs" style={{ WebkitAppRegion: 'no-drag' } as any}>
