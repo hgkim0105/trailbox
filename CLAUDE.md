@@ -112,9 +112,22 @@ The template uses `__SESSION_ID__` / `__EVENTS_JSON__` / `__META_JSON__` / `__ME
 
 ## MCP server
 
-`mcp_server/__main__.py` is a FastMCP stdio server exposing 6 read-only tools that operate against the same `output/{session_id}/` tree. Tools are intentionally simple readers — they don't decode the video or anything heavy. The output root resolves via the `TRAILBOX_OUTPUT` env var, falling back to `../output` relative to the module.
+`mcp_server/__main__.py` is a FastMCP stdio server exposing 8 read-only tools. Architecture:
 
-Capture control via MCP (start/stop a session from an AI) is deliberately NOT in v0.1.0. Adding it requires either a headless recording mode or IPC to a running Trailbox — both are nontrivial.
+- `mcp_server/filters.py` — shared filtering/aggregation (time range, kind matching, text search, metrics summary, frame stats). Both backends delegate here instead of duplicating logic.
+- `mcp_server/errors.py` — structured error types (`SessionNotFound`, `FileNotAvailable`, `HubUnavailable`). Tools return `{"error": "...", "code": "..."}` instead of raising raw exceptions.
+- `mcp_server/backends/local.py` — reads `$TRAILBOX_OUTPUT/{session_id}/` from the local filesystem.
+- `mcp_server/backends/hub.py` — reads from a remote Hub via HTTP API.
+- `mcp_server/backends/hybrid.py` — local-first + Hub fallback. Activated automatically when both `TRAILBOX_HUB_URL` and a local output directory exist.
+
+Backend selection (`__main__.py:_pick_backend`):
+- `TRAILBOX_HUB_URL` set + local output dir exists → `HybridBackend` (local-first, Hub fallback for sessions not found locally; `list_sessions` merges both, deduplicates by session_id)
+- `TRAILBOX_HUB_URL` set, no local output → `HubBackend` (HTTP-only)
+- No env var → `LocalBackend` (filesystem-only)
+
+Tools: `list_sessions`, `get_session`, `query_events`, `get_metrics`, `search_logs`, `get_frame_at`, `get_viewer_path`, `get_frame_stats`. The last one reads `metrics/frames.jsonl` for FPS/jitter/stutter analysis. `get_metrics` summary includes GPU (gpu_max/avg, vram_max_mb) and thread/handle counts alongside CPU/RSS.
+
+Capture control via MCP (start/stop a session from an AI) is deliberately not implemented. Adding it requires either a headless recording mode or IPC to a running Trailbox — both are nontrivial.
 
 ## Hub: auth + DB (v0.5.0+)
 
@@ -160,7 +173,21 @@ The MCP server, viewer generator, and `_smoketest_*` scripts all assume this lay
 
 `gpu_pct` is the MAX engine percentage (Task Manager convention), not the sum. Summing would exceed 100 routinely since engines run in parallel on different GPU blocks. If you change this, also update the viewer's `gpuMax = Math.max(100, ...)` floor logic.
 
-## CPU% normalization
+## Tauri desktop app (desktop-tauri/)
+
+`desktop-tauri/` is a Tauri 2 + React frontend that wraps the Python recording stack. It communicates with Python via two bridge subprocesses:
+
+- `bridge.py` — one-shot commands (enumerate windows, Hub API calls, sync queue, download). Tauri spawns it, reads JSON stdout, exits.
+- `bridge_record.py` — long-running recording daemon. Tauri holds its stdin/stdout open; sends `{"cmd":"start",...}` / `{"cmd":"stop"}` via stdin, reads `{"event":"status",...}` at 1 Hz via stdout.
+
+Key flows:
+- **Auto-upload**: after recording stops, if enabled, `hub_upload` is called immediately. `.uploaded` marker is written on success.
+- **Background sync queue**: on app start, `hub_sync_queue` scans for sessions without `.uploaded` marker and uploads them all. Then `cleanup_synced_sessions` runs per the user's cleanup policy.
+- **On-demand download**: `hub_download` fetches a Hub-only session zip, extracts to `output/`, writes `.uploaded` marker.
+- **Hub viewer**: cloud/synced sessions can open the Hub viewer URL (`/sessions/{id}/v/`) in the default browser.
+- **Real-time GPU metrics**: `bridge_record.py` starts a `GpuMonitor` alongside the recording loop and emits `gpu_pct` + `gpu_vram_mb` in status events.
+
+Build: `npm run tauri:build` in `desktop-tauri/`. Produces `trailbox-desktop.exe` (Rust/Tauri, ~9 MB) + `trailbox-bridge.exe` (PyInstaller, ~126 MB). The Inno Setup installer bundles both as `Trailbox.exe` (renamed from trailbox-desktop.exe).
 
 ## Known constraint footprint
 
