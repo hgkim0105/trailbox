@@ -58,7 +58,7 @@ export default function App() {
     return () => clearTimeout(t);
   }, [refreshKey]);
 
-  // Background sync queue: upload unsynced sessions on first load
+  // Background sync queue + auto cleanup on first load
   const syncRan = useRef(false);
   useEffect(() => {
     if (syncRan.current || !hub.configured || !hub.token) return;
@@ -67,8 +67,19 @@ export default function App() {
       .then(r => {
         if (r?.uploaded > 0) {
           showToast(`${r.uploaded}개 세션 자동 동기화 완료`, 'ok');
-          setRefreshKey(k => k + 1);
         }
+        // Auto cleanup after sync
+        const policy = hub.cleanupPolicy || 'keep';
+        if (policy !== 'keep') {
+          invoke<any>('cleanup_synced_sessions', { policy })
+            .then(cr => {
+              if (cr?.deleted > 0) {
+                showToast(`${cr.deleted}개 동기화 세션 정리됨`, 'info');
+              }
+            })
+            .catch(() => {});
+        }
+        if (r?.uploaded > 0) setRefreshKey(k => k + 1);
       })
       .catch(() => {});
   }, [hub.configured, hub.token]);
