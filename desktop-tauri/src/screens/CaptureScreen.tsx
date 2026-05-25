@@ -352,6 +352,8 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                     <dt>프레임</dt><dd>{(liveStatus?.frames ?? 0).toLocaleString()}</dd>
                     <dt>CPU</dt><dd>{liveStatus?.cpu_pct != null ? `${liveStatus.cpu_pct}%` : '—'}</dd>
                     <dt>RAM</dt><dd>{liveStatus?.rss_mb != null ? `${liveStatus.rss_mb.toFixed(1)} MB` : '—'}</dd>
+                    <dt>GPU</dt><dd>{liveStatus?.gpu_pct != null ? `${liveStatus.gpu_pct}%` : '—'}</dd>
+                    <dt>VRAM</dt><dd>{liveStatus?.gpu_vram_mb != null ? `${liveStatus.gpu_vram_mb.toFixed(0)} MB` : '—'}</dd>
                   </dl>
                   <div style={{ marginTop: 8 }}><MiniSpark color="oklch(0.65 0.18 25)" /></div>
                 </>

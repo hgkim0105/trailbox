@@ -159,6 +159,49 @@ def cmd_hub_share() -> dict:
     return HubClient(base_url=url, token=token).create_share(session_id)
 
 
+def cmd_hub_download() -> dict:
+    url, token = _hub_args()
+    session_id = sys.argv[4] if len(sys.argv) > 4 else ""
+    if not session_id:
+        return {"error": "session_id required"}
+    from core.hub_client import HubClient
+    out_dir = _REPO_ROOT / "output"
+    target = HubClient(base_url=url, token=token).download_session(session_id, out_dir)
+    return {"session_id": session_id, "path": str(target)}
+
+
+def cmd_hub_sync_queue() -> dict:
+    """Find unuploaded local sessions and upload them all. Returns summary."""
+    url, token = _hub_args()
+    if not url or not token:
+        return {"error": "hub URL and token required", "uploaded": 0, "failed": 0}
+    from pathlib import Path as _P
+    from core.hub_client import HubClient
+    output_root = _REPO_ROOT / "output"
+    if not output_root.is_dir():
+        return {"uploaded": 0, "failed": 0, "ids": []}
+    client = HubClient(base_url=url, token=token)
+    uploaded = []
+    failed = []
+    for d in sorted(output_root.iterdir()):
+        if not d.is_dir():
+            continue
+        name = d.name
+        if name.startswith("_") or name.startswith("."):
+            continue
+        if not (d / "session_meta.json").is_file():
+            continue
+        if (d / ".uploaded").is_file():
+            continue
+        try:
+            client.upload_session(name, d)
+            (d / ".uploaded").write_text("")
+            uploaded.append(name)
+        except Exception as e:
+            failed.append({"session_id": name, "error": str(e)})
+    return {"uploaded": len(uploaded), "failed": len(failed), "ids": uploaded, "errors": failed}
+
+
 def _hub_args() -> tuple[str, str]:
     url = sys.argv[2] if len(sys.argv) > 2 else ""
     token = sys.argv[3] if len(sys.argv) > 3 else ""
@@ -182,6 +225,8 @@ COMMANDS = {
     "hub-list-sessions": cmd_hub_list_sessions,
     "hub-upload": cmd_hub_upload,
     "hub-share": cmd_hub_share,
+    "hub-download": cmd_hub_download,
+    "hub-sync-queue": cmd_hub_sync_queue,
 }
 
 

@@ -421,6 +421,16 @@ pub async fn hub_share(url: String, token: String, session_id: String) -> Result
     call_bridge(vec!["hub-share".into(), url, token, session_id]).await
 }
 
+#[tauri::command]
+pub async fn hub_download(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["hub-download".into(), url, token, session_id]).await
+}
+
+#[tauri::command]
+pub async fn hub_sync_queue(url: String, token: String) -> Result<serde_json::Value, String> {
+    call_bridge(vec!["hub-sync-queue".into(), url, token]).await
+}
+
 // ── Recording subprocess management ────────────────────────────────
 
 use std::sync::Arc;

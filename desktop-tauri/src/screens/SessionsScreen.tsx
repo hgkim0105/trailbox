@@ -118,8 +118,14 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
   const synced = sessions.filter(s => s.local && s.remote).length;
   const cloudOnly = sessions.filter(s => !s.local && s.remote).length;
 
+  const [downloadProg, setDownloadProg] = useState<string | null>(null);
+
   const doOpenViewer = async (sid: string) => {
     try { await invoke('open_viewer', { sessionId: sid }); } catch (e) { alert(`뷰어 열기 실패: ${e}`); }
+  };
+  const doOpenHubViewer = async (sid: string) => {
+    if (!hub.configured) return;
+    try { await invoke('open_url', { url: `${hub.url}/sessions/${sid}/v/` }); } catch (e) { alert(`Hub 뷰어 열기 실패: ${e}`); }
   };
   const doDelete = async (sid: string) => {
     if (!confirm(`세션 ${sid}을(를) 삭제하시겠습니까?`)) return;
@@ -134,6 +140,15 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
       setTimeout(() => setUploadProg(null), 800);
       onRefresh?.();
     } catch (e) { setUploadProg(null); alert(`업로드 실패: ${e}`); }
+  };
+  const doDownload = async (sid: string) => {
+    if (!hub.configured) return;
+    setDownloadProg(sid);
+    try {
+      await invoke('hub_download', { url: hub.url, token: hub.token, sessionId: sid });
+      setDownloadProg(null);
+      onRefresh?.();
+    } catch (e) { setDownloadProg(null); alert(`다운로드 실패: ${e}`); }
   };
 
   return (
@@ -198,13 +213,23 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
             </div>
             {selectedSession.local && (
               <>
-                <button className="tbd-btn" disabled={!hub.configured || selectedSession.remote} onClick={() => doUpload(selected)}>{Icon.Upload()}Hub 업로드</button>
-                <button className="tbd-btn tbd-btn--danger" onClick={() => doDelete(selected)}>{Icon.Trash()}삭제</button>
-                <button className="tbd-btn tbd-btn--primary" onClick={() => doOpenViewer(selected)}>{Icon.Eye()}뷰어 열기</button>
+                <button className="tbd-btn" disabled={!hub.configured || selectedSession.remote} onClick={() => doUpload(selected!)}>{Icon.Upload()}Hub 업로드</button>
+                <button className="tbd-btn tbd-btn--danger" onClick={() => doDelete(selected!)}>{Icon.Trash()}삭제</button>
+                {selectedSession.remote && selectedSession.has_viewer && (
+                  <button className="tbd-btn" onClick={() => doOpenHubViewer(selected!)}>{Icon.Link()}Hub 뷰어</button>
+                )}
+                <button className="tbd-btn tbd-btn--primary" onClick={() => doOpenViewer(selected!)}>{Icon.Eye()}뷰어 열기</button>
               </>
             )}
             {!selectedSession.local && selectedSession.remote && (
-              <button className="tbd-btn tbd-btn--primary">{Icon.Download()}다운로드</button>
+              <>
+                <button className="tbd-btn" disabled={downloadProg === selected} onClick={() => doDownload(selected!)}>
+                  {Icon.Download()}{downloadProg === selected ? '다운로드 중…' : '다운로드'}
+                </button>
+                {selectedSession.has_viewer && (
+                  <button className="tbd-btn tbd-btn--primary" onClick={() => doOpenHubViewer(selected!)}>{Icon.Eye()}Hub 뷰어</button>
+                )}
+              </>
             )}
           </div>
         )}

@@ -58,6 +58,21 @@ export default function App() {
     return () => clearTimeout(t);
   }, [refreshKey]);
 
+  // Background sync queue: upload unsynced sessions on first load
+  const syncRan = useRef(false);
+  useEffect(() => {
+    if (syncRan.current || !hub.configured || !hub.token) return;
+    syncRan.current = true;
+    invoke<any>('hub_sync_queue', { url: hub.url, token: hub.token })
+      .then(r => {
+        if (r?.uploaded > 0) {
+          showToast(`${r.uploaded}개 세션 자동 동기화 완료`, 'ok');
+          setRefreshKey(k => k + 1);
+        }
+      })
+      .catch(() => {});
+  }, [hub.configured, hub.token]);
+
 
   const showToast = useCallback((msg: string, tone: Toast['tone'] = 'info') => {
     const id = ++toastId;

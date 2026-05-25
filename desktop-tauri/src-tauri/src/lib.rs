@@ -52,6 +52,8 @@ pub fn run() {
             commands::hub_list_sessions,
             commands::hub_upload,
             commands::hub_share,
+            commands::hub_download,
+            commands::hub_sync_queue,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

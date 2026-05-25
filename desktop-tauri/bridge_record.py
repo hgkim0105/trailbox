@@ -222,6 +222,16 @@ def main() -> int:
         reader_thread = threading.Thread(target=stdin_reader, daemon=True)
         reader_thread.start()
 
+        # GPU monitor for real-time metrics
+        gpu_mon = None
+        if metrics_pid:
+            try:
+                from core.gpu_monitor import GpuMonitor
+                gpu_mon = GpuMonitor(metrics_pid)
+                gpu_mon.start()
+            except Exception:
+                gpu_mon = None
+
         start_time = time.time()
         while not stop_flag.is_set():
             stop_flag.wait(timeout=1.0)
@@ -229,6 +239,8 @@ def main() -> int:
             frames = screen_rec.frames_written() if screen_rec else 0
             cpu_pct = 0.0
             rss_mb = 0.0
+            gpu_pct = 0.0
+            gpu_vram_mb = 0.0
             if metrics_pid:
                 try:
                     import psutil
@@ -237,16 +249,30 @@ def main() -> int:
                     rss_mb = p.memory_info().rss / (1024 * 1024)
                 except Exception:
                     pass
+            if gpu_mon:
+                try:
+                    gpu_data = gpu_mon.sample()
+                    gpu_pct = gpu_data.get("gpu_pct", 0.0)
+                    gpu_vram_mb = gpu_data.get("gpu_vram_mb", 0.0)
+                except Exception:
+                    pass
             _emit({
                 "event": "status",
                 "elapsed": round(elapsed, 1),
                 "frames": frames,
                 "cpu_pct": round(cpu_pct, 1),
                 "rss_mb": round(rss_mb, 1),
+                "gpu_pct": round(gpu_pct, 1),
+                "gpu_vram_mb": round(gpu_vram_mb, 1),
             })
 
         # ── Stop recording ──
         _emit({"event": "stopping"})
+        if gpu_mon:
+            try:
+                gpu_mon.stop()
+            except Exception:
+                pass
 
         frames_written = 0
         effective_fps = 0.0
