@@ -58,3 +58,23 @@ class SessionOwnerStore:
     def is_owned_by(self, session_id: str, user_id: int) -> bool:
         owner = self.get(session_id)
         return owner is not None and owner == user_id
+
+    def get_description(self, session_id: str) -> str:
+        row = self.db.read().execute(
+            "SELECT description FROM session_owners WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        return str(row["description"]) if row else ""
+
+    def set_description(self, session_id: str, description: str) -> None:
+        with self.db.write() as conn:
+            conn.execute(
+                "UPDATE session_owners SET description=? WHERE session_id=?",
+                (description.strip(), session_id),
+            )
+
+    def list_descriptions(self) -> dict[str, str]:
+        rows = self.db.read().execute(
+            "SELECT session_id, description FROM session_owners WHERE description != ''"
+        ).fetchall()
+        return {str(r["session_id"]): str(r["description"]) for r in rows}

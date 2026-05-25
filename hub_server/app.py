@@ -218,11 +218,13 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
             summaries = [s for s in summaries if s.session_id in mine]
         owner_map = owners.list_all()
         user_map = {u.id: u.username for u in users.list_all()}
+        desc_map = owners.list_descriptions()
         items = []
         for s in summaries:
             d = asdict(s)
             oid = owner_map.get(s.session_id)
             d["owner"] = user_map.get(oid, "") if oid else ""
+            d["description"] = desc_map.get(s.session_id, "")
             items.append(d)
         return {"count": len(items), "sessions": items}
 
@@ -233,7 +235,26 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
         s = summaries.get(session_id)
         if s is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "session not found")
-        return asdict(s)
+        d = asdict(s)
+        oid = owners.get(session_id)
+        user_map = {u.id: u.username for u in users.list_all()}
+        d["owner"] = user_map.get(oid, "") if oid else ""
+        d["description"] = owners.get_description(session_id)
+        return d
+
+    @app.patch("/api/sessions/{session_id}")
+    def update_session(
+        session_id: str,
+        body: dict,
+        user: User = Depends(user_dep),
+    ) -> dict:
+        _require_visible(user, session_id)
+        if not owners.is_owned_by(session_id, user.id) and user.role != "admin":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not the session owner")
+        desc = body.get("description")
+        if desc is not None:
+            owners.set_description(session_id, str(desc))
+        return {"session_id": session_id, "description": owners.get_description(session_id)}
 
     @app.post(
         "/api/sessions/{session_id}",

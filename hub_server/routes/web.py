@@ -393,8 +393,9 @@ def build_router(
                 if oid is not None:
                     owner_map[s.session_id] = id_to_name.get(oid, str(oid))
 
-        # Batched tag lookup so the list view stays O(1) DB calls.
+        # Batched tag + description lookup so the list view stays O(1) DB calls.
         tags_map = tags.tags_by_session([s.session_id for s in summaries])
+        desc_map = owners.list_descriptions()
 
         view_sessions = []
         total_size = 0
@@ -413,6 +414,7 @@ def build_router(
                 "thumb_kind": derive_thumb_kind(s.exe_path, s.device_kind),
                 "device_label": derive_device_label(s.exe_path, s.platform, s.device_kind),
                 "tags": tags_map.get(s.session_id, []),
+                "description": desc_map.get(s.session_id, ""),
             })
 
         # Quota: hub_settings may carry a real number later; for now show against
@@ -479,6 +481,8 @@ def build_router(
         events_data = load_events(storage.session_dir(session_id))
         session_tags = tags.list_for_session(session_id)
 
+        description = owners.get_description(session_id)
+
         return templates.TemplateResponse(
             request,
             "sessions/detail.html",
@@ -490,10 +494,25 @@ def build_router(
                 session_meta=session_meta,
                 events_data=events_data,
                 session_tags=session_tags,
+                description=description,
                 new_share=new_share if new_share and any(sh["token"] == new_share for sh in share_items) else None,
                 active_nav="sessions",
             ),
         )
+
+    @router.post("/sessions/{session_id}/description")
+    def session_update_description(
+        request: Request,
+        session_id: str,
+        description: str = Form(default=""),
+    ):
+        user = _require_user(request)
+        if not storage.exists(session_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        if user.role != "admin" and not owners.is_owned_by(session_id, user.id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not found")
+        owners.set_description(session_id, description)
+        return RedirectResponse(f"/sessions/{session_id}", status_code=status.HTTP_303_SEE_OTHER)
 
     @router.post("/sessions/{session_id}/delete")
     def session_delete(request: Request, session_id: str):

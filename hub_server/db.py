@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_session_owners_owner ON session_owners(owner_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
 """
 
-_LATEST_VERSION = 3
+_LATEST_VERSION = 4
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -133,6 +133,13 @@ def migrate(conn: sqlite3.Connection) -> int:
         )
         conn.execute("PRAGMA user_version = 3")
         version = 3
+
+    if version < 4:
+        conn.execute(
+            "ALTER TABLE session_owners ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+        )
+        conn.execute("PRAGMA user_version = 4")
+        version = 4
 
     return version
 
