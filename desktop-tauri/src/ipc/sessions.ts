@@ -11,6 +11,7 @@ export type SessionSummary = {
   input_events: number;
   metric_samples: number;
   has_viewer: boolean;
+  uploaded: boolean;
   device: string;
 };
 

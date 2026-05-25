@@ -162,10 +162,11 @@ def cmd_hub_share() -> dict:
 def cmd_hub_download() -> dict:
     url, token = _hub_args()
     session_id = sys.argv[4] if len(sys.argv) > 4 else ""
+    out_root_arg = sys.argv[5] if len(sys.argv) > 5 else ""
     if not session_id:
         return {"error": "session_id required"}
     from core.hub_client import HubClient
-    out_dir = _REPO_ROOT / "output"
+    out_dir = Path(out_root_arg) if out_root_arg else _REPO_ROOT / "output"
     target = HubClient(base_url=url, token=token).download_session(session_id, out_dir)
     return {"session_id": session_id, "path": str(target)}
 
@@ -173,11 +174,12 @@ def cmd_hub_download() -> dict:
 def cmd_hub_sync_queue() -> dict:
     """Find unuploaded local sessions and upload them all. Returns summary."""
     url, token = _hub_args()
+    out_root_arg = sys.argv[4] if len(sys.argv) > 4 else ""
     if not url or not token:
         return {"error": "hub URL and token required", "uploaded": 0, "failed": 0}
     from pathlib import Path as _P
     from core.hub_client import HubClient
-    output_root = _REPO_ROOT / "output"
+    output_root = Path(out_root_arg) if out_root_arg else _REPO_ROOT / "output"
     if not output_root.is_dir():
         return {"uploaded": 0, "failed": 0, "ids": []}
     client = HubClient(base_url=url, token=token)

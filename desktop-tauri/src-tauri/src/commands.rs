@@ -423,12 +423,18 @@ pub async fn hub_share(url: String, token: String, session_id: String) -> Result
 
 #[tauri::command]
 pub async fn hub_download(url: String, token: String, session_id: String) -> Result<serde_json::Value, String> {
-    call_bridge(vec!["hub-download".into(), url, token, session_id]).await
+    let out_root = output_root().to_string_lossy().to_string();
+    let result = call_bridge(vec!["hub-download".into(), url, token, session_id.clone(), out_root]).await?;
+    // Mark as uploaded since it came from Hub
+    let marker = output_root().join(&session_id).join(".uploaded");
+    let _ = fs::write(&marker, "");
+    Ok(result)
 }
 
 #[tauri::command]
 pub async fn hub_sync_queue(url: String, token: String) -> Result<serde_json::Value, String> {
-    call_bridge(vec!["hub-sync-queue".into(), url, token]).await
+    let out_root = output_root().to_string_lossy().to_string();
+    call_bridge(vec!["hub-sync-queue".into(), url, token, out_root]).await
 }
 
 // ── Recording subprocess management ────────────────────────────────

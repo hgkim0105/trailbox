@@ -24,3 +24,11 @@ export async function hubUpload(url: string, token: string, sessionId: string): 
 export async function hubShare(url: string, token: string, sessionId: string): Promise<Record<string, unknown>> {
   return invoke<Record<string, unknown>>('hub_share', { url, token, sessionId });
 }
+
+export async function hubDownload(url: string, token: string, sessionId: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('hub_download', { url, token, sessionId });
+}
+
+export async function hubSyncQueue(url: string, token: string): Promise<Record<string, unknown>> {
+  return invoke<Record<string, unknown>>('hub_sync_queue', { url, token });
+}
