@@ -216,7 +216,14 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
         if user.role != "admin":
             mine = set(owners.list_for_owner(user.id))
             summaries = [s for s in summaries if s.session_id in mine]
-        items = [asdict(s) for s in summaries]
+        owner_map = owners.list_all()
+        user_map = {u.id: u.username for u in users.list_all()}
+        items = []
+        for s in summaries:
+            d = asdict(s)
+            oid = owner_map.get(s.session_id)
+            d["owner"] = user_map.get(oid, "") if oid else ""
+            items.append(d)
         return {"count": len(items), "sessions": items}
 
     @app.get("/api/sessions/{session_id}")

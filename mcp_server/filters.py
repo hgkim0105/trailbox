@@ -260,6 +260,7 @@ def build_session_summary(
         "platform": os_info.get("platform"),
         "device_kind": target.get("kind"),
         "target_name": meta.get("metrics_target_name"),
+        "owner": meta.get("owner", ""),
         "system_summary": {
             "cpu": cpu.get("name"),
             "gpu": gpus[0] if gpus else None,
