@@ -1,7 +1,7 @@
 """Pluggable backends behind the Trailbox MCP tools.
 
-Either the local filesystem (default — reads ``output/{sid}/``) or a remote
-Hub HTTP API (when ``TRAILBOX_HUB_URL`` is set).
+Local filesystem (default), remote Hub HTTP API (``TRAILBOX_HUB_URL``),
+or hybrid (both configured — local-first with Hub fallback).
 """
 from __future__ import annotations
 
@@ -40,3 +40,10 @@ class Backend(Protocol):
     def get_frame_jpeg(self, session_id: str, t_video_s: float) -> bytes: ...
 
     def get_viewer_path(self, session_id: str) -> str: ...
+
+    def get_frame_stats(
+        self,
+        session_id: str,
+        t_start: float | None,
+        t_end: float | None,
+    ) -> dict[str, Any]: ...

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from core.frame_extractor import extract_frame_jpeg
+from .. import filters
+from ..errors import SessionNotFound, FileNotAvailable
 
 
 def _output_root() -> Path:
@@ -42,12 +44,6 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def _iter_log_records(session_dir: Path) -> Iterator[dict[str, Any]]:
-    """Iterate every jsonl record under ``session_dir/logs/``.
-
-    The PC LogCollector writes ``logs.jsonl`` and the Android logcat collector
-    writes ``logcat.jsonl``; a session may contain both. Globbing keeps the
-    backend agnostic to which collectors ran.
-    """
     logs_dir = session_dir / "logs"
     if not logs_dir.is_dir():
         return
@@ -55,33 +51,14 @@ def _iter_log_records(session_dir: Path) -> Iterator[dict[str, Any]]:
         yield from _iter_jsonl(p)
 
 
-def _matches_kind(event: dict, kind_set: set[str]) -> bool:
-    if not kind_set:
-        return True
-    if "log" in event:
-        return "log" in kind_set
-    if "input" in event:
-        if "input" in kind_set:
-            return True
-        t = event.get("input", {}).get("type")
-        if t == "mouse" and "mouse" in kind_set:
-            return True
-        if t == "key" and ("key" in kind_set or "keyboard" in kind_set):
-            return True
-        return False
-    return False
-
-
 class LocalBackend:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or _output_root()
 
-    # ---- Helpers ----------------------------------------------------------
-
     def _resolve(self, session_id: str) -> Path:
         d = self.root / session_id
         if not d.is_dir():
-            raise FileNotFoundError(f"session not found: {session_id}")
+            raise SessionNotFound(session_id)
         return d
 
     # ---- Tools ------------------------------------------------------------
@@ -94,17 +71,9 @@ class LocalBackend:
         out: list[dict[str, Any]] = []
         for s in sessions[: max(1, int(limit))]:
             meta = _load_meta(s)
-            out.append({
-                "session_id": meta.get("session_id", s.name),
-                "started_at": meta.get("started_at"),
-                "duration_seconds": meta.get("duration_seconds"),
-                "exe_path": meta.get("exe_path"),
-                "log_lines": meta.get("log_lines", 0),
-                "input_events": meta.get("input_events", 0),
-                "metric_samples": meta.get("metric_samples", 0),
-                "screen_frames": meta.get("screen_frames", 0),
-                "effective_fps": meta.get("effective_fps"),
-            })
+            out.append(filters.build_session_summary(
+                meta, session_id_fallback=s.name, source="local",
+            ))
         return out
 
     def get_session(self, session_id: str) -> dict[str, Any]:
@@ -118,9 +87,6 @@ class LocalBackend:
         )
         files = {
             "screen_mp4": str((d / "screen.mp4").resolve()),
-            # logs_jsonl kept for legacy clients; points at the PC LogCollector
-            # output specifically. Android-only sessions use logcat.jsonl —
-            # callers should prefer log_files for the complete picture.
             "logs_jsonl": str((logs_dir / "logs.jsonl").resolve()),
             "logs_vtt": str((logs_dir / "logs.vtt").resolve()),
             "log_files": log_files,
@@ -135,6 +101,10 @@ class LocalBackend:
             "session_dir": str(d.resolve()),
             "meta": meta,
             "files": files,
+            "system": meta.get("system"),
+            "frame_stats": meta.get("frame_stats"),
+            "capture": meta.get("capture") if isinstance(meta.get("capture"), dict) else None,
+            "metrics_target_name": meta.get("metrics_target_name"),
         }
 
     def query_events(
@@ -148,48 +118,11 @@ class LocalBackend:
     ) -> dict[str, Any]:
         d = self._resolve(session_id)
         kind_set = {k.lower() for k in (kinds or [])}
-        text_lo = text.lower() if text else None
-        matched: list[dict[str, Any]] = []
-
-        for rec in _iter_log_records(d):
-            t = float(rec.get("t_video_s", 0.0))
-            if t_start is not None and t < t_start:
-                continue
-            if t_end is not None and t > t_end:
-                continue
-            if not _matches_kind(rec, kind_set):
-                continue
-            if text_lo:
-                blob = (
-                    rec.get("message", "")
-                    + " "
-                    + json.dumps(rec.get("log", {}), ensure_ascii=False)
-                ).lower()
-                if text_lo not in blob:
-                    continue
-            matched.append({"kind": "log", **rec})
-
-        for rec in _iter_jsonl(d / "inputs" / "inputs.jsonl"):
-            t = float(rec.get("t_video_s", 0.0))
-            if t_start is not None and t < t_start:
-                continue
-            if t_end is not None and t > t_end:
-                continue
-            if not _matches_kind(rec, kind_set):
-                continue
-            if text_lo:
-                blob = json.dumps(rec.get("input", {}), ensure_ascii=False).lower()
-                if text_lo not in blob:
-                    continue
-            matched.append({"kind": "input", **rec})
-
-        matched.sort(key=lambda e: float(e.get("t_video_s", 0.0)))
-        truncated = len(matched) > limit
-        return {
-            "count": len(matched),
-            "truncated": truncated,
-            "events": matched[: max(0, int(limit))],
-        }
+        return filters.filter_events(
+            _iter_log_records(d),
+            _iter_jsonl(d / "inputs" / "inputs.jsonl"),
+            t_start, t_end, kind_set, text, limit,
+        )
 
     def get_metrics(
         self,
@@ -198,31 +131,12 @@ class LocalBackend:
         t_end: float | None,
     ) -> dict[str, Any]:
         d = self._resolve(session_id)
-        samples: list[dict[str, Any]] = []
-        for rec in _iter_jsonl(d / "metrics" / "process.jsonl"):
-            t = float(rec.get("t_video_s", 0.0))
-            if t_start is not None and t < t_start:
-                continue
-            if t_end is not None and t > t_end:
-                continue
-            samples.append(rec)
-
+        samples = filters.filter_time_range(
+            _iter_jsonl(d / "metrics" / "process.jsonl"), t_start, t_end,
+        )
         if not samples:
-            return {"count": 0, "samples": []}
-
-        cpus = [s.get("process", {}).get("cpu_pct") for s in samples]
-        cpus = [c for c in cpus if isinstance(c, (int, float))]
-        rss = [s.get("process", {}).get("rss_mb") for s in samples]
-        rss = [r for r in rss if isinstance(r, (int, float))]
-
-        summary: dict[str, Any] = {}
-        if cpus:
-            summary["cpu_max"] = max(cpus)
-            summary["cpu_avg"] = round(sum(cpus) / len(cpus), 2)
-        if rss:
-            summary["rss_max_mb"] = max(rss)
-            summary["rss_min_mb"] = min(rss)
-
+            return {"count": 0, "summary": {}, "samples": []}
+        summary = filters.summarize_metrics(samples)
         return {"count": len(samples), "summary": summary, "samples": samples}
 
     def search_logs(
@@ -232,29 +146,33 @@ class LocalBackend:
         limit: int,
     ) -> dict[str, Any]:
         d = self._resolve(session_id)
-        q_lo = query.lower()
-        hits: list[dict[str, Any]] = []
-        for rec in _iter_log_records(d):
-            msg = rec.get("message", "")
-            if q_lo in msg.lower():
-                hits.append(rec)
-        truncated = len(hits) > limit
-        return {
-            "count": len(hits),
-            "truncated": truncated,
-            "matches": hits[: max(0, int(limit))],
-        }
+        return filters.search_log_records(_iter_log_records(d), query, limit)
 
     def get_frame_jpeg(self, session_id: str, t_video_s: float) -> bytes:
         d = self._resolve(session_id)
         video = d / "screen.mp4"
         if not video.exists():
-            raise FileNotFoundError(f"screen.mp4 not in {d}")
+            raise FileNotAvailable(f"screen.mp4 not in {session_id}")
         return extract_frame_jpeg(video, t_video_s)
 
     def get_viewer_path(self, session_id: str) -> str:
         d = self._resolve(session_id)
         viewer = d / "viewer.html"
         if not viewer.exists():
-            raise FileNotFoundError(f"viewer.html not in {d}")
+            raise FileNotAvailable(f"viewer.html not in {session_id}")
         return str(viewer.resolve())
+
+    def get_frame_stats(
+        self,
+        session_id: str,
+        t_start: float | None,
+        t_end: float | None,
+    ) -> dict[str, Any]:
+        d = self._resolve(session_id)
+        frames = filters.filter_time_range(
+            _iter_jsonl(d / "metrics" / "frames.jsonl"), t_start, t_end,
+        )
+        if not frames:
+            return {"count": 0, "stats": {}, "frames": []}
+        stats = filters.summarize_frame_stats(frames)
+        return {"count": len(frames), "stats": stats, "frames": frames}
