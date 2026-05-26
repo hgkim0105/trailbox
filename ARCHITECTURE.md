@@ -24,6 +24,8 @@ Trailbox/
 
 ### 빌드 산출물 (dist/)
 
+**Windows:**
+
 | 파일 | 소스 | 설명 |
 |------|------|------|
 | `Trailbox-Setup.exe` | Inno Setup | 윈도우 인스톨러 (모든 바이너리 포함) |
@@ -31,6 +33,16 @@ Trailbox/
 | `trailbox-bridge.exe` | PyInstaller | Python 백엔드 사이드카 (~126 MB) |
 | `Trailbox-mcp.exe` | PyInstaller | MCP stdio 서버 (~44 MB) |
 | `Trailbox-hub.exe` | PyInstaller | Hub 웹 서버 (~44 MB) |
+
+**macOS** (포팅 진행 중 — [docs/mac-port-plan.md](docs/mac-port-plan.md)):
+
+| 파일 | 소스 | 설명 |
+|------|------|------|
+| `Trailbox.app` (+`.dmg`) | Tauri (Rust) | 데스크톱 앱. `Contents/Resources/` 에 `trailbox-bridge` 사이드카 포함. codesign + notarize 필수 |
+| `trailbox-mcp` | PyInstaller | MCP stdio CLI (확장자 없음) |
+| `trailbox-hub` | PyInstaller | Hub 서버 CLI (확장자 없음) |
+
+PyQt6 GUI (`main.py`) 는 mac 미빌드 — mac 은 Tauri 셸 단일 진입점.
 
 ---
 
@@ -82,37 +94,50 @@ UI에 의존하지 않는 순수 녹화·분석 모듈. PyQt6 GUI와 Tauri 데�
 
 ```
 core/
-├── screen_recorder.py     # 화면 캡처 → ffmpeg pipe
-│                          #   MonitorTarget: dxcam (DXGI)
-│                          #   WindowTarget: windows-capture (WGC)
+├── screen_recorder.py     # 화면 캡처 → ffmpeg pipe (dispatcher)
+│                          #   Windows MonitorTarget: dxcam (DXGI)
+│                          #   Windows WindowTarget:  windows-capture (WGC)
+│                          #   macOS  Monitor/WindowTarget: ScreenCaptureKit (SCK)
+│                          #   AndroidDeviceTarget:   scrcpy (OS-agnostic)
 │                          #   VFR 방식 — 프레임 도착 시에만 ffmpeg에 write
 │
-├── audio_recorder.py      # 시스템 오디오 캡처 → WAV (soundcard 라이브러리)
-├── post_mux.py            # screen.video.mp4 + screen.audio.wav → screen.mp4 (ffmpeg)
+├── audio_recorder.py      # 시스템 오디오 캡처 → WAV
+│                          #   Windows: soundcard (WASAPI loopback)
+│                          #   macOS 13+: SCK audio; 12.x: BlackHole 등 가상 디바이스
 │
-├── log_collector.py       # 게임 로그 파일 tail → logs/logs.jsonl + logs.vtt
-├── input_recorder.py      # 키보드/마우스 이벤트 → inputs/inputs.jsonl + inputs.vtt (pynput)
-├── metrics_recorder.py    # 프로세스 텔레메트리 1Hz → metrics/process.jsonl (psutil)
-├── gpu_monitor.py         # GPU 사용률/VRAM → metrics_recorder에 합류 (win32pdh)
+├── post_mux.py            # screen.video.mp4 + screen.audio.wav → screen.mp4 (ffmpeg, OS-agnostic)
 │
-├── session.py             # Session 데이터클래스 — ID 생성, 디렉토리 생성, finalize (meta 작성)
-├── system_info.py         # 하드웨어 스냅샷 (CPU/GPU/RAM/디스플레이) → session_meta.system
-├── frame_extractor.py     # screen.mp4에서 특정 시각 JPEG 프레임 추출 (ffmpeg, ≤950KB)
-├── viewer_generator.py    # session_meta + JSONL → 자립형 viewer.html 생성
+├── log_collector.py       # 앱 로그 파일 tail → logs/logs.jsonl + logs.vtt (OS-agnostic, watchdog)
+├── input_recorder.py      # 키보드/마우스 → inputs/inputs.jsonl + inputs.vtt
+│                          #   pynput + 윈도우 좌표 보정 (Win32 / Quartz)
+├── metrics_recorder.py    # 프로세스 텔레메트리 1Hz → metrics/process.jsonl (psutil, OS-agnostic)
+├── gpu_monitor.py         # GPU 사용률/VRAM
+│                          #   Windows: win32pdh (full)
+│                          #   macOS:   v1 stub (None 반환), v2 powermetrics 검토
+│
+├── session.py             # Session 데이터클래스 — ID 생성, 디렉토리 생성, finalize (OS-agnostic)
+├── system_info.py         # 하드웨어 스냅샷 → session_meta.system
+│                          #   Windows: wmic + win32_ver
+│                          #   macOS:   sw_vers + system_profiler + sysctl
+├── frame_extractor.py     # screen.mp4에서 특정 시각 JPEG 추출 (ffmpeg, OS-agnostic, ≤950KB)
+├── viewer_generator.py    # session_meta + JSONL → 자립형 viewer.html (OS-agnostic)
 │
 ├── process_detector.py    # 창↔로그 디렉토리 양방향 자동 감지
-├── window_picker.py       # 열린 창 목록 조회 (Win32 API)
-├── window_clicker.py      # 클릭으로 창 선택
-├── global_hotkey.py       # 시스템 전역 단축키 (Ctrl+Alt+R 등)
+│                          #   _SYSTEM_DIRS_LOWER 는 OS별 경로 동시 보유
+├── window_picker.py       # 열린 창 목록 조회 (Windows: win32gui, macOS: Quartz)
+├── window_clicker.py      # 클릭으로 창 선택 (Windows: WindowFromPoint, macOS: Quartz)
+├── global_hotkey.py       # 시스템 전역 단축키 (pynput, OS-agnostic)
 │
-├── hub_client.py          # Hub HTTP 클라이언트 — 업로드/다운로드/인증/공유
+├── hub_client.py          # Hub HTTP 클라이언트 (OS-agnostic)
 ├── hub_config.py          # Hub 연결 설정 (QSettings 기반)
 │
-├── adb.py                 # Android ADB 래퍼
-├── android_input_recorder.py
-├── android_log_collector.py
+├── adb.py                 # Android ADB 래퍼 — sys.platform 으로 .exe 확장자 분기
+├── android_input_recorder.py     # 모두 adb subprocess — OS-agnostic
+├── android_log_collector.py      # CREATE_NO_WINDOW 는 hasattr 가드
 └── android_metrics_recorder.py
 ```
+
+mac 포팅 진행 단계 (`docs/mac-port-plan.md`) 가 끝나면 OS-specific 백엔드는 `core/_backends/{win,mac}_*.py` 로 분리되고 상위 모듈은 `sys.platform` dispatcher 만 남게 됩니다.
 
 ### 핵심 규칙: t_video_s
 
@@ -421,8 +446,11 @@ desktop-tauri/
 
 | 환경 | 구성 | 비고 |
 |------|------|------|
-| **데스크톱** | Trailbox-Setup.exe 설치 | trailbox-desktop.exe + trailbox-bridge.exe |
-| **MCP** | Trailbox-mcp.exe 단독 | Claude Desktop/Code에서 stdio 연결 |
+| **데스크톱 (Windows)** | Trailbox-Setup.exe 설치 | trailbox-desktop.exe + trailbox-bridge.exe |
+| **데스크톱 (macOS)** | Trailbox.dmg → /Applications | Trailbox.app + 내부 trailbox-bridge 사이드카. codesign + notarize 필수 |
+| **MCP (Windows)** | Trailbox-mcp.exe 단독 | Claude Desktop/Code에서 stdio 연결 |
+| **MCP (macOS)** | trailbox-mcp CLI | 동일 — Claude Desktop config 경로만 mac (`~/Library/Application Support/Claude/...`) |
 | **Hub (Windows)** | Trailbox-hub.exe 단독 | 콘솔 앱, LAN 배포용 |
+| **Hub (macOS)** | trailbox-hub CLI | 동일 — 데몬화는 launchd plist 사용자 권장 |
 | **Hub (Docker)** | docker-compose.hub.yml | Synology NAS 등 Linux 환경 |
 | **Hub (외부)** | Caddy 리버스 프록시 | Caddyfile 참조 |

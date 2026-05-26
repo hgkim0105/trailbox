@@ -6,7 +6,13 @@
 
 ## 소스 셋업
 
-요구사항: Python 3.11+, Windows 10 1903+. venv 권장.
+요구사항: Python 3.11+. venv 권장.
+
+대상 호스트:
+- **Windows 10 1903+ / 11** — 출시 (v0.x).
+- **macOS 12.3+** — 포팅 진행 중. MCP 서버 / Hub 서버는 이미 동작. GUI(Tauri 셸) 는 진행 상황에 따라 차주 부분 동작. 자세한 진행 단계는 [docs/mac-port-plan.md](docs/mac-port-plan.md).
+
+### Windows (PowerShell)
 
 ```powershell
 git clone https://github.com/hgkim0105/trailbox.git
@@ -18,7 +24,7 @@ py -3.11 -m venv .venv
 실행:
 
 ```powershell
-# GUI
+# GUI (PyQt6) — Windows 전용
 .\.venv\Scripts\python.exe main.py
 
 # MCP 서버 (stdio)
@@ -29,11 +35,37 @@ $env:TRAILBOX_HUB_TOKEN = "<token>"
 .\.venv\Scripts\python.exe -m hub_server
 ```
 
+### macOS (zsh)
+
+```bash
+git clone https://github.com/hgkim0105/trailbox.git
+cd trailbox
+python3.11 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+```
+
+실행:
+
+```bash
+# MCP 서버 — 코드 변경 없이 동작
+./.venv/bin/python -m mcp_server
+
+# Hub 서버 — 코드 변경 없이 동작
+TRAILBOX_HUB_TOKEN=<token> ./.venv/bin/python -m hub_server
+
+# 데스크톱 GUI: 포팅 진행 중. Tauri 셸이 1차 진입점 (PyQt6 path 는 mac 미지원)
+cd desktop-tauri && npm install && npm run tauri:dev
+```
+
+mac 첫 실행 시 권한 4종 (Screen Recording / Accessibility / Input Monitoring / Microphone) 을 시스템 설정에서 허용해야 캡처가 동작합니다. 자세한 항목과 onboarding 흐름은 [docs/mac-port-plan.md](docs/mac-port-plan.md) §4.4 참조.
+
 테스트 스위트는 없음. 검증은 GUI 띄워서 직접 녹화하거나, `output/{session_id}/` 폴더를 들여다보거나, `mcp_server` 도구를 호출하는 식.
 
 ---
 
 ## 빌드
+
+### Windows
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
@@ -44,18 +76,40 @@ $env:TRAILBOX_HUB_TOKEN = "<token>"
 
 | 파일 | 크기 | 진입점 | 용도 |
 |---|---|---|---|
-| `Trailbox.exe` | ~125 MB | `main.py` (`--windowed`) | GUI |
+| `Trailbox.exe` | ~125 MB | `main.py` (`--windowed`) | PyQt6 GUI |
 | `Trailbox-mcp.exe` | ~43 MB | `mcp_entry.py` (`--console`) | MCP stdio (env 으로 로컬/Hub 분기) |
 | `Trailbox-hub.exe` | ~43 MB | `hub_entry.py` (`--console`) | Hub 서버 단일 .exe |
 | `Trailbox-Setup.exe` | ~212 MB | Inno Setup 6 | 위 3개를 통합한 인스톨러 |
 
 `build.py` 는 PyInstaller 로 3개 .exe 를 빌드한 뒤, Inno Setup 의 `ISCC.exe` 가 PATH 또는 `%LOCALAPPDATA%\Programs\Inno Setup 6\` 에 있으면 인스톨러도 자동 빌드. 없으면 skip (3개 .exe 만 나옴).
 
-ffmpeg 바이너리는 `imageio-ffmpeg` 가 번들 — `Trailbox.exe` 는 녹화에, `Trailbox-mcp.exe` / `Trailbox-hub.exe` 는 `get_frame_at` 프레임 추출에 사용.
+### macOS (포팅 후 목표 상태)
+
+```bash
+./.venv/bin/python -m pip install pyinstaller
+./.venv/bin/python build.py        # PyInstaller 산출물
+cd desktop-tauri && npm run tauri:build   # Trailbox.app + .dmg
+```
+
+목표 산출물:
+
+| 파일 | 진입점 | 용도 |
+|---|---|---|
+| `Trailbox.app` (+`.dmg`) | Tauri (Rust + React) | 데스크톱 GUI. 내부에 `trailbox-bridge` 사이드카 포함 |
+| `Trailbox-mcp` (확장자 없음) | `mcp_entry.py` | MCP stdio CLI |
+| `Trailbox-hub` (확장자 없음) | `hub_entry.py` | Hub 서버 CLI |
+
+mac 배포는 codesign + notarytool 공증이 필수입니다. Developer ID Application 인증서 + Apple Developer 계정 ($99/년) 필요. 사이드카 (`trailbox-bridge`, 번들된 `adb` / `scrcpy` / `ffmpeg`) 까지 *전부* 서명해야 Gatekeeper 가 통과시킵니다. 자세한 entitlements/공증 절차는 [docs/mac-port-plan.md](docs/mac-port-plan.md) §4.3.
+
+### 공통
+
+ffmpeg 바이너리는 `imageio-ffmpeg` 가 번들 — Windows/mac 휠 둘 다 제공. GUI 는 녹화에, MCP / Hub 는 `get_frame_at` 프레임 추출에 사용.
 
 ### Android 캡처 바이너리 번들링
 
-`Trailbox.exe` 가 Android 디바이스를 잡으려면 `adb` + `scrcpy` 바이너리가 번들되어 있어야 합니다. 빌드 전에 다음을 한 번 준비:
+데스크톱 앱이 Android 디바이스를 잡으려면 `adb` + `scrcpy` 바이너리가 번들되어 있어야 합니다. 빌드 전에 다음을 한 번 준비:
+
+**Windows 빌드용:**
 
 ```
 tools/android/
@@ -69,10 +123,21 @@ tools/android/
     └── (그 외 동봉된 DLL 들)
 ```
 
-- **platform-tools**: <https://developer.android.com/tools/releases/platform-tools>
-- **scrcpy 2.4 이상**: <https://github.com/Genymobile/scrcpy/releases> (`--record=-` 안정성 때문)
+**macOS 빌드용:**
 
-두 폴더 모두 `.gitignore` 에 들어가 있으니 커밋 걱정 없음. `build.py` 가 자동으로 감지해 `--add-binary` 로 `bin/` 에 평탄화해 넣고, 인스톨러도 같은 자리에 설치합니다. `tools/android/` 가 비어 있으면 빌드는 그대로 진행되되 GUI 의 Android 라디오는 런타임에 "adb.exe not found" 에러를 띄웁니다.
+```
+tools/android/
+├── platform-tools/      # platform-tools_*-darwin.zip 의 압축 해제 내용
+│   └── adb              # 확장자 없음. dylib 동봉
+└── scrcpy/              # brew install scrcpy 의 산출물 복사, 또는 release 의 mac 빌드
+    ├── scrcpy
+    └── scrcpy-server.jar
+```
+
+- **platform-tools**: <https://developer.android.com/tools/releases/platform-tools> — OS별 zip 제공
+- **scrcpy 2.4 이상**: <https://github.com/Genymobile/scrcpy/releases> (`--record=-` 안정성 때문). mac 은 Homebrew (`brew install scrcpy`) 권장.
+
+두 폴더 모두 `.gitignore` 에 들어가 있으니 커밋 걱정 없음. `build.py` 가 자동으로 감지해 `--add-binary` 로 `bin/` 에 평탄화해 넣고, 인스톨러/`.app` 번들도 같은 자리에 설치합니다. `tools/android/` 가 비어 있으면 빌드는 그대로 진행되되 GUI 의 Android 라디오는 런타임에 "adb not found" 에러를 띄웁니다 (Windows 에선 "adb.exe not found").
 
 선택: `tools/android/NOTICE.txt` 에 두 도구의 Apache-2.0 attribution 을 적어 두면 인스톨러가 함께 배포합니다.
 

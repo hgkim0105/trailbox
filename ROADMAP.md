@@ -4,6 +4,21 @@
 
 ---
 
+## macOS 포팅 + iOS 캡처 — 현재 최우선
+
+상세 계획서: [docs/mac-port-plan.md](docs/mac-port-plan.md). 데스크톱 앱을 mac 1급 시민으로 올린 뒤, 그 위에서 iOS 캡처를 후속으로 추가한다.
+
+요지:
+
+- **MCP 서버 / Hub 서버**는 mac 에서 *이미* 동작 (코드 변경 거의 0). 빌드 타겟만 추가하면 됨.
+- **Android 캡처**는 호스트 OS 무관 — mac 에서도 그대로 (adb/scrcpy mac 바이너리 번들만 추가).
+- **데스크톱 캡처 스택**만 본격 작업: ScreenCaptureKit (스크린/오디오), pyobjc-framework-Quartz (윈도우 열거/입력 좌표), pynput (입력 — Accessibility 권한), `system_profiler` 기반 system_info, codesign + notarize 빌드 파이프라인.
+- **iOS 는 mac 호스트 필수** — AVFoundation 의 iOS mirroring stream + libimobiledevice 의 syslog/메트릭. mac 포팅이 끝나야 시작 가능.
+
+체크포인트 8개로 슬라이스 — 단계별로 작은 데모 가능. v1 DoD: mac 에서 PC + Android 세션 둘 다 1회 통과, viewer/MCP/Hub 분기 없이 동작.
+
+---
+
 ## Trailbox Hub — v0.1 (완료)
 
 Phase 1~6 모두 구현. 코드는 `hub_server/` + `core/hub_*` + `ui/hub_dialogs.py` / `ui/remote_session_picker.py`,

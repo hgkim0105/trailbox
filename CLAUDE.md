@@ -4,11 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Trailbox is a Windows-only PyQt6 desktop app that captures a synchronized QA recording (screen + system audio + game logs + keyboard/mouse input + process telemetry) into `output/{session_id}/`, generates a self-contained `viewer.html` for playback, and exposes the captured data to AI clients via an MCP server.
+Trailbox is a **cross-platform desktop app (Windows shipping, macOS in progress)** that captures a synchronized QA recording (screen + system audio + app logs + keyboard/mouse input + process telemetry) into `output/{session_id}/`, generates a self-contained `viewer.html` for playback, and exposes the captured data to AI clients via an MCP server.
+
+The capture stack is platform-specific (dxcam/WGC/WASAPI on Windows, ScreenCaptureKit on macOS) and lives under `core/_backends/` once split; the **viewer, MCP server, Hub server, output schema, and the `t_video_s` contract are all OS-agnostic**. Android device capture (via adb/scrcpy) is OS-agnostic by construction — the same code runs on Windows and macOS hosts.
+
+The macOS port plan is in [docs/mac-port-plan.md](docs/mac-port-plan.md). Until that lands, anything under `## Windows-specific` below is the production path; `## macOS-specific` documents target behaviour.
 
 Python 3.11+. ffmpeg ships bundled via `imageio-ffmpeg` — never assume PATH-installed ffmpeg.
 
 ## Commands
+
+### Windows (PowerShell)
 
 ```powershell
 # Setup
@@ -21,17 +27,37 @@ py -3.11 -m venv .venv
 # Run the MCP server (stdio transport; for Claude Desktop / Claude Code)
 .\.venv\Scripts\python.exe -m mcp_server
 
-# Build a single-file Trailbox.exe (~120 MB) into dist/
+# Build Trailbox.exe + Trailbox-mcp.exe + Trailbox-hub.exe into dist/
 .\.venv\Scripts\python.exe build.py
 
 # Hub maintenance — reset a user's password without going through the web UI.
-# Runs against the local hub.db; works even when the Hub server is down.
 .\dist\Trailbox-hub.exe reset-password -u <username>
+```
+
+### macOS (zsh) — port in progress, see [docs/mac-port-plan.md](docs/mac-port-plan.md)
+
+```bash
+# Setup
+python3.11 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+
+# Run the MCP server (works today — backend is OS-agnostic)
+./.venv/bin/python -m mcp_server
+
+# Run the Hub server (works today)
+./.venv/bin/python -m hub_server
+
+# GUI: post-port, Tauri shell is the primary path on macOS (PyQt6 path stays Windows-only)
+cd desktop-tauri && npm run tauri:dev
+
+# Build
+./.venv/bin/python build.py        # produces Trailbox-mcp, Trailbox-hub, trailbox-bridge (no .exe)
+cd desktop-tauri && npm run tauri:build   # produces Trailbox.app + .dmg
 ```
 
 There is currently no test suite. Verification is via the GUI or by running a session and inspecting `output/{session_id}/`.
 
-If you spawn the GUI to test, prefer `run_in_background=true` — it's a blocking event loop. Confirm it came up with `Get-Process python | Where-Object { $_.MainWindowTitle -like "*Trailbox*" }`.
+If you spawn the GUI to test on Windows, prefer `run_in_background=true` — it's a blocking event loop. Confirm it came up with `Get-Process python | Where-Object { $_.MainWindowTitle -like "*Trailbox*" }`. On macOS the Tauri shell is non-blocking; use `npm run tauri:dev` and observe stderr.
 
 ## Releasing (keep `__version__`, tag, and binaries in lockstep)
 
@@ -78,16 +104,28 @@ That field is written into every JSONL line from every recorder. It's how the vi
 
 `_on_stop_requested` reverses this, then runs `post_mux.mux_av()` to combine `screen.video.mp4 + screen.audio.wav → screen.mp4` (deletes the intermediates on success), then `session.finalize()` writes `session_meta.json`, then `viewer_generator.generate_viewer()` produces `viewer.html`. Every step is best-effort: failure of one recorder doesn't abort the others, and errors are surfaced into the meta as `*_error` fields.
 
-## Screen recording: two backends, one ffmpeg pipe
+## Screen recording: per-OS backends, one ffmpeg pipe
 
-`core/screen_recorder.py` dispatches on the `CaptureTarget` discriminated union:
+`core/screen_recorder.py` dispatches on the `CaptureTarget` discriminated union AND on `sys.platform`. **The ffmpeg subprocess + VFR pipeline is identical across OSes** — only the frame source differs.
+
+### Windows-specific
 
 - `MonitorTarget(index)` → dxcam (DXGI Desktop Duplication). Pull model: `camera.grab()` returns None when nothing changed.
 - `WindowTarget(hwnd, title)` → windows-capture (Windows Graphics Capture). Push model: frames arrive via WGC callback. The recorder caches the latest frame bytes under a lock and waits on a `new_frame_event` in the writer loop.
 
+### macOS-specific (per [docs/mac-port-plan.md](docs/mac-port-plan.md))
+
+- `MonitorTarget` AND `WindowTarget` → **ScreenCaptureKit (SCK)** via pyobjc. `SCContentFilter` switches between display and window source — one backend, two filter modes. `SCStreamConfiguration.pixelFormat = kCVPixelFormatType_32BGRA` so the ffmpeg pixel format stays the same.
+- macOS 12.3 minimum (SCK availability). macOS 14.4+ shows a permanent menu-bar recording indicator — unavoidable, document it.
+- Per-thread COM ordering rules (below) do not apply on macOS.
+
+### Common (all platforms)
+
 Both paths feed the same ffmpeg subprocess. **Critical**: ffmpeg is spawned with `-use_wallclock_as_timestamps 1` + `-fps_mode passthrough`. We write to ffmpeg's stdin **only when a new frame is available** (subject to `max_fps` rate cap). Do not reintroduce a fixed-cadence ticker — the prior version did, and the resulting duplicate-frame judder was the bug that drove the VFR redesign.
 
-## COM threading order (per-thread now; was per-module before v0.8.x startup work)
+The Android path (`AndroidDeviceTarget` → scrcpy MKV bytestream → ffmpeg `-c copy` remux) is OS-agnostic and unchanged across host platforms.
+
+## COM threading order — Windows only
 
 Historically `core.screen_recorder` (dxcam → comtypes) HAD TO import before `core.audio_recorder` (soundcard) at main-thread module level, because the second one to load would crash with `OSError [WinError -2147417850] "스레드 모드가 설정된 후에는 바꿀 수 없습니다"`.
 
@@ -95,12 +133,14 @@ That constraint has been resolved structurally: `dxcam`, `windows_capture`, `sou
 
 This was worth ~1.2 s off cold-start app launch (dxcam alone was 900 ms+). If you reintroduce module-level imports of any of those four libraries you'll both bring back the startup cost AND resurrect the COM-mode collision — keep them inside their consumer methods.
 
+On macOS the equivalent discipline is "don't import pyobjc-framework-ScreenCaptureKit at module scope" — not for COM reasons but because the framework binding load is ~300 ms and only the recorder thread needs it.
+
 ## Bidirectional auto-detection (window ↔ log dir)
 
 `core/process_detector.py` provides both directions, both via async `QThread` workers in `ui/launcher_panel.py` so the UI never blocks:
 
-- **Log dir → matching window**: `find_pids_for_log_dir` uses an install-dir heuristic (exe_dir and log_dir share an ancestor within `_HEURISTIC_MAX_COMBINED=4`, drive roots excluded as too loose), then verifies via `open_files()` on those PIDs. Open-files-as-primary doesn't work on Windows for most processes — the heuristic is the workhorse.
-- **Window → log dir**: `find_log_dir_for_pid` walks parent processes (up to `_PARENT_WALK_DEPTH=2` skipping System32) so games launched via Ubisoft Connect / Steam / EGS resolve to the launcher's log folder, not the (often empty) game install dir.
+- **Log dir → matching window**: `find_pids_for_log_dir` uses an install-dir heuristic (exe_dir and log_dir share an ancestor within `_HEURISTIC_MAX_COMBINED=4`, drive roots excluded as too loose), then verifies via `open_files()` on those PIDs. On Windows open-files-as-primary fails for most processes so the heuristic is the workhorse; on macOS `open_files()` actually works, and we keep the heuristic as a complementary signal.
+- **Window → log dir**: `find_log_dir_for_pid` walks parent processes (up to `_PARENT_WALK_DEPTH=2`, skipping system paths in `_SYSTEM_DIRS_LOWER`) so games launched via Ubisoft Connect / Steam / EGS resolve to the launcher's log folder, not the (often empty) game install dir. `_SYSTEM_DIRS_LOWER` carries both Windows (`\windows\system32`, …) and macOS (`/system/`, `/library/`, `/usr/`) prefixes.
 
 When wiring these signals: `currentIndexChanged` fires for `setCurrentIndex` calls AND for programmatic addItem mutations during `clear() + addItem()`. The combo is refreshed often (clicks, hotkeys, picker), so `refresh_window_list` uses `blockSignals(True/False)`. If you add another auto-fill, follow the same pattern or you'll get the wrong-window-during-refresh bug back.
 
@@ -187,11 +227,26 @@ Key flows:
 - **Hub viewer**: cloud/synced sessions can open the Hub viewer URL (`/sessions/{id}/v/`) in the default browser.
 - **Real-time GPU metrics**: `bridge_record.py` starts a `GpuMonitor` alongside the recording loop and emits `gpu_pct` + `gpu_vram_mb` in status events.
 
-Build: `npm run tauri:build` in `desktop-tauri/`. Produces `trailbox-desktop.exe` (Rust/Tauri, ~9 MB) + `trailbox-bridge.exe` (PyInstaller, ~126 MB). The Inno Setup installer bundles both as `Trailbox.exe` (renamed from trailbox-desktop.exe).
+Build:
+- **Windows**: `npm run tauri:build` in `desktop-tauri/`. Produces `trailbox-desktop.exe` (Rust/Tauri, ~9 MB) + `trailbox-bridge.exe` (PyInstaller, ~126 MB). The Inno Setup installer bundles both as `Trailbox.exe`.
+- **macOS**: same command produces `Trailbox.app` (universal2 if Rust + pyobjc wheels allow) + `.dmg`. The bridge sidecar ships as `trailbox-bridge` (no extension) inside `Trailbox.app/Contents/Resources/`. Sidecars (`trailbox-bridge`, bundled `adb`, `scrcpy`, `ffmpeg`) MUST all be codesigned with the same Developer ID identity or Gatekeeper rejects the bundle — see `docs/mac-port-plan.md` §4.3.
+
+Rust command path resolution (`desktop-tauri/src-tauri/src/commands.rs`) branches on `cfg!(target_os = "windows")` for sidecar filenames (`trailbox-bridge.exe` vs `trailbox-bridge`) and venv layout (`.venv\Scripts\python.exe` vs `.venv/bin/python`). Don't remove those guards.
+
+## macOS-specific notes
+
+The full port plan lives in [docs/mac-port-plan.md](docs/mac-port-plan.md). Quick reference:
+
+- **Permissions onboarding** — first launch must guide the user through 3-4 system grants: Screen Recording (SCK), Accessibility + Input Monitoring (pynput), optionally Microphone (SCK audio). Without them recording silently fails. Use `CGPreflightScreenCaptureAccess()` / `AXIsProcessTrusted()` to probe state before starting capture; deep-link the user to System Settings with `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`.
+- **GPU monitoring is a stub on v1** — `core/gpu_monitor.py` returns `gpu_pct=None` / `vram_mb=None` on macOS. Viewer and MCP already handle missing fields gracefully; the viewer hides the GPU widget when the value is None.
+- **macOS 12.x audio fallback** — SCK audio needs 13+. On 12.x either disable audio or guide the user to install BlackHole/Loopback as a virtual loopback device.
+- **Tauri-only GUI on macOS** — the PyQt6 path (`ui/`, `main.py`'s window flow) stays Windows-only. mac users go through `desktop-tauri/` exclusively. Don't introduce mac code paths into `ui/` without a strong reason.
+- **Codesign sidecar sweep** — `build.py`'s darwin branch (when added) must walk every native binary inside `Trailbox.app` (bridge, adb, scrcpy, ffmpeg from imageio-ffmpeg cache) and `codesign --force --options runtime` each one. Notarization (`xcrun notarytool submit … --wait`) + stapling is the last step. CI is the right home for this — don't run it from a dev laptop ad-hoc.
 
 ## Known constraint footprint
 
-- DRM-protected video (Netflix) is OS-blanked on capture; audio is not. This is enforced and unavoidable.
+- DRM-protected video (Netflix) is OS-blanked on capture; audio is not. This is enforced and unavoidable. (Same on macOS — SCK blanks protected content identically.)
 - Anti-cheat may block process telemetry on a small number of titles (psutil's perf-counter path is more permissive than handle enumeration, so it usually works).
-- Fullscreen Exclusive games may fail WGC; Borderless mode is the documented workaround.
+- Fullscreen Exclusive games may fail WGC on Windows; Borderless mode is the documented workaround. macOS is borderless by default so this constraint goes away there.
 - AC/Anvil and Frostbite engines write no disk logs in retail — `parent process walk` in the log-dir detector is what lets those sessions still pick up something useful (launcher logs).
+- **macOS 14.4+ shows a persistent menu-bar recording indicator** during any SCK session. Cannot be hidden — surface it in product copy so users aren't surprised.

@@ -1,8 +1,14 @@
 # Trailbox
 
-Windows 멀티-시그널 세션 레코더. **화면 · 시스템 사운드 · 앱 로그 · 키마 입력 · CPU/GPU/RAM 텔레메트리** 를 *하나의 타임라인에 정렬해* 녹화하고, 브라우저에서 통합 뷰어로 보고, 팀과 링크로 공유합니다.
+**크로스플랫폼 멀티-시그널 세션 레코더.** **화면 · 시스템 사운드 · 앱 로그 · 키마 입력 · CPU/GPU/RAM 텔레메트리** 를 *하나의 타임라인에 정렬해* 녹화하고, 브라우저에서 통합 뷰어로 보고, 팀과 링크로 공유합니다.
 
-PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처합니다 — 화면 + logcat + 터치 입력 + jank/CPU/RSS 메트릭을 동일한 타임라인으로.
+| 호스트 | 상태 | 캡처 |
+|---|---|---|
+| **Windows 10 1903+ / 11** | 출시 (v0.x) | 데스크톱 (dxcam + WGC + WASAPI) + USB 연결 Android |
+| **macOS 12.3+** | 포팅 진행 중 — [docs/mac-port-plan.md](docs/mac-port-plan.md) | 데스크톱 (ScreenCaptureKit) + USB 연결 Android |
+| **iOS 캡처** | macOS 포팅 완료 후 (mac 호스트 필수) | 준비 중 |
+
+USB 연결된 **Android 디바이스** 캡처는 호스트 OS 무관하게 동작합니다 — Windows / macOS 둘 다에서 화면 + logcat + 터치 입력 + jank/CPU/RSS 메트릭을 동일한 타임라인으로.
 
 게임 QA / 사용자 세션 리플레이 / 버그 리포트 / 튜토리얼 제작 / 디버깅 세션 기록 / 모바일 앱 QA — 여러 신호가 *동기화된 채로* 봐야 가치 있는 모든 워크플로.
 
@@ -10,32 +16,44 @@ PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처�
 
 ## 받기
 
+### Windows
+
 [**Releases 최신**](https://github.com/hgkim0105/trailbox/releases/latest) 에서 **`Trailbox-Setup.exe`** (~256 MB) 받아 더블클릭.
 
 설치 마법사가 셋업 종류 (Full / Client / GUI-only / Custom) 와 Hub 연결 정보를 물어보고 알아서 잡아 줍니다. **Python · ffmpeg · adb · scrcpy · 그 외 의존성 모두 .exe 안에 포함** — 별도 설치 불필요.
 
 > 분리된 `Trailbox.exe` / `Trailbox-mcp.exe` / `Trailbox-hub.exe` 도 같은 페이지에 있음. 인스톨러 안 쓰고 수동 배치할 때만.
 
+### macOS (포팅 진행 중)
+
+목표 산출물: **`Trailbox.dmg`** 더블클릭 → `Applications` 에 드래그 → 첫 실행 시 권한 4종 (Screen Recording / Accessibility / Input Monitoring / Microphone) 안내 → 완료.
+
+MCP 서버는 본 포팅 작업과 무관하게 mac 에서 동작합니다 — `pip install -r requirements.txt && python -m mcp_server` 로 바로 쓸 수 있고, 빌드된 `Trailbox-mcp` CLI 도 같은 Releases 페이지에 (mac 빌드 추가 후) 올라갑니다.
+
+자세한 진행 상황과 권한 안내는 [docs/mac-port-plan.md](docs/mac-port-plan.md) 참조.
+
 요구사항:
-- **PC**: Windows 10 1903+ (Windows 11 권장)
-- **Android 캡처** (선택): USB 디버깅이 켜진 Android 4.4+ 디바이스. Samsung 갤럭시면 «자동 차단» 의 «USB 케이블로 명령 차단» 옵션 OFF 필요
+- **Windows**: 10 1903+ (Windows 11 권장)
+- **macOS**: 12.3+ (ScreenCaptureKit 가용성). 14.4+ 는 메뉴바에 녹화 인디케이터가 강제 표시됨 (OS 정책, 우회 불가).
+- **Android 캡처** (선택): USB 디버깅이 켜진 Android 4.4+ 디바이스. Samsung 갤럭시면 «자동 차단» 의 «USB 케이블로 명령 차단» 옵션 OFF 필요. 호스트 OS 무관.
 
 ---
 
 ## 무엇을 캡처하는가
 
-### PC 캡처
+### PC 캡처 (Windows & macOS — 백엔드만 다름, 출력은 동일)
 
-| 신호 | 백엔드 | 출력 |
-|---|---|---|
-| 화면 (모니터 전체) | `dxcam` (DXGI Desktop Duplication) | `screen.mp4` |
-| 화면 (특정 창) | `windows-capture` (WGC) — 가려진 창·HW 가속 앱 OK | `screen.mp4` |
-| 시스템 오디오 | `soundcard` (WASAPI loopback) | `screen.mp4` 내 AAC |
-| 앱 로그 (다중 폴더 · 재귀 · 확장자 설정 · 바이너리 자동 제외) | `watchdog` + tail-follow + 2초 rescan 안전망 | `logs/logs.jsonl`, `logs/logs.vtt`, `logs/raw/<root>/` |
-| 키보드 + 마우스 | `pynput` 글로벌 리스너 | `inputs/inputs.jsonl`, `inputs/inputs.vtt` |
-| 프로세스 텔레메트리 (CPU + GPU + RAM + VRAM + threads) | `psutil` + Windows PDH 1Hz 샘플 | `metrics/process.jsonl` |
-| 프레임 타이밍 | 매 프레임 인스턴트 fps + Δ | `metrics/frames.jsonl` |
-| PC 사양 스냅샷 | OS / CPU / RAM / GPU / 디스플레이 / Python / 버전 | `session_meta.json` 의 `system` |
+| 신호 | Windows 백엔드 | macOS 백엔드 | 출력 |
+|---|---|---|---|
+| 화면 (모니터 전체) | `dxcam` (DXGI Desktop Duplication) | `ScreenCaptureKit` (`SCContentFilter(display:)`) | `screen.mp4` |
+| 화면 (특정 창) | `windows-capture` (WGC) — 가려진 창·HW 가속 OK | `ScreenCaptureKit` (`SCContentFilter(window:)`) | `screen.mp4` |
+| 시스템 오디오 | `soundcard` (WASAPI loopback) | SCK audio (mac 13+) · BlackHole 등 가상 디바이스 (mac 12.x) | `screen.mp4` 내 AAC |
+| 앱 로그 (다중 폴더 · 재귀 · 확장자 설정 · 바이너리 자동 제외) | `watchdog` + tail-follow + 2초 rescan 안전망 | 동일 | `logs/logs.jsonl`, `logs/logs.vtt`, `logs/raw/<root>/` |
+| 키보드 + 마우스 | `pynput` 글로벌 리스너 | `pynput` + Accessibility · Input Monitoring 권한 | `inputs/inputs.jsonl`, `inputs/inputs.vtt` |
+| 프로세스 텔레메트리 (CPU + RAM + threads) | `psutil` 1Hz 샘플 | `psutil` 1Hz 샘플 | `metrics/process.jsonl` |
+| GPU% / VRAM | Windows PDH counters | v1: 미수집 (뷰어가 graceful 처리), v2: powermetrics 검토 | `metrics/process.jsonl` |
+| 프레임 타이밍 | 매 프레임 인스턴트 fps + Δ | 동일 | `metrics/frames.jsonl` |
+| PC 사양 스냅샷 | wmic + `platform.win32_ver` | `sw_vers` + `system_profiler` + `sysctl` | `session_meta.json` 의 `system` |
 
 ### Android 디바이스 캡처 (v0.3.0+)
 
