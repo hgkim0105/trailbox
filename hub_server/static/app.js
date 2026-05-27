@@ -69,22 +69,38 @@
   });
 
   // ── Copy to clipboard ([data-copy="..."]) ─────────────────────────────
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } finally { ta.remove(); }
+  }
   document.addEventListener('click', async function (ev) {
     const btn = ev.target.closest('[data-copy]');
     if (!btn) return;
     ev.preventDefault();
     const text = btn.dataset.copy;
     try {
-      await navigator.clipboard.writeText(text);
-      if (!btn.dataset.copyOrigText) btn.dataset.copyOrigText = btn.textContent;
-      btn.textContent = btn.dataset.copyDone || '복사됨';
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        fallbackCopy(text);
+      }
+      const label = btn.querySelector('span');
+      if (label) {
+        if (!btn.dataset.copyOrigText) btn.dataset.copyOrigText = label.textContent;
+        label.textContent = btn.dataset.copyDone || '복사됨';
+      }
       btn.classList.add('btn--success');
       setTimeout(() => {
-        btn.textContent = btn.dataset.copyOrigText;
+        if (label && btn.dataset.copyOrigText) label.textContent = btn.dataset.copyOrigText;
         btn.classList.remove('btn--success');
       }, 1500);
     } catch (e) {
       console.error('clipboard write failed', e);
+      try { fallbackCopy(text); } catch (_) {}
     }
   });
 
