@@ -124,6 +124,8 @@ Hub 가 현재 노출하는 건 REST API + 공유 토큰 뷰어 (`/v/{token}/`) 
 
 ### iOS (Mac + Instruments / AVFoundation)
 
+> 상세 구현 계획: **[docs/mac-ios-capture-plan.md](docs/mac-ios-capture-plan.md)**
+
 Mac 빌드가 필수. iOS 의 USB 화면 캡처 (`CoreMediaIO`) 는 macOS-only API. QuickTime "새로운 동영상 녹화 → iPhone" 의 그 메커니즘.
 
 신호 매핑:
