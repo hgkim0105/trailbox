@@ -37,11 +37,22 @@ from PyQt6.QtWidgets import (
 # IMPORTANT: screen_recorder (dxcam/comtypes) must import before audio_recorder
 # (soundcard). soundcard initializes COM with a different threading mode, which
 # makes the later comtypes init fail with "thread mode already set".
-from core.screen_recorder import AndroidDeviceTarget, ScreenRecorder, WindowTarget
-from core.system_info import collect_android_info, gather as gather_system_info
+from core.screen_recorder import (
+    AndroidDeviceTarget,
+    IOSDeviceTarget,
+    ScreenRecorder,
+    WindowTarget,
+)
+from core.system_info import (
+    collect_android_info,
+    collect_ios_info,
+    gather as gather_system_info,
+)
 from core.android_input_recorder import AndroidInputRecorder
 from core.android_log_collector import AndroidLogCollector
 from core.android_metrics_recorder import AndroidMetricsRecorder
+from core.ios_log_collector import IOSLogCollector
+from core.ios_metrics_recorder import IOSMetricsRecorder
 from core.audio_recorder import AudioRecorder
 from core.global_hotkey import GlobalHotkey
 from core.input_recorder import InputRecorder
@@ -141,6 +152,147 @@ class TrailboxWindow(QMainWindow):
         target = self.launcher.capture_target()
         if target is None:
             QMessageBox.warning(self, "Trailbox", "캡처할 창을 선택하세요.")
+            return
+
+        # ---- iOS branch (macOS host only) ----
+        # AVFoundation captures a single muxed .mov (video+audio) which
+        # _run_ios remuxes straight to screen.mp4, so post_mux is skipped the
+        # same way the Android scrcpy path skips it. iOS exposes no host-side
+        # touch stream, so there is no input recorder on this branch.
+        if isinstance(target, IOSDeviceTarget):
+            from core import ios_device as _ios
+
+            try:
+                bundle_id = target.bundle_id or _ios.get_foreground_app(target.udid)
+            except Exception:  # noqa: BLE001 - probe is best-effort
+                bundle_id = None
+            bundle_id = bundle_id or "unknown"
+
+            # Safe session-id stem: "ios_<udid8>_<bundle>"; Session's regex
+            # strips anything outside [A-Za-z0-9_.-].
+            stem = f"ios_{target.udid[:8]}_{bundle_id}"
+            session = Session(
+                exe_path=None,
+                log_dir=None,
+                output_root=OUTPUT_ROOT,
+                target_pid=None,
+                app_name=stem,
+            )
+            try:
+                session_id = session.start()
+            except OSError as e:
+                QMessageBox.critical(self, "Trailbox", f"세션 폴더 생성 실패:\n{e}")
+                return
+
+            self._session = session
+            max_fps = self.launcher.capture_fps()
+
+            self.recorder.set_transitioning("starting")
+            QApplication.processEvents()
+
+            # Device-side snapshot replaces the host Mac profile; same JSON
+            # shape so the viewer stays branch-free.
+            try:
+                self._system_info = collect_ios_info(target.udid)
+            except Exception:  # noqa: BLE001
+                self._system_info = {"capture": "ios"}
+
+            t0_perf = time.perf_counter()
+
+            screen_recorder = ScreenRecorder(
+                output_path=session.dir / FINAL_NAME,   # AVF muxes → skip post_mux
+                target=target,
+                max_fps=max_fps,
+                frames_log_path=None,
+            )
+            try:
+                screen_recorder.start()
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.critical(self, "Trailbox", f"화면 녹화 시작 실패:\n{e}")
+                session.finalize(
+                    extra={"aborted": True, "error": str(e), "max_fps": max_fps}
+                )
+                self._session = None
+                self.recorder.set_recording(False)
+                return
+            self._screen_recorder = screen_recorder
+
+            self._audio_recorder = None     # AVFoundation muxes audio into the mov
+            self._log_collectors = []
+            self._input_recorder = None     # iOS exposes no host-side touch stream
+            self._metrics_recorder = None
+            self._metrics_target_pid = None
+            self._metrics_target_name = bundle_id if bundle_id != "unknown" else ""
+
+            # syslog → logs/syslog.jsonl + .vtt. Filter to the app bundle to
+            # cut OS noise; falls back to whole-device when bundle unknown.
+            try:
+                syslog_collector = IOSLogCollector(
+                    udid=target.udid,
+                    output_dir=session.dir / "logs",
+                    t0_perf=t0_perf,
+                    bundle_filter=bundle_id if bundle_id != "unknown" else None,
+                )
+                syslog_collector.start()
+                self._log_collectors.append(syslog_collector)
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(
+                    self, "Trailbox", f"iOS syslog 시작 실패 (계속 진행):\n{e}"
+                )
+
+            # Additionally watch any PC-side log folders the user added.
+            ios_log_dirs = [Path(p) for p in self.launcher.log_dirs()]
+            if ios_log_dirs:
+                pc_log_collector = LogCollector(
+                    log_dirs=ios_log_dirs,
+                    output_dir=session.dir / "logs",
+                    t0_perf=t0_perf,
+                    recursive=self.launcher.log_recursive(),
+                    extensions=self.launcher.log_extensions(),
+                )
+                try:
+                    pc_log_collector.start()
+                    self._log_collectors.append(pc_log_collector)
+                except Exception as e:  # noqa: BLE001
+                    QMessageBox.warning(
+                        self, "Trailbox",
+                        f"PC 로그 폴더 수집 시작 실패 (계속 진행):\n{e}",
+                    )
+
+            if self.launcher.metrics_enabled() and bundle_id != "unknown":
+                try:
+                    metrics_recorder = IOSMetricsRecorder(
+                        udid=target.udid,
+                        bundle_id=bundle_id,
+                        output_path=session.dir / "metrics" / "process.jsonl",
+                        t0_perf=t0_perf,
+                        interval_s=1.0,
+                    )
+                    metrics_recorder.start()
+                    self._metrics_recorder = metrics_recorder
+                    self._metrics_target_name = bundle_id
+                except Exception as e:  # noqa: BLE001
+                    QMessageBox.warning(
+                        self, "Trailbox",
+                        f"iOS 텔레메트리 시작 실패 (계속 진행):\n{e}",
+                    )
+
+            self.recorder.set_recording(True)
+            self.recorder.set_session_id(session_id)
+            audio_status = "오디오 ON (AVFoundation)" if target.capture_audio else "오디오 OFF"
+            log_status = f"로그 {len(self._log_collectors)}개" if self._log_collectors else "로그 OFF"
+            metrics_status = "메트릭 ON" if self._metrics_recorder else "메트릭 OFF"
+            self.statusBar().showMessage(
+                f"녹화 시작: {session.dir} (iOS {target.device_name} / {bundle_id}, "
+                f"max {max_fps}fps, {audio_status}, {log_status}, 입력 OFF, {metrics_status})",
+                5000,
+            )
+
+            self._overlay = RecordingOverlay(stop_hotkey_label=STOP_HOTKEY_LABEL)
+            self._overlay.begin()
+            self._stop_hotkey = GlobalHotkey(STOP_HOTKEY)
+            self._stop_hotkey.triggered.connect(self._on_stop_requested)
+            self._stop_hotkey.start()
             return
 
         # ---- Android branch ----

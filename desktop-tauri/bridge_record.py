@@ -42,14 +42,19 @@ def _output_root() -> Path:
 
 
 def main() -> int:
-    from core.screen_recorder import ScreenRecorder, WindowTarget, MonitorTarget, AndroidDeviceTarget
+    from core.screen_recorder import (
+        ScreenRecorder, WindowTarget, MonitorTarget, AndroidDeviceTarget,
+        IOSDeviceTarget,
+    )
     from core.audio_recorder import AudioRecorder
     from core.input_recorder import InputRecorder
+    from core.ios_log_collector import IOSLogCollector
+    from core.ios_metrics_recorder import IOSMetricsRecorder
     from core.log_collector import LogCollector
     from core.metrics_recorder import MetricsRecorder
     from core.post_mux import mux_av
     from core.session import Session
-    from core.system_info import gather as gather_system_info
+    from core.system_info import collect_ios_info, gather as gather_system_info
     from core.viewer_generator import generate_viewer
 
     VIDEO_TMP = "screen.video.mp4"
@@ -99,6 +104,15 @@ def main() -> int:
                 serial=serial, package=None,
                 capture_audio=capture_audio, backend=backend,
             )
+        elif kind == "ios":
+            udid = target_cfg.get("udid", "")
+            device_name = target_cfg.get("device_name", "")
+            bundle_id = target_cfg.get("bundle_id") or None
+            capture_audio = target_cfg.get("capture_audio", True)
+            target = IOSDeviceTarget(
+                udid=udid, device_name=device_name,
+                bundle_id=bundle_id, capture_audio=capture_audio,
+            )
         else:
             target = MonitorTarget(index=0)
 
@@ -106,12 +120,19 @@ def main() -> int:
             exe_path = f"capture_{kind}"
 
         is_android = kind == "android"
-        app_name = f"android_{target_cfg.get('serial', 'dev')}" if is_android else None
+        is_ios = kind == "ios"
+        # iOS/Android are device captures → app_name stem instead of exe_path.
+        if is_ios:
+            app_name = f"ios_{(target_cfg.get('udid', 'dev') or 'dev')[:8]}"
+        elif is_android:
+            app_name = f"android_{target_cfg.get('serial', 'dev')}"
+        else:
+            app_name = None
 
         # Create session
         output_root = _output_root()
         session = Session(
-            exe_path=exe_path if not is_android else None,
+            exe_path=exe_path if not (is_android or is_ios) else None,
             log_dir=str(log_dirs[0]) if log_dirs else None,
             output_root=output_root,
             target_pid=None,
@@ -125,7 +146,11 @@ def main() -> int:
 
         system_info = {}
         try:
-            system_info = gather_system_info()
+            if is_ios:
+                # Device-side snapshot instead of the host Mac profile.
+                system_info = collect_ios_info(target_cfg.get("udid", ""))
+            else:
+                system_info = gather_system_info()
         except Exception:
             pass
 
@@ -146,7 +171,9 @@ def main() -> int:
             continue
 
         audio_rec = None
-        if audio_on:
+        # iOS audio rides inside the AVFoundation .mov; a host AudioRecorder
+        # here would wrongly capture the Mac's own output, so skip it.
+        if audio_on and not is_ios:
             try:
                 audio_rec = AudioRecorder(output_path=session.dir / AUDIO_TMP)
                 audio_rec.start()
@@ -154,6 +181,20 @@ def main() -> int:
                 audio_rec = None
 
         log_collectors: list = []
+        if is_ios:
+            # Device unified log (os_log) → logs/syslog.jsonl + .vtt.
+            try:
+                bundle_id = target.bundle_id
+                ios_log = IOSLogCollector(
+                    udid=target.udid,
+                    output_dir=session.dir / "logs",
+                    t0_perf=t0_perf,
+                    bundle_filter=bundle_id,
+                )
+                ios_log.start()
+                log_collectors.append(ios_log)
+            except Exception:
+                pass
         if log_dirs:
             try:
                 lc = LogCollector(
@@ -169,7 +210,9 @@ def main() -> int:
                 pass
 
         input_rec = None
-        if input_on:
+        # iOS exposes no host-side touch stream; a host InputRecorder would
+        # capture the Mac's keyboard/mouse instead, so skip it on iOS.
+        if input_on and not is_ios:
             try:
                 window_hwnd = target.hwnd if isinstance(target, WindowTarget) else None
                 input_rec = InputRecorder(
@@ -183,6 +226,21 @@ def main() -> int:
 
         metrics_rec = None
         metrics_pid = None
+        if metrics_on and is_ios and target.bundle_id:
+            # DVT instruments (sysmontap + graphics) → process.jsonl. Real-time
+            # status gauges below stay flat (no host pid); the recorded metrics
+            # file carries the real device CPU/GPU/FPS.
+            try:
+                metrics_rec = IOSMetricsRecorder(
+                    udid=target.udid,
+                    bundle_id=target.bundle_id,
+                    output_path=session.dir / "metrics" / "process.jsonl",
+                    t0_perf=t0_perf,
+                    interval_s=1.0,
+                )
+                metrics_rec.start()
+            except Exception:
+                metrics_rec = None
         if metrics_on and kind == "window":
             hwnd_val = target_cfg.get("hwnd", 0)
             if hwnd_val:
