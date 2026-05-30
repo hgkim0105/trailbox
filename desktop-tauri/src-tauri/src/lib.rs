@@ -43,6 +43,7 @@ pub fn run() {
             commands::find_window_for_log,
             commands::launch_exe,
             commands::list_android_devices,
+            commands::list_ios_devices,
             commands::get_system_info,
             commands::start_recording,
             commands::stop_recording,

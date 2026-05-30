@@ -386,6 +386,11 @@ pub async fn list_android_devices() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+pub async fn list_ios_devices() -> Result<serde_json::Value, String> {
+    call_bridge(vec!["list-ios-devices".into()]).await
+}
+
+#[tauri::command]
 pub async fn get_system_info() -> Result<serde_json::Value, String> {
     call_bridge(vec!["system-info".into()]).await
 }

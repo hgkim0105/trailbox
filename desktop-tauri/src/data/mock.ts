@@ -16,6 +16,14 @@ export type AdbDevice = {
   sdk: number;
 };
 
+export type IOSDevice = {
+  udid: string;
+  name: string;
+  ios_version: string;
+  capturable: boolean;
+  label: string;
+};
+
 export type LocalSession = {
   session_id: string;
   started: string;
@@ -79,6 +87,10 @@ export const WINDOWS: WindowInfo[] = [
 export const ANDROID_DEVICES: AdbDevice[] = [
   { serial: 'R5CW7022XAB', label: 'Galaxy S24 · Android 14 · One UI 6.1', model: 'SM-S921N', online: true, sdk: 34 },
   { serial: '28241FDH200J8R', label: 'Pixel 8 · Android 15 · Stock', model: 'Pixel 8', online: true, sdk: 35 },
+];
+
+export const IOS_DEVICES: IOSDevice[] = [
+  { udid: '00008140-001234567890ABCD', name: 'iPhone 15 Pro', ios_version: '26.5', capturable: true, label: 'iPhone 15 Pro (iOS 26.5)' },
 ];
 
 export const LOCAL_SESSIONS: LocalSession[] = [
