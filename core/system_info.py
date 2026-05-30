@@ -189,14 +189,33 @@ def collect_ios_info(udid: str) -> dict[str, Any]:
     out: dict[str, Any] = {"capture": "ios"}
     name = model = product = version = build = ""
     try:
-        from pymobiledevice3.lockdown import create_using_usbmux
+        # pymobiledevice3 v9 made lockdown async; run the probe to completion
+        # here so the caller stays sync (this fn is called once at session
+        # start, not on a hot path).
+        import asyncio
 
-        ld = create_using_usbmux(serial=udid) if udid else create_using_usbmux()
-        name = ld.get_value(key="DeviceName") or ""
-        model = ld.get_value(key="HardwareModel") or ""
-        product = ld.get_value(key="ProductType") or ""   # e.g. "iPhone15,2"
-        version = ld.get_value(key="ProductVersion") or ""
-        build = ld.get_value(key="BuildVersion") or ""
+        async def _probe() -> tuple[str, str, str, str, str]:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            ld = (
+                await create_using_usbmux(serial=udid)
+                if udid
+                else await create_using_usbmux()
+            )
+            try:
+                _name = (await ld.get_value(key="DeviceName")) or ""
+                _model = (await ld.get_value(key="HardwareModel")) or ""
+                _product = (await ld.get_value(key="ProductType")) or ""   # "iPhone15,2"
+                _version = (await ld.get_value(key="ProductVersion")) or ""
+                _build = (await ld.get_value(key="BuildVersion")) or ""
+                return _name, _model, _product, _version, _build
+            finally:
+                try:
+                    await ld.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        name, model, product, version, build = asyncio.run(_probe())
     except Exception:  # noqa: BLE001 - best-effort device probe
         pass
 

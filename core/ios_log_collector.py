@@ -17,6 +17,7 @@ access is defensive (getattr + str fallback) and requires on-device validation.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -40,25 +41,30 @@ def _vtt_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _iter_syslog(udid: str):
-    """Yield syslog entries from pymobiledevice3 (structured if available).
-
-    Tries the structured ``OsTraceService.syslog()`` first (gives pid / label /
-    level), falling back to the plain ``SyslogService.watch()`` line stream.
-    """
+async def _open_lockdown(udid: str):
+    """Async lockdown handshake. Sync callers run this via asyncio.run."""
     from pymobiledevice3.lockdown import create_using_usbmux
 
-    ld = create_using_usbmux(serial=udid) if udid else create_using_usbmux()
+    if udid:
+        return await create_using_usbmux(serial=udid)
+    return await create_using_usbmux()
+
+
+def _open_syslog_gen(lockdown):
+    """Pick the richest sync syslog generator available for this lockdown.
+
+    OsTraceService gives structured entries (pid / label / level); SyslogService
+    yields plain strings. Both stayed sync across the v9 async migration — we
+    only had to wrap the lockdown handshake.
+    """
     try:
         from pymobiledevice3.services.os_trace import OsTraceService
 
-        yield from OsTraceService(ld).syslog()
-        return
+        return OsTraceService(lockdown).syslog()
     except Exception:  # noqa: BLE001 - fall back to the plain line stream
-        pass
-    from pymobiledevice3.services.syslog import SyslogService
+        from pymobiledevice3.services.syslog import SyslogService
 
-    yield from SyslogService(ld).watch()
+        return SyslogService(lockdown).watch()
 
 
 class IOSLogCollector:
@@ -135,13 +141,34 @@ class IOSLogCollector:
     # ---- Reader loop ------------------------------------------------------
 
     def _reader_loop(self) -> None:
+        """Thread entry: drive the async lockdown + sync syslog gen."""
         try:
-            for entry in _iter_syslog(self.udid):
-                if self._stop.is_set():
-                    break
-                self._emit(entry)
+            asyncio.run(self._reader_loop_async())
         except BaseException as e:  # noqa: BLE001
             self._error = e
+
+    async def _reader_loop_async(self) -> None:
+        """Open lockdown async, then iterate the sync syslog gen in an executor.
+
+        The syslog generator blocks on a socket; we surface stop() by polling
+        ``self._stop`` between yields. If the device sits silent past stop,
+        the daemon thread is reclaimed at process exit (existing contract).
+        """
+        lockdown = await _open_lockdown(self.udid)
+        try:
+            gen = _open_syslog_gen(lockdown)
+            loop = asyncio.get_running_loop()
+            sentinel = object()
+            while not self._stop.is_set():
+                entry = await loop.run_in_executor(None, next, gen, sentinel)
+                if entry is sentinel:
+                    break
+                self._emit(entry)
+        finally:
+            try:
+                await lockdown.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     @staticmethod
     def _fields(entry) -> tuple[str, str, str, int | None, str]:

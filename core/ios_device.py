@@ -13,11 +13,13 @@ needs them, so this module imports cleanly on every platform (the same rule
 the recorders follow for dxcam / windows-capture / pyobjc). On non-macOS hosts
 the discovery functions simply return empty / None.
 
-NOTE: the AVFoundation + CoreMediaIO calls require on-device validation on real
-macOS + iPhone hardware; they cannot be exercised in CI / non-mac environments.
+pymobiledevice3 v9 turned the usbmux + lockdown surface async; we keep the
+public callers (UI, bridge) sync by running the async probe via ``asyncio.run``
+inside each facade. Side-effect-free, no shared event loop required.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from dataclasses import dataclass
 
@@ -57,11 +59,9 @@ def enable_screen_capture_devices() -> None:
     if not _is_macos():
         return
     try:
-        import objc
         import CoreMediaIO
         from Foundation import NSMutableData
 
-        # kCMIOObjectSystemObject == 1; property selector is a 4-char-code.
         prop = CoreMediaIO.CMIOObjectPropertyAddress(
             CoreMediaIO.kCMIOHardwarePropertyAllowScreenCaptureDevices,
             CoreMediaIO.kCMIOObjectPropertyScopeGlobal,
@@ -79,31 +79,48 @@ def enable_screen_capture_devices() -> None:
 
 # ---- Discovery --------------------------------------------------------------
 
-def _usbmux_devices() -> list[tuple[str, str, str]]:
-    """[(udid, name, ios_version)] from pymobiledevice3, or [] if unavailable."""
+async def _usbmux_devices_async() -> list[tuple[str, str, str]]:
+    """[(udid, name, ios_version)] from pymobiledevice3 v9 (async usbmux/lockdown)."""
     try:
         from pymobiledevice3.usbmux import list_devices
         from pymobiledevice3.lockdown import create_using_usbmux
     except Exception:  # noqa: BLE001 - lib absent (non-mac dev box, etc.)
         return []
 
-    out: list[tuple[str, str, str]] = []
     try:
-        for dev in list_devices():
-            udid = getattr(dev, "serial", "") or getattr(dev, "udid", "")
-            if not udid:
-                continue
-            name, ver = udid, ""
-            try:
-                ld = create_using_usbmux(serial=udid)
-                name = ld.get_value(key="DeviceName") or udid
-                ver = ld.get_value(key="ProductVersion") or ""
-            except Exception:  # noqa: BLE001 - device locked / not trusted yet
-                pass
-            out.append((udid, name, ver))
-    except Exception:  # noqa: BLE001
-        return out
+        devices = await list_devices()
+    except Exception:  # noqa: BLE001 - usbmux daemon down / not running
+        return []
+
+    out: list[tuple[str, str, str]] = []
+    for dev in devices:
+        udid = getattr(dev, "serial", "") or getattr(dev, "udid", "")
+        if not udid:
+            continue
+        name, ver = udid, ""
+        ld = None
+        try:
+            ld = await create_using_usbmux(serial=udid)
+            name = (await ld.get_value(key="DeviceName")) or udid
+            ver = (await ld.get_value(key="ProductVersion")) or ""
+        except Exception:  # noqa: BLE001 - device locked / not trusted yet
+            pass
+        finally:
+            if ld is not None:
+                try:
+                    await ld.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        out.append((udid, name, ver))
     return out
+
+
+def _usbmux_devices() -> list[tuple[str, str, str]]:
+    """Sync facade so UI / bridge callers don't deal with asyncio."""
+    try:
+        return asyncio.run(_usbmux_devices_async())
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def _avfoundation_capture_names() -> set[str]:
@@ -153,31 +170,18 @@ def list_devices() -> list[IOSDeviceInfo]:
 
 
 def get_foreground_app(udid: str) -> str | None:
-    """Best-effort foreground app bundle id via pymobiledevice3, else None.
+    """Always None under pymobiledevice3 v9 — kept as a sync stub.
 
-    Requires Developer Mode + a mounted Developer Disk Image on iOS 16+; returns
-    None on any failure (the session still records, session_id falls back to
-    'unknown').
+    v4 had ``DeviceInfo.foreground_running_process()`` which gave the
+    frontmost bundle id straight from DVT; v9 removed it. The remaining DVT
+    surfaces (``proclist`` / ``ApplicationListing.applist``) don't expose a
+    direct frontmost flag, and rebuilding the heuristic isn't worth it for v1
+    — the caller already handles None by falling back to ``"unknown"`` for
+    the session id and skipping bundle-based metric filtering.
+
+    Phase 2 UI work is the better place to fix this: let the user pick the
+    bundle explicitly from the device's installed apps (we can get that via
+    ``ApplicationListing.applist`` async) and pass it down as
+    ``IOSDeviceTarget.bundle_id``.
     """
-    try:
-        from pymobiledevice3.lockdown import create_using_usbmux
-        from pymobiledevice3.services.dvt.dvt_secure_socket_proxy import (
-            DvtSecureSocketProxyService,
-        )
-        from pymobiledevice3.services.dvt.instruments.application_listing import (
-            ApplicationListing,  # noqa: F401 - presence check
-        )
-    except Exception:  # noqa: BLE001
-        return None
-
-    try:
-        ld = create_using_usbmux(serial=udid) if udid else create_using_usbmux()
-        with DvtSecureSocketProxyService(ld) as dvt:
-            from pymobiledevice3.services.dvt.instruments.device_info import DeviceInfo
-
-            running = DeviceInfo(dvt).foreground_running_process()
-            return getattr(running, "bundle_identifier", None) or running.get(
-                "bundleIdentifier"
-            )
-    except Exception:  # noqa: BLE001
-        return None
+    return None
