@@ -19,7 +19,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
-import win32pdh
+try:
+    import win32pdh
+except ImportError:  # noqa: F401 - non-Windows host (e.g. macOS iOS-capture build)
+    # PDH is Windows-only. On macOS/Linux the host GPU isn't sampled at all
+    # (iOS sessions read device GPU via their own recorder), so GPUMonitor
+    # degrades to the documented "returns zeros" contract — see start().
+    win32pdh = None  # type: ignore[assignment]
 
 
 _ENG_PATH = r"\GPU Engine(*)\Utilization Percentage"
@@ -42,8 +48,12 @@ class GPUMonitor:
         """Open the PDH query and attach counters for ``target_pid``.
 
         Safe to call even if no GPU counters exist for the target — in that
-        case ``sample()`` will just return zeros.
+        case ``sample()`` will just return zeros. Also a no-op on non-Windows
+        hosts (``win32pdh`` unavailable): ``_query`` stays None so ``sample()``
+        returns zeros.
         """
+        if win32pdh is None:
+            return
         self._query = win32pdh.OpenQuery()
         try:
             self._attach_engine_counters()
