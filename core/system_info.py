@@ -176,3 +176,41 @@ def collect_android_info(serial: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+def collect_ios_info(udid: str) -> dict[str, Any]:
+    """Best-effort device-side snapshot for an iOS capture session.
+
+    Same shape as ``collect_android_info`` / ``gather()`` so the viewer + MCP
+    tools index ``system.os`` / ``system.displays`` without a branch. Reads
+    lockdown values via pymobiledevice3; anything unreadable (not trusted, lib
+    absent, USB blip) becomes "" / None.
+    """
+    out: dict[str, Any] = {"capture": "ios"}
+    name = model = product = version = build = ""
+    try:
+        from pymobiledevice3.lockdown import create_using_usbmux
+
+        ld = create_using_usbmux(serial=udid) if udid else create_using_usbmux()
+        name = ld.get_value(key="DeviceName") or ""
+        model = ld.get_value(key="HardwareModel") or ""
+        product = ld.get_value(key="ProductType") or ""   # e.g. "iPhone15,2"
+        version = ld.get_value(key="ProductVersion") or ""
+        build = ld.get_value(key="BuildVersion") or ""
+    except Exception:  # noqa: BLE001 - best-effort device probe
+        pass
+
+    out["os"] = {"platform": "iOS", "release": version, "build": build}
+    out["ios"] = {
+        "udid": udid,
+        "device_name": name,
+        "model": model,
+        "product_type": product,
+        "ios_version": version,
+    }
+    try:
+        from main import __version__ as trailbox_version
+        out["trailbox_version"] = trailbox_version
+    except Exception:  # noqa: BLE001
+        pass
+    return out
