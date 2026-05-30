@@ -11,6 +11,26 @@
 
 ---
 
+## 구현 진행 현황
+
+> ⚠️ **검증 한계**: 핵심 캡처 코드(AVFoundation 세션, CoreMediaIO 디바이스 노출, pymobiledevice3 DVT 행 파싱)는 **실제 macOS + iPhone 하드웨어에서만 검증 가능**하다. 아래 ✅는 *Linux CI에서 import-safe / py_compile / 순수 파서 동작*까지 확인했다는 의미이며, **실기 동작은 미검증**이다.
+
+| 항목 | 상태 | 비고 |
+|---|---|---|
+| Part A — 플랫폼 가드 (gpu_monitor / window_picker / window_clicker) | ✅ 구현·검증 | Linux에서 import + degrade(zeros/[]/0) 확인 |
+| Phase 1 — `core/ios_device.py` (device 열거, CMIO 노출, foreground 앱) | ✅ 구현 (import-safe) | AVFoundation/CMIO 호출 실기 미검증 |
+| Phase 3 — `ScreenRecorder._run_ios` + `_remux_mov` (AVFoundation→mp4) | ✅ 구현 (import-safe) | AVCaptureSession/런루프 실기 미검증 |
+| Phase 4 — `core/ios_log_collector.py` (pymobiledevice3 syslog) | ✅ 구현 (import-safe) | 순수 파서 검증; syslog 스트림 실기 미검증 |
+| Phase 5 — 입력 | ✅ (의도적 미지원) | iOS 터치 미노출 → input recorder 없음 |
+| Phase 6 — `core/ios_metrics_recorder.py` (DVT sysmontap+graphics) | ✅ 구현 (import-safe) | 순수 파서 검증; DVT 행 shape 실기 미검증 |
+| Phase 7 — 오케스트레이션 (main.py + bridge_record.py dispatch) | ✅ 구현 (py_compile) | host audio/input 가드 포함 |
+| `collect_ios_info` + bridge `list-ios-devices` + requirements 마커 | ✅ 구현 | |
+| **A3 — macOS 빌드 (PyInstaller darwin / Tauri .app / 코드사이닝)** | ⬜ 미착수 | build.py darwin 분기 필요 |
+| **Phase 2 — UI 디바이스 선택 (React + PyQt launcher_panel)** | ⬜ 미착수 | bridge `list-ios-devices`는 준비됨 |
+| **실기 검증 (Mac + iPhone)** | ⬜ 미착수 | 아래 "검증" 절차 |
+
+---
+
 ## 결정사항 (제안 — 구현 시작 시 확정)
 
 | 항목 | 제안 |
