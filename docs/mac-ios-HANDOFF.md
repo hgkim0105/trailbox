@@ -140,9 +140,9 @@ ffprobe output/_ios_smoke/screen.mp4   # video+audio 트랙 확인
    - ✅ `build.py` darwin 분기 — `Trailbox-mcp` / `Trailbox-hub` / `trailbox-bridge` Mach-O arm64 생성 (각 53/57/87 MB). 실행 검증 통과 (`./dist/trailbox-bridge list-ios-devices` → `[]`, `system-info` → 정상 JSON).
    - ✅ ad-hoc 코드사인 (`codesign --sign -`). **hardened runtime(`--options runtime`)은 의도적으로 빼둠** — PyInstaller `--onefile`이 풀어두는 nested `Python.framework`가 python.org Team ID로 서명돼 있어 cross-team dlopen 차단에 걸림. notarization 들어갈 때 entitlements plist (`com.apple.security.cs.disable-library-validation`)와 함께 되살릴 것.
    - ✅ Tauri Rust 측 `commands.rs` 크로스플랫폼 가드 (`BRIDGE_NAME`, `python_exe`) — `.exe` 접미사 + `.venv/Scripts/` vs `.venv/bin/` 분기.
-   - ⬜ **사이드카 임베드** — `Trailbox.app/Contents/MacOS/trailbox-bridge` 자동 복사 + codesign sweep. 현재는 `npm run tauri:build` 후 수동 복사 필요. 자연스러운 후속 단계: build.py에 `--post-tauri` 플래그 추가하거나 별도 `bundle_mac.sh` 스크립트.
-   - ⬜ **notarization** — Apple Developer Program ($99/년) + `xcrun notarytool submit --wait` + `stapler staple`. CI 작업이지 로컬 빌드 X.
-   - ⬜ **`Info.plist`** — `NSCameraUsageDescription` (CMIO 디바이스 권한), `NSScreenCaptureUsageDescription` (SCK), `NSMicrophoneUsageDescription` (선택). Tauri 빌드 산출물에 후처리로 주입하거나 `tauri.conf.json`의 `bundle.macOS` 섹션 사용.
+   - ✅ **사이드카 임베드** — `python build.py mac-bundle` 서브커맨드. `Trailbox.app/Contents/MacOS/trailbox-bridge`로 dist/ 사이드카 복사 + 번들 안 모든 Mach-O ad-hoc 재서명 + 루트 재서명. 멱등 (재실행 안전).
+   - ✅ **`Info.plist` 사용 설명** — 같은 mac-bundle 단계에서 `NSCameraUsageDescription` (CMIO/iPhone 캡처) / `NSScreenCaptureUsageDescription` (SCK 후속) / `NSMicrophoneUsageDescription` (오디오) 한글 문자열을 PlistBuddy로 주입. 멱등 (Delete + Add).
+   - ⬜ **notarization** — Apple Developer Program ($99/년) + `xcrun notarytool submit --wait` + `stapler staple`. 그때 hardened runtime (`--options runtime`) + entitlements plist (`com.apple.security.cs.disable-library-validation` 또는 PyInstaller `--onedir` 전환)로 동시 마이그레이션. CI 작업.
 2. **Phase 2 — UI 디바이스 선택** *(Tauri 측 완료 2026-05-30)*:
    - ✅ Tauri React — 캡처 대상에 "iOS" 라디오 + 디바이스 드롭다운 + Bundle ID 입력 + tunneld 안내 문구. `configRef` Android 폴 스루 버그도 같이 fix.
    - ⬜ PyQt `ui/launcher_panel.py` — Mac은 Tauri-only 정책이라 사실상 dead code. 명시적으로 skip 권장.

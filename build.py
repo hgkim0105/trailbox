@@ -289,6 +289,153 @@ def _codesign_adhoc(binary: Path) -> None:
     subprocess.run(cmd, check=True)
 
 
+def _find_tauri_app(repo_root: Path) -> Path | None:
+    """Locate the most recently built Trailbox.app under desktop-tauri.
+
+    Tauri 2 drops the bundle at target/{release,debug}/bundle/macos/
+    Trailbox.app. Prefer release; fall back to debug so this step still
+    works against a `tauri dev`-built bundle if someone wants to iterate.
+    """
+    base = repo_root / "desktop-tauri" / "src-tauri" / "target"
+    for profile in ("release", "debug"):
+        cand = base / profile / "bundle" / "macos" / "Trailbox.app"
+        if cand.is_dir():
+            return cand
+    return None
+
+
+def _plist_set(plist: Path, key: str, value: str) -> None:
+    """Idempotently set ``Info.plist[key] = value`` via PlistBuddy.
+
+    PlistBuddy's ``Add`` errors if the key exists; ``Set`` errors if it
+    doesn't. Delete-then-Add covers both states without per-call branching.
+    """
+    pb = "/usr/libexec/PlistBuddy"
+    subprocess.run(
+        [pb, "-c", f"Delete :{key}", str(plist)],
+        stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, check=False,
+    )
+    subprocess.run(
+        [pb, "-c", f"Add :{key} string {value}", str(plist)],
+        check=True,
+    )
+
+
+# User-facing strings in Korean to match the rest of the desktop UI.
+# Surfaced in the macOS permission prompts when the user first triggers
+# a capture; without these the prompt shows only the bundle id.
+_USAGE_DESCRIPTIONS: dict[str, str] = {
+    # CMIO devices (a tethered iPhone surfaced via AVFoundation) use the
+    # camera permission model — same prompt as built-in cameras.
+    "NSCameraUsageDescription":
+        "Trailbox는 연결된 iPhone을 캡처 디바이스로 사용합니다.",
+    # ScreenCaptureKit (Mac desktop/window capture) — not in this branch's
+    # scope yet but cheap to declare now so the eventual capture-on-mac
+    # path doesn't need a separate Info.plist pass.
+    "NSScreenCaptureUsageDescription":
+        "Trailbox는 화면 캡처로 세션을 기록합니다.",
+    # System audio capture (SCK 13+).
+    "NSMicrophoneUsageDescription":
+        "Trailbox는 시스템 사운드를 함께 기록합니다.",
+}
+
+
+def _iter_macho_binaries(root: Path):
+    """Yield every Mach-O file under ``root``. Used for the codesign sweep.
+
+    We rely on ``file -b`` to identify Mach-O headers because that's the
+    same heuristic Apple's codesign uses internally and it covers nested
+    frameworks / dylibs / executables uniformly.
+    """
+    for path in root.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            out = subprocess.check_output(
+                ["file", "-b", str(path)], stderr=subprocess.DEVNULL
+            ).decode("utf-8", errors="ignore")
+        except subprocess.CalledProcessError:
+            continue
+        if "Mach-O" in out:
+            yield path
+
+
+def _codesign_app_deep(app: Path) -> None:
+    """Sign every nested Mach-O bottom-up, then the bundle root.
+
+    ``codesign --deep`` exists but Apple's guidance is to sign nested
+    components individually for predictable behaviour with the hardened
+    runtime / notarization. We do the same here so the v1 ad-hoc step
+    matches the eventual notarization flow.
+    """
+    binaries = sorted(_iter_macho_binaries(app), key=lambda p: -len(p.parts))
+    for b in binaries:
+        subprocess.run(
+            ["codesign", "--force", "--sign", "-", str(b)],
+            check=True,
+        )
+    # Final pass: re-sign the bundle root so its CodeResources reflect the
+    # nested signatures we just wrote.
+    subprocess.run(
+        ["codesign", "--force", "--sign", "-", str(app)],
+        check=True,
+    )
+
+
+def _bundle_darwin(repo_root: Path) -> int:
+    """Post-process ``Trailbox.app`` produced by ``npm run tauri:build``.
+
+    Steps (in order):
+      1. Locate the .app under ``desktop-tauri/src-tauri/target/.../bundle/macos/``.
+      2. Copy ``dist/trailbox-bridge`` into ``Contents/MacOS/`` so the Tauri
+         launcher's ``current_exe().parent()`` resolves the sidecar at runtime
+         (matches commands.rs ``BRIDGE_NAME`` resolution).
+      3. Inject the Korean usage-description strings into ``Info.plist``.
+      4. Codesign every nested Mach-O ad-hoc, then re-sign the bundle root.
+
+    Idempotent: re-running is a no-op for the copy/Info.plist (overwrites)
+    and just re-signs binaries with the same ad-hoc identity.
+    """
+    app = _find_tauri_app(repo_root)
+    if app is None:
+        print(
+            "Trailbox.app not found — run `cd desktop-tauri && npm run "
+            "tauri:build` first.",
+            file=sys.stderr,
+        )
+        return 2
+
+    bridge_src = repo_root / "dist" / "trailbox-bridge"
+    if not bridge_src.is_file():
+        print(
+            f"{bridge_src} missing — run `python build.py` first to produce "
+            "the sidecar.",
+            file=sys.stderr,
+        )
+        return 2
+
+    print(f"app: {app}")
+    bridge_dst = app / "Contents" / "MacOS" / "trailbox-bridge"
+    print(f"copying sidecar → {bridge_dst}")
+    shutil.copy2(bridge_src, bridge_dst)
+    bridge_dst.chmod(0o755)
+
+    plist = app / "Contents" / "Info.plist"
+    print(f"injecting usage descriptions → {plist}")
+    for key, value in _USAGE_DESCRIPTIONS.items():
+        _plist_set(plist, key, value)
+
+    print("codesign sweep (ad-hoc, no hardened runtime)")
+    _codesign_app_deep(app)
+
+    print("\n=== verify ===")
+    subprocess.run(
+        ["codesign", "--verify", "--verbose=2", str(app)], check=False
+    )
+    print(f"\n=== done ===\n  {app}")
+    return 0
+
+
 def _build_darwin(repo_root: Path, ffmpeg_exe: Path) -> int:
     """macOS pipeline: MCP + Hub + bridge (no GUI), ad-hoc codesigned.
 
@@ -317,8 +464,10 @@ def _build_darwin(repo_root: Path, ffmpeg_exe: Path) -> int:
         print(f"  {path}  ({size_mb:.1f} MB)")
     print(
         "\nNext: cd desktop-tauri && npm run tauri:build  "
-        "# produces Trailbox.app + .dmg. Copy dist/trailbox-bridge into the "
-        ".app's Contents/MacOS/ (a future bundle step will automate this)."
+        "# produces Trailbox.app + .dmg\n"
+        "Then: python build.py mac-bundle  "
+        "# copies the sidecar into the .app + Info.plist usage descriptions "
+        "+ codesign sweep"
     )
     return 0
 
@@ -361,8 +510,24 @@ def _build_windows(repo_root: Path, ffmpeg_exe: Path) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     repo_root = Path(__file__).resolve().parent
+
+    # Subcommand dispatch — currently only mac-bundle. Everything else
+    # falls into the platform-default build pipeline (Windows: full +
+    # installer; macOS: 3 PyInstaller binaries). Kept manual instead of
+    # argparse to stay dependency-free.
+    args = list(argv) if argv is not None else sys.argv[1:]
+    if args == ["mac-bundle"]:
+        if not _IS_DARWIN:
+            print("mac-bundle only runs on macOS", file=sys.stderr)
+            return 2
+        return _bundle_darwin(repo_root)
+    if args:
+        print(f"unknown args: {args!r}", file=sys.stderr)
+        print("usage: python build.py [mac-bundle]", file=sys.stderr)
+        return 2
+
     ffmpeg_exe = Path(imageio_ffmpeg.get_ffmpeg_exe())
     print(f"platform: {sys.platform}")
     print(f"ffmpeg: {ffmpeg_exe}")
