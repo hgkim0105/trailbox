@@ -5,6 +5,7 @@ output/*/
 !output/.gitkeep
 build/
 dist/
+release/
 *.spec
 
 # Tauri build artifacts
