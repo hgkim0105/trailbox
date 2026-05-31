@@ -1,13 +1,21 @@
 PyQt6>=6.6
 mcp>=1.0
-dxcam>=0.3
-windows-capture>=2.0
-soundcard>=0.4
+# Windows-only capture stack — markers let `pip install -r` succeed on the
+# macOS iOS-capture build (these are simply skipped off Windows).
+dxcam>=0.3 ; sys_platform == "win32"
+windows-capture>=2.0 ; sys_platform == "win32"
+soundcard>=0.4 ; sys_platform == "win32"
+pywin32>=306 ; sys_platform == "win32"
 imageio[ffmpeg]>=2.34
 psutil>=5.9
-pywin32>=306
 pynput>=1.7
 watchdog>=4.0
+# macOS-only iOS-device capture (docs/mac-ios-capture-plan.md). AVFoundation +
+# CoreMediaIO drive USB screen capture; pymobiledevice3 covers syslog + DVT
+# metrics (pure-python — no native binary to bundle).
+pyobjc-framework-AVFoundation>=10.0 ; sys_platform == "darwin"
+pyobjc-framework-CoreMediaIO>=10.0 ; sys_platform == "darwin"
+pymobiledevice3>=9,<10 ; sys_platform == "darwin"
 # Hub server + client (Phase 1)
 fastapi>=0.110
 uvicorn[standard]>=0.27

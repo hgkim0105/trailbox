@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, type MutableRefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
-import { WINDOWS, ANDROID_DEVICES } from '../data/mock';
-import type { WindowInfo, AdbDevice } from '../data/mock';
+import { WINDOWS, ANDROID_DEVICES, IOS_DEVICES } from '../data/mock';
+import type { WindowInfo, AdbDevice, IOSDevice } from '../data/mock';
 
 type Props = {
   recording: boolean;
@@ -22,7 +22,7 @@ type Props = {
   autoUploadRef: MutableRefObject<boolean>;
 };
 
-type Target = 'monitor' | 'window' | 'android';
+type Target = 'monitor' | 'window' | 'android' | 'ios';
 
 function MiniSpark({ color }: { color: string }) {
   const pts = useMemo(() => {
@@ -52,6 +52,9 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
   const [autoUpload, setAutoUpload] = useState(false);
   const [windows, setWindows] = useState<WindowInfo[]>(WINDOWS);
   const [devices, setDevices] = useState<AdbDevice[]>(ANDROID_DEVICES);
+  const [iosUdid, setIosUdid] = useState('');
+  const [iosBundle, setIosBundle] = useState('');
+  const [iosDevices, setIosDevices] = useState<IOSDevice[]>(IOS_DEVICES);
   const [launching, setLaunching] = useState(false);
   const lastSession = lastSessionProp ? {
     id: lastSessionProp.session_id ?? '',
@@ -60,10 +63,31 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
 
   useEffect(() => {
     const selected = windows.find(w => w.hwnd === hwnd);
+    const selectedIos = iosDevices.find(d => d.udid === iosUdid);
+
+    let targetConfig: Record<string, unknown>;
+    if (target === 'window') {
+      targetConfig = { kind: 'window', hwnd, title: selected?.title ?? selected?.label ?? '' };
+    } else if (target === 'android') {
+      targetConfig = { kind: 'android', serial, backend, capture_audio: audio };
+    } else if (target === 'ios') {
+      // bridge_record.py expects (udid, device_name, bundle_id, capture_audio).
+      // device_name is what AVFoundation matches on; bundle_id is best-effort
+      // (None lets metrics skip the bundle filter — every running process is
+      // candidate, useful when foreground detection is unavailable).
+      targetConfig = {
+        kind: 'ios',
+        udid: iosUdid,
+        device_name: selectedIos?.name ?? '',
+        bundle_id: iosBundle || null,
+        capture_audio: audio,
+      };
+    } else {
+      targetConfig = { kind: 'monitor', index: 0 };
+    }
+
     configRef.current = {
-      target: target === 'window'
-        ? { kind: 'window', hwnd, title: selected?.title ?? selected?.label ?? '' }
-        : { kind: 'monitor', index: 0 },
+      target: targetConfig,
       exe_path: exe || selected?.exe_path || selected?.exe || '',
       log_dirs: [logDir, ...extraDirs].filter(Boolean),
       max_fps: fps, audio, input, metrics,
@@ -91,6 +115,21 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
       }
     } catch { /* mock fallback */ }
   }, [serial]);
+
+  const refreshIosDevices = useCallback(async () => {
+    try {
+      // Real call replaces mock on first success. On failure (bridge spawn
+      // failure, non-mac host, etc.) we keep the mock so the UI still renders
+      // — matches the Android pattern.
+      const list = await invoke<IOSDevice[]>('list_ios_devices');
+      if (Array.isArray(list)) {
+        setIosDevices(list);
+        if (list.length > 0 && !list.find(d => d.udid === iosUdid)) {
+          setIosUdid(list[0].udid);
+        }
+      }
+    } catch { /* mock fallback */ }
+  }, [iosUdid]);
 
   const pickWindowClick = async () => {
     try {
@@ -244,6 +283,7 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                 <button className={`tbd-radio ${target === 'monitor' ? 'active' : ''}`} onClick={() => setTarget('monitor')}>{Icon.PC()}전체 모니터</button>
                 <button className={`tbd-radio ${target === 'window' ? 'active' : ''}`} onClick={() => setTarget('window')}>{Icon.Window()}특정 창 (WGC)</button>
                 <button className={`tbd-radio ${target === 'android' ? 'active' : ''}`} onClick={() => { setTarget('android'); refreshDevices(); }}>{Icon.Phone()}Android</button>
+                <button className={`tbd-radio ${target === 'ios' ? 'active' : ''}`} onClick={() => { setTarget('ios'); refreshIosDevices(); }}>{Icon.Phone()}iOS</button>
               </div>
 
               {target === 'window' && (
@@ -282,6 +322,31 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                         <button key={b} className={`tbd-radio ${backend === b ? 'active' : ''}`} onClick={() => setBackend(b)}>{b}</button>
                       ))}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {target === 'ios' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <select className="tbd-select" value={iosUdid} onChange={e => setIosUdid(e.target.value)} style={{ flex: 1 }}>
+                      {iosDevices.length === 0 && <option value="">디바이스가 없습니다 — USB 연결 + 신뢰 + 새로고침</option>}
+                      {iosDevices.map(d => <option key={d.udid || d.name} value={d.udid}>{d.label}</option>)}
+                    </select>
+                    <button className="tbd-btn tbd-btn--icon" onClick={refreshIosDevices}>{Icon.Refresh()}</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 11.5 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: iosDevices.some(d => d.capturable) ? 'var(--success)' : 'var(--muted)', flexShrink: 0 }} />
+                    <span style={{ color: iosDevices.some(d => d.capturable) ? 'var(--success)' : 'var(--muted)' }}>
+                      {iosDevices.filter(d => d.capturable).length}개 디바이스 캡처 가능
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{ fontSize: 11.5, color: 'var(--muted)', minWidth: 60 }}>Bundle ID</span>
+                    <input className="tbd-input mono" placeholder="com.example.app (비우면 전체 프로세스)" value={iosBundle} onChange={e => setIosBundle(e.target.value)} style={{ flex: 1 }} />
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>
+                    메트릭(CPU/RAM/GPU)을 잡으려면 별도 터미널에서 <code style={{ fontSize: 10.5 }}>sudo pymobiledevice3 remote tunneld</code> 실행 필요. 화면·로그는 영향 없음.
                   </div>
                 </div>
               )}

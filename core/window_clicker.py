@@ -9,16 +9,25 @@ from __future__ import annotations
 
 from typing import Iterable
 
-import win32gui
 from PyQt6.QtCore import QObject, pyqtSignal
 from pynput import keyboard, mouse
+
+try:
+    import win32gui
+except ImportError:  # non-Windows host — window-capture pickers are unused here
+    win32gui = None  # type: ignore[assignment]
 
 
 GA_ROOT = 2
 
 
 def top_level_hwnd_at(x: int, y: int) -> int:
-    """Return the top-level HWND under screen coordinates (x, y), or 0."""
+    """Return the top-level HWND under screen coordinates (x, y), or 0.
+
+    Always 0 on non-Windows hosts (no HWNDs to pick).
+    """
+    if win32gui is None:
+        return 0
     hwnd = win32gui.WindowFromPoint((x, y))
     if not hwnd:
         return 0

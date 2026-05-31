@@ -12,6 +12,18 @@ desktop-tauri/src-tauri/target/
 desktop-tauri/node_modules/
 desktop-tauri/dist/
 desktop-tauri/.tsbuild-node/
+desktop-tauri/.npm-cache/
+
+# `tauri icon` produces an icon set for every Tauri target. We only ship
+# desktop (Windows/macOS/Linux); the Windows Store and Tauri-mobile assets
+# stay out of the repo to keep churn down. The desktop ones (32x32.png,
+# 128x128.png, 128x128@2x.png, icon.icns, icon.ico) are tracked.
+desktop-tauri/src-tauri/icons/Square*Logo.png
+desktop-tauri/src-tauri/icons/StoreLogo.png
+desktop-tauri/src-tauri/icons/android/
+desktop-tauri/src-tauri/icons/ios/
+desktop-tauri/src-tauri/icons/icon.png
+desktop-tauri/src-tauri/icons/64x64.png
 
 # Claude Code internal state (sessions, schedules, etc.)
 .claude/

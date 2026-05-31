@@ -312,10 +312,25 @@ fn project_root() -> PathBuf {
     PathBuf::from(".")
 }
 
+/// PyInstaller drops `.exe` on Windows and produces a bare Mach-O / ELF
+/// elsewhere. The venv layout flips too (Scripts\ vs bin/). Centralizing
+/// both lets every caller stay platform-agnostic.
+const BRIDGE_NAME: &str = if cfg!(target_os = "windows") {
+    "trailbox-bridge.exe"
+} else {
+    "trailbox-bridge"
+};
+
 fn python_exe() -> PathBuf {
     let root = project_root();
-    let venv = root.join(".venv").join("Scripts").join("python.exe");
-    if venv.is_file() { return venv; }
+    let venv = if cfg!(target_os = "windows") {
+        root.join(".venv").join("Scripts").join("python.exe")
+    } else {
+        root.join(".venv").join("bin").join("python")
+    };
+    if venv.is_file() {
+        return venv;
+    }
     PathBuf::from("python")
 }
 
@@ -324,8 +339,10 @@ fn bridge_command(extra_args: &[&str]) -> (PathBuf, Vec<String>) {
     let exe_dir = std::env::current_exe()
         .ok().and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_default();
-    // Production: trailbox-bridge.exe next to the Tauri exe
-    let bridge_exe = exe_dir.join("trailbox-bridge.exe");
+    // Production: bridge sidecar next to the Tauri launcher (Contents/MacOS/
+    // on macOS, the install dir on Windows). Per CLAUDE.md the mac launcher
+    // and the bridge sidecar both live under Contents/MacOS/.
+    let bridge_exe = exe_dir.join(BRIDGE_NAME);
     if bridge_exe.is_file() {
         let args: Vec<String> = extra_args.iter().map(|s| s.to_string()).collect();
         return (bridge_exe, args);
@@ -342,7 +359,7 @@ fn bridge_record_command() -> (PathBuf, Vec<String>) {
     let exe_dir = std::env::current_exe()
         .ok().and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_default();
-    let bridge_exe = exe_dir.join("trailbox-bridge.exe");
+    let bridge_exe = exe_dir.join(BRIDGE_NAME);
     if bridge_exe.is_file() {
         return (bridge_exe, vec!["record".to_string()]);
     }
@@ -383,6 +400,11 @@ pub async fn enumerate_windows() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub async fn list_android_devices() -> Result<serde_json::Value, String> {
     call_bridge(vec!["list-devices".into()]).await
+}
+
+#[tauri::command]
+pub async fn list_ios_devices() -> Result<serde_json::Value, String> {
+    call_bridge(vec!["list-ios-devices".into()]).await
 }
 
 #[tauri::command]

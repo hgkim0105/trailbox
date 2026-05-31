@@ -4,9 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import psutil
-import win32con
-import win32gui
-import win32process
+
+try:
+    import win32con
+    import win32gui
+    import win32process
+
+    _WIN32_AVAILABLE = True
+except ImportError:  # non-Windows host — window-capture targets don't exist here
+    _WIN32_AVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -24,7 +30,14 @@ class WindowInfo:
 
 
 def enumerate_windows() -> list[WindowInfo]:
-    """Return visible top-level windows in z-order (front-most first)."""
+    """Return visible top-level windows in z-order (front-most first).
+
+    Empty on non-Windows hosts: top-level window capture is a Windows-only
+    target (the macOS build captures iOS devices, not host windows).
+    """
+    if not _WIN32_AVAILABLE:
+        return []
+
     results: list[WindowInfo] = []
 
     def cb(hwnd: int, _: object) -> bool:

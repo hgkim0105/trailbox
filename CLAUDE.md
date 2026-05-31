@@ -8,6 +8,8 @@ Trailbox is a Windows-only PyQt6 desktop app that captures a synchronized QA rec
 
 Python 3.11+. ffmpeg ships bundled via `imageio-ffmpeg` — never assume PATH-installed ffmpeg.
 
+> **Work in progress — macOS / iOS capture** (branch `claude/mac-version-plan-AvqB5`): a macOS build that captures a tethered iPhone via AVFoundation lives behind `IOSDeviceTarget`. Core logic is written and CI-verified (import/compile/parsers) but **needs on-device validation on real macOS + iPhone**. If you're continuing this on a Mac, start at **[docs/mac-ios-HANDOFF.md](docs/mac-ios-HANDOFF.md)** (verification order + tuning hotspots), with [docs/mac-ios-capture-plan.md](docs/mac-ios-capture-plan.md) for the full design.
+
 ## Commands
 
 ```powershell

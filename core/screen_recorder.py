@@ -74,7 +74,23 @@ class AndroidDeviceTarget:
     backend: str = "scrcpy"
 
 
-CaptureTarget = MonitorTarget | WindowTarget | AndroidDeviceTarget
+@dataclass(frozen=True)
+class IOSDeviceTarget:
+    """An iPhone/iPad tethered over USB, captured on a macOS host.
+
+    Screen+audio come through AVFoundation/CoreMediaIO (the QuickTime "movie
+    recording → iPhone" mechanism, macOS-only). ``udid`` identifies the device
+    to pymobiledevice3 (logs/metrics); ``device_name`` is the AVFoundation
+    capture-device name used to find the matching ``AVCaptureDevice``.
+    """
+
+    udid: str
+    device_name: str
+    bundle_id: str | None = None   # foreground app bundle id (best-effort)
+    capture_audio: bool = True
+
+
+CaptureTarget = MonitorTarget | WindowTarget | AndroidDeviceTarget | IOSDeviceTarget
 
 
 class ScreenRecorder:
@@ -153,7 +169,9 @@ class ScreenRecorder:
     def _run(self) -> None:
         try:
             self._open_frame_log()
-            if isinstance(self.target, AndroidDeviceTarget):
+            if isinstance(self.target, IOSDeviceTarget):
+                self._run_ios(self.target)
+            elif isinstance(self.target, AndroidDeviceTarget):
                 self._run_android_dispatch(self.target)
             elif isinstance(self.target, WindowTarget):
                 self._run_window(self.target)
@@ -168,6 +186,153 @@ class ScreenRecorder:
             # EOF on stdin and finalize the mp4 footer cleanly.
             self._close_scrcpy()
             self._close_ffmpeg()
+
+    # ---- iOS (AVFoundation / CoreMediaIO, macOS-only) ---------------------
+
+    def _run_ios(self, target: IOSDeviceTarget) -> None:
+        """Capture a tethered iOS device via AVFoundation (macOS-only).
+
+        Uses ``AVCaptureMovieFileOutput`` to write a single self-contained .mov
+        (video + audio), then remuxes to ``output_path`` with ffmpeg
+        ``-c copy -movflags +faststart``. Mirrors the scrcpy path's "device
+        already produced a muxed container → skip post_mux" contract: caller
+        points ``output_path`` straight at the final mp4 and skips ``mux_av``.
+
+        pyobjc / AVFoundation / CoreMediaIO are imported lazily here (inside the
+        recorder thread) — the same rule dxcam / windows-capture follow: keep
+        heavy, platform-only deps out of module scope so the module imports on
+        every platform.
+
+        NOTE: requires on-device validation on real macOS + iPhone hardware;
+        the AVCaptureSession wiring and CMIO device-reveal cannot be exercised
+        in CI / non-mac environments.
+        """
+        from Foundation import NSURL, NSObject, NSRunLoop, NSDate
+        from AVFoundation import (
+            AVCaptureSession,
+            AVCaptureDevice,
+            AVCaptureDeviceInput,
+            AVCaptureMovieFileOutput,
+            AVMediaTypeMuxed,
+        )
+
+        from core import ios_device
+
+        # Reveal the iPhone as a capture device (QuickTime's mechanism).
+        ios_device.enable_screen_capture_devices()
+
+        # Find the AVCaptureDevice matching the chosen device name.
+        device = None
+        for dev in AVCaptureDevice.devicesWithMediaType_(AVMediaTypeMuxed) or []:
+            try:
+                if str(dev.localizedName()) == target.device_name:
+                    device = dev
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        if device is None:
+            raise RuntimeError(
+                f"iOS capture device not found: {target.device_name!r}. "
+                "Unlock the device, tap 'Trust', and re-check the cable."
+            )
+
+        err_ptr = None
+        dev_input, err_ptr = AVCaptureDeviceInput.deviceInputWithDevice_error_(
+            device, None
+        )
+        if dev_input is None:
+            raise RuntimeError(f"AVCaptureDeviceInput failed: {err_ptr}")
+
+        session = AVCaptureSession.alloc().init()
+        if session.canAddInput_(dev_input):
+            session.addInput_(dev_input)
+        else:
+            raise RuntimeError("AVCaptureSession refused the iOS device input")
+
+        movie_out = AVCaptureMovieFileOutput.alloc().init()
+        if session.canAddOutput_(movie_out):
+            session.addOutput_(movie_out)
+        else:
+            raise RuntimeError("AVCaptureSession refused the movie file output")
+
+        # Recording-finished delegate (AVCaptureFileOutputRecordingDelegate).
+        finished = threading.Event()
+
+        class _RecDelegate(NSObject):
+            def captureOutput_didFinishRecordingToOutputFileAtURL_fromConnections_error_(  # noqa: N802,E501
+                self, _out, _url, _conns, _error
+            ):
+                finished.set()
+
+        delegate = _RecDelegate.alloc().init()
+
+        # Single .mov next to the final mp4; remuxed + deleted after stop. The
+        # finally block's _close_scrcpy/_close_ffmpeg stay no-ops on this path.
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        mov_path = self.output_path.with_suffix(".ios.mov")
+        if mov_path.exists():
+            try:
+                mov_path.unlink()
+            except OSError:
+                pass
+        mov_url = NSURL.fileURLWithPath_(str(mov_path))
+
+        session.startRunning()
+        movie_out.startRecordingToOutputFileURL_recordingDelegate_(mov_url, delegate)
+        self._first_write_t = time.perf_counter()
+        self._started.set()
+
+        # Cocoa needs a live run loop for the capture/delegate callbacks. Spin
+        # it in short slices so we stay responsive to the stop event.
+        rl = NSRunLoop.currentRunLoop()
+        while not self._stop.is_set():
+            rl.runMode_beforeDate_(
+                "kCFRunLoopDefaultMode", NSDate.dateWithTimeIntervalSinceNow_(0.2)
+            )
+
+        movie_out.stopRecording()
+        # Drain the run loop until the delegate confirms the file is finalized.
+        deadline = time.perf_counter() + 10.0
+        while not finished.is_set() and time.perf_counter() < deadline:
+            rl.runMode_beforeDate_(
+                "kCFRunLoopDefaultMode", NSDate.dateWithTimeIntervalSinceNow_(0.1)
+            )
+        session.stopRunning()
+        self._last_write_t = time.perf_counter()
+
+        if not mov_path.exists() or mov_path.stat().st_size < 1024:
+            raise RuntimeError("iOS capture produced no video (empty .mov)")
+
+        # Remux to the final mp4 (no re-encode), then drop the intermediate.
+        self._remux_mov(mov_path)
+        try:
+            mov_path.unlink()
+        except OSError:
+            pass
+
+    def _remux_mov(self, mov_path: Path) -> None:
+        """ffmpeg ``-c copy -movflags +faststart`` from a finished .mov."""
+        self._stderr_log = open(str(self.output_path) + ".ffmpeg.log", "wb")
+        cmd = [
+            get_ffmpeg_exe(),
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-y",
+            "-i", str(mov_path),
+            "-c", "copy",
+            "-movflags", "+faststart",
+            str(self.output_path),
+        ]
+        proc = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=self._stderr_log,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW")
+                else 0
+            ),
+        )
+        if proc.returncode != 0 or not self.output_path.exists():
+            raise RuntimeError("ffmpeg remux of iOS .mov failed (see .ffmpeg.log)")
 
     # ---- Android backend dispatch with auto-fallback ----------------------
 

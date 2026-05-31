@@ -176,3 +176,60 @@ def collect_android_info(serial: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+def collect_ios_info(udid: str) -> dict[str, Any]:
+    """Best-effort device-side snapshot for an iOS capture session.
+
+    Same shape as ``collect_android_info`` / ``gather()`` so the viewer + MCP
+    tools index ``system.os`` / ``system.displays`` without a branch. Reads
+    lockdown values via pymobiledevice3; anything unreadable (not trusted, lib
+    absent, USB blip) becomes "" / None.
+    """
+    out: dict[str, Any] = {"capture": "ios"}
+    name = model = product = version = build = ""
+    try:
+        # pymobiledevice3 v9 made lockdown async; run the probe to completion
+        # here so the caller stays sync (this fn is called once at session
+        # start, not on a hot path).
+        import asyncio
+
+        async def _probe() -> tuple[str, str, str, str, str]:
+            from pymobiledevice3.lockdown import create_using_usbmux
+
+            ld = (
+                await create_using_usbmux(serial=udid)
+                if udid
+                else await create_using_usbmux()
+            )
+            try:
+                _name = (await ld.get_value(key="DeviceName")) or ""
+                _model = (await ld.get_value(key="HardwareModel")) or ""
+                _product = (await ld.get_value(key="ProductType")) or ""   # "iPhone15,2"
+                _version = (await ld.get_value(key="ProductVersion")) or ""
+                _build = (await ld.get_value(key="BuildVersion")) or ""
+                return _name, _model, _product, _version, _build
+            finally:
+                try:
+                    await ld.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        name, model, product, version, build = asyncio.run(_probe())
+    except Exception:  # noqa: BLE001 - best-effort device probe
+        pass
+
+    out["os"] = {"platform": "iOS", "release": version, "build": build}
+    out["ios"] = {
+        "udid": udid,
+        "device_name": name,
+        "model": model,
+        "product_type": product,
+        "ios_version": version,
+    }
+    try:
+        from main import __version__ as trailbox_version
+        out["trailbox_version"] = trailbox_version
+    except Exception:  # noqa: BLE001
+        pass
+    return out

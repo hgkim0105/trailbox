@@ -49,6 +49,20 @@ def cmd_list_devices() -> list[dict]:
     ]
 
 
+def cmd_list_ios_devices() -> list[dict]:
+    from core.ios_device import list_devices
+    return [
+        {
+            "udid": d.udid,
+            "name": d.name,
+            "ios_version": d.ios_version,
+            "capturable": d.capturable,
+            "label": d.label,
+        }
+        for d in list_devices()
+    ]
+
+
 def cmd_system_info() -> dict:
     from core.system_info import gather
     return gather()
@@ -218,6 +232,7 @@ def _hostname() -> str:
 COMMANDS = {
     "enumerate-windows": cmd_enumerate_windows,
     "list-devices": cmd_list_devices,
+    "list-ios-devices": cmd_list_ios_devices,
     "system-info": cmd_system_info,
     "pick-window-click": cmd_pick_window_click,
     "find-window-for-log": cmd_find_window_for_log,
