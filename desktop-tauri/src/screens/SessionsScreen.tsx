@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Icon } from '../components/Icon';
 import { type HubState, type UnifiedSession } from '../data/mock';
 
@@ -42,6 +42,7 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [uploadProg, setUploadProg] = useState<{ sid: string; done: number; total: number } | null>(null);
+  const [trimSid, setTrimSid] = useState<string | null>(null);
 
   // Merge local + remote into unified list
   const sessions: UnifiedSession[] = useMemo(() => {
@@ -218,6 +219,7 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
                 {selectedSession.remote && selectedSession.has_viewer && (
                   <button className="tbd-btn" onClick={() => doOpenHubViewer(selected!)}>{Icon.Link()}Hub 뷰어</button>
                 )}
+                <button className="tbd-btn" onClick={() => setTrimSid(selected!)}>✂ 트리밍</button>
                 <button className="tbd-btn tbd-btn--primary" onClick={() => doOpenViewer(selected!)}>{Icon.Eye()}뷰어 열기</button>
               </>
             )}
@@ -234,6 +236,16 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
           </div>
         )}
       </div>
+
+      {/* Trim modal */}
+      {trimSid && (
+        <TrimModal
+          sessionId={trimSid}
+          duration={sessions.find(s => s.session_id === trimSid)?.duration ?? 0}
+          onClose={() => setTrimSid(null)}
+          onDone={() => { setTrimSid(null); onRefresh?.(); }}
+        />
+      )}
 
       {/* Upload progress */}
       {uploadProg && (
@@ -286,5 +298,312 @@ function EmptyRows({ query }: { query: string }) {
       <h2>표시할 세션이 없습니다</h2>
       <p>{query ? '검색어를 조정해보세요' : '캡처를 시작하면 여기에 나타납니다'}</p>
     </div>
+  );
+}
+
+// ── Trim modal ────────────────────────────────────────────────────────
+// Watch the recorded video, mark in/out, save as a new session or
+// overwrite. Backend is `invoke('trim_session', …)` → bridge.py
+// → core/trim.py (same engine the Hub trim endpoint uses).
+
+function fmtMs(t: number) {
+  if (!isFinite(t) || t < 0) t = 0;
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  const ms = Math.round((t - Math.floor(t)) * 1000);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
+
+function TrimModal({
+  sessionId, duration, onClose, onDone,
+}: {
+  sessionId: string;
+  duration: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [src, setSrc] = useState<string>('');
+  const [srcErr, setSrcErr] = useState<string>('');
+  const [t, setT] = useState(0);
+  const [dur, setDur] = useState(duration);
+  const [tIn, setTIn] = useState<number | null>(null);
+  const [tOut, setTOut] = useState<number | null>(null);
+  const [overwrite, setOverwrite] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string>('');
+  const [playing, setPlaying] = useState(false);
+
+  // Resolve video path on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const path = await invoke<string>('get_session_video_path', { sessionId });
+        if (!cancelled) setSrc(convertFileSrc(path));
+      } catch (e) {
+        if (!cancelled) setSrcErr(String(e));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  // Keep t in sync with the video element.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onTime = () => setT(v.currentTime);
+    const onMeta = () => { if (v.duration && isFinite(v.duration)) setDur(v.duration); };
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    v.addEventListener('timeupdate', onTime);
+    v.addEventListener('loadedmetadata', onMeta);
+    v.addEventListener('play', onPlay);
+    v.addEventListener('pause', onPause);
+    return () => {
+      v.removeEventListener('timeupdate', onTime);
+      v.removeEventListener('loadedmetadata', onMeta);
+      v.removeEventListener('play', onPlay);
+      v.removeEventListener('pause', onPause);
+    };
+  }, [src]);
+
+  const seek = useCallback((time: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = Math.max(0, Math.min(dur, time));
+  }, [dur]);
+
+  // Don't nest setState calls inside an updater — React 18 batching makes
+  // the order non-obvious and the closure capture trips us up. Just compute
+  // both new values up front, then issue two normal setStates.
+  const setIn = useCallback(() => {
+    const newIn = t;
+    if (tOut != null && tOut < newIn) {
+      // New In is past current Out — swap so the canonical order holds.
+      setTIn(tOut);
+      setTOut(newIn);
+    } else {
+      setTIn(newIn);
+    }
+  }, [t, tOut]);
+
+  const setOut = useCallback(() => {
+    const newOut = t;
+    if (tIn != null && newOut < tIn) {
+      setTOut(tIn);
+      setTIn(newOut);
+    } else {
+      setTOut(newOut);
+    }
+  }, [t, tIn]);
+
+  // Keyboard shortcuts (I / O / Space / Backspace / Esc).
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.key === 'i' || e.key === 'I') { e.preventDefault(); setIn(); }
+      else if (e.key === 'o' || e.key === 'O') { e.preventDefault(); setOut(); }
+      else if (e.key === 'Backspace') { e.preventDefault(); setTIn(null); setTOut(null); }
+      else if (e.key === 'Escape') { e.preventDefault(); if (!saving) onClose(); }
+      else if (e.key === ' ') {
+        e.preventDefault();
+        const v = videoRef.current; if (!v) return;
+        if (v.paused) v.play().catch(() => {}); else v.pause();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setIn, setOut, onClose, saving]);
+
+  const validRange = tIn != null && tOut != null && Math.abs(tOut - tIn) >= 0.1;
+  const trimLen = (tIn != null && tOut != null) ? Math.abs(tOut - tIn) : null;
+  const pctOf = (x: number) => dur > 0 ? Math.max(0, Math.min(100, (x / dur) * 100)) : 0;
+  const playheadPct = pctOf(t);
+  const inPct = tIn != null ? pctOf(tIn) : 0;
+  const rangePct = (tIn != null && tOut != null) ? Math.max(0, pctOf(tOut) - pctOf(tIn)) : 0;
+
+  const onScrubClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const pct = (e.clientX - r.left) / r.width;
+    seek(pct * dur);
+  };
+
+  const save = async () => {
+    if (!validRange || saving) return;
+    // Belt-and-braces: regardless of which order the user marked them in,
+    // send the lower as t_start and the higher as t_end. The backend rejects
+    // inverted ranges, so the swap logic above is the primary fix — this
+    // sort just makes sure a missed render can't blow up the call.
+    const lo = Math.min(tIn!, tOut!);
+    const hi = Math.max(tIn!, tOut!);
+    setSaving(true);
+    setError('');
+    try {
+      const res = await invoke<any>('trim_session', {
+        sessionId, tStart: lo, tEnd: hi, overwrite,
+      });
+      console.log('trim_session result', res);
+      onDone();
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200,
+      }}
+      onClick={() => { if (!saving) onClose(); }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: 'min(940px, 96vw)', maxHeight: '94vh',
+          background: 'var(--surface)', color: 'var(--fg)',
+          border: '1px solid var(--border)', borderRadius: 12,
+          boxShadow: '0 18px 60px rgba(0,0,0,0.55)',
+          padding: 18, display: 'grid', gap: 12,
+          overflowY: 'auto',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>트림 — {sessionId}</h2>
+          <span style={{ flex: 1 }} />
+          <button className="tbd-btn" onClick={onClose} disabled={saving}>닫기</button>
+        </div>
+
+        {/* Video */}
+        <div style={{ background: 'black', borderRadius: 8, overflow: 'hidden', aspectRatio: '16 / 9' }}>
+          {srcErr ? (
+            <div style={{ padding: 16, color: 'var(--danger)', fontSize: 13 }}>
+              영상 경로를 찾지 못했습니다: {srcErr}
+            </div>
+          ) : src ? (
+            <video
+              ref={videoRef} src={src} controls={false} playsInline preload="metadata"
+              style={{ width: '100%', height: '100%', display: 'block' }}
+            />
+          ) : (
+            <div style={{ padding: 16, color: 'var(--muted)' }}>로딩 중…</div>
+          )}
+        </div>
+
+        {/* Scrub bar */}
+        <div
+          onClick={onScrubClick}
+          style={{
+            position: 'relative', height: 22, cursor: 'pointer',
+            background: 'oklch(0.22 0.01 270)', borderRadius: 11,
+          }}
+        >
+          {/* range overlay */}
+          {tIn != null && tOut != null && (
+            <div style={{
+              position: 'absolute', top: 0, bottom: 0,
+              left: `${inPct}%`, width: `${rangePct}%`,
+              background: 'var(--accent-soft)',
+              borderLeft: '2px solid var(--accent)',
+              borderRight: '2px solid var(--accent)',
+              boxSizing: 'border-box',
+              pointerEvents: 'none',
+            }} />
+          )}
+          {/* playhead */}
+          <div style={{
+            position: 'absolute', top: '50%', left: `${playheadPct}%`,
+            width: 12, height: 12, background: 'white', borderRadius: '50%',
+            transform: 'translate(-50%, -50%)',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
+            pointerEvents: 'none',
+          }} />
+        </div>
+
+        {/* Controls row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            className="tbd-btn"
+            onClick={() => {
+              const v = videoRef.current; if (!v) return;
+              if (v.paused) v.play().catch(() => {}); else v.pause();
+            }}
+          >
+            {playing ? '일시정지' : '재생'}
+          </button>
+          <span className="mono" style={{ fontSize: 12, color: 'var(--muted)', minWidth: 140 }}>
+            {fmtMs(t)} / {fmtMs(dur)}
+          </span>
+          <button className="tbd-btn" title="현재 시점을 시작점으로 (I)" onClick={setIn}>[ I 시작 ]</button>
+          <button className="tbd-btn" title="현재 시점을 끝점으로 (O)" onClick={setOut}>[ O 끝 ]</button>
+          <button className="tbd-btn" onClick={() => { setTIn(null); setTOut(null); }}>초기화</button>
+          <span style={{ flex: 1 }} />
+          <Readout label="in" v={tIn} />
+          <Readout label="out" v={tOut} />
+          <Readout label="길이" v={trimLen} />
+        </div>
+
+        {/* Save options */}
+        <div style={{
+          display: 'grid', gap: 8,
+          padding: 12,
+          background: 'var(--bg-2)', borderRadius: 8,
+        }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <input type="radio" checked={!overwrite} onChange={() => setOverwrite(false)} />
+            새 세션으로 저장 <span style={{ color: 'var(--muted)', fontSize: 11.5 }}>
+              {sessionId}_trim_NNN/ 형태로 새 폴더 생성. 원본 유지.
+            </span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <input type="radio" checked={overwrite} onChange={() => setOverwrite(true)} />
+            원본 덮어쓰기 <span style={{ color: 'var(--muted)', fontSize: 11.5 }}>
+              디스크 절약. 되돌릴 수 없음.
+            </span>
+          </label>
+        </div>
+
+        {error && (
+          <div style={{ color: 'var(--danger)', fontSize: 12.5 }}>저장 실패: {error}</div>
+        )}
+
+        {/* Actions */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="tbd-btn" onClick={onClose} disabled={saving}>취소</button>
+          <button
+            className="tbd-btn tbd-btn--primary"
+            disabled={!validRange || saving || !src}
+            onClick={save}
+          >
+            {saving ? '저장 중…' : '저장'}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+          단축키 · 재생/일시정지 Space · 시작 마크 I · 끝 마크 O · 초기화 Backspace · 닫기 Esc
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Readout({ label, v }: { label: string; v: number | null }) {
+  const unset = v == null;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'baseline', gap: 4,
+      fontFamily: 'var(--mono, monospace)', fontSize: 12,
+    }}>
+      <span style={{
+        color: 'var(--muted)', fontSize: 10.5, fontWeight: 600,
+        textTransform: 'uppercase', letterSpacing: '0.04em',
+      }}>{label}</span>
+      <span style={{ color: unset ? 'var(--muted)' : 'var(--fg)' }}>
+        {unset ? '—' : fmtMs(v!)}
+      </span>
+    </span>
   );
 }

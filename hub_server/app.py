@@ -39,6 +39,7 @@ from .lockout import LoginLockout
 from .retention import start_background_sweep, sweep_once
 from .routes import api_admin as api_admin_routes
 from .routes import api_auth as api_auth_routes
+from .routes import api_session as api_session_routes
 from .routes import web as web_routes
 from .session_owners import SessionOwnerStore
 from .session_tags import SessionTagStore
@@ -140,6 +141,14 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
             users=users,
             tokens=tokens,
             settings=settings,
+            audit=audit,
+            owners=owners,
+            storage=storage,
+        )
+    )
+    app.include_router(
+        api_session_routes.build_router(
+            auth_ctx=auth_ctx,
             audit=audit,
             owners=owners,
             storage=storage,

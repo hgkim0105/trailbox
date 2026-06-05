@@ -34,6 +34,8 @@ ACTIONS = frozenset(
         "settings_changed",
         "session_upload",
         "session_delete",
+        "session_trim",
+        "session_trim_overwrite",
         "share_created",
         "share_revoked",
         "setup",

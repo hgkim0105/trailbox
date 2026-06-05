@@ -23,6 +23,13 @@ let toastId = 0;
 export default function App() {
   const [route, setRoute] = useState<Route>('capture');
   const [recording, setRecording] = useState(false);
+  const [buffering, setBuffering] = useState(false);
+  const [bufferSeconds, setBufferSeconds] = useState(30);
+  // Append-only list of lookback captures from the current buffering session,
+  // newest last. Cleared on each fresh start_buffering so a previous run's
+  // captures don't leak into the next one. Read-only for the UI — App drives
+  // it via the drain_lookback_saved poll below.
+  const [recentCaptures, setRecentCaptures] = useState<Array<{ session_id: string; at: number; duration: number }>>([]);
   const [transition, setTransition] = useState<'starting' | 'stopping' | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -92,7 +99,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!recording) { setLiveStatus(null); return; }
+    // Tick both during recording and during lookback buffering — the bridge
+    // emits "status" lines in both modes (frames/cpu for recording, captures/
+    // buffer_seconds for lookback) and read_recording_status returns whichever
+    // is currently active.
+    if (!recording && !buffering) { setLiveStatus(null); return; }
     const id = setInterval(async () => {
       setElapsed(e => {
         const next = e + 1;
@@ -102,10 +113,28 @@ export default function App() {
       try {
         const s = await invoke<any>('read_recording_status');
         if (s) setLiveStatus(s);
+        if (buffering) {
+          // Drain any "saved" events that piled up so we can refresh the
+          // session list + show a toast per capture + log them inline.
+          const saved = await invoke<any[]>('drain_lookback_saved');
+          if (Array.isArray(saved) && saved.length > 0) {
+            const now = Date.now();
+            const additions = saved.map(ev => ({
+              session_id: ev?.session_id || '',
+              at: now,
+              duration: typeof ev?.duration === 'number' ? ev.duration : 0,
+            }));
+            for (const ev of additions) {
+              showToast(`직전 ${Math.round(ev.duration)}초 저장됨: ${ev.session_id}`, 'ok');
+            }
+            setRecentCaptures(prev => [...prev, ...additions]);
+            setRefreshKey(k => k + 1);
+          }
+        }
       } catch {}
     }, 1000);
     return () => clearInterval(id);
-  }, [recording]);
+  }, [recording, buffering]);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -153,6 +182,56 @@ export default function App() {
     }
   }, [showToast]);
 
+  const startBuffering = useCallback(async () => {
+    const config = captureConfigRef.current;
+    if (!config) {
+      showToast('캡처 설정을 먼저 구성하세요', 'err');
+      return;
+    }
+    const target = config.target;
+    if (target?.kind !== 'window' && target?.kind !== 'monitor') {
+      showToast('직전 기록 저장은 모니터/창 캡처만 지원합니다', 'err');
+      return;
+    }
+    setTransition('starting');
+    setRecentCaptures([]);
+    try {
+      await invoke<number>('start_buffering', {
+        config: { ...config, buffer_seconds: bufferSeconds },
+      });
+      setTransition(null);
+      setBuffering(true);
+      setElapsed(0);
+      showToast(`버퍼링 시작 (${bufferSeconds}초 윈도우)`, 'ok');
+    } catch (e) {
+      setTransition(null);
+      showToast(`버퍼링 시작 실패: ${e}`, 'err');
+    }
+  }, [showToast, bufferSeconds]);
+
+  const saveLookbackNow = useCallback(async () => {
+    try {
+      await invoke('save_lookback_now');
+      // The status loop above will drain "saved" events and toast them.
+    } catch (e) {
+      showToast(`저장 실패: ${e}`, 'err');
+    }
+  }, [showToast]);
+
+  const stopBuffering = useCallback(async () => {
+    setTransition('stopping');
+    setBuffering(false);
+    try {
+      await invoke('stop_buffering');
+      setTransition(null);
+      showToast('버퍼링 중지', 'info');
+      setRefreshKey(k => k + 1);
+    } catch (e) {
+      setTransition(null);
+      showToast(`버퍼링 중지 오류: ${e}`, 'err');
+    }
+  }, [showToast]);
+
   const stopRecording = useCallback(async () => {
     setTransition('stopping');
     setRecording(false);
@@ -197,6 +276,13 @@ export default function App() {
       transition={transition}
       onStart={startRecording}
       onStop={stopRecording}
+      buffering={buffering}
+      bufferSeconds={bufferSeconds}
+      onBufferSecondsChange={setBufferSeconds}
+      onStartBuffering={startBuffering}
+      onSaveLookback={saveLookbackNow}
+      onStopBuffering={stopBuffering}
+      recentCaptures={recentCaptures}
       elapsed={elapsed}
       fmtElapsed={fmtElapsed}
       sessionId={sessionId}

@@ -216,6 +216,119 @@ _HTML_TEMPLATE = r"""<!doctype html>
   }
   .speed button.active { background: oklch(0.25 0.01 270); color: white; }
 
+  /* ── Trim mode ─────────────────────────────────────────── */
+  .trim-toggle {
+    height: 28px; padding: 0 10px;
+    display: inline-flex; align-items: center; gap: 5px;
+    background: transparent; color: oklch(0.75 0.01 270);
+    border: 1px solid oklch(0.25 0.01 270); border-radius: 6px;
+    font-size: 11.5px; font-weight: 500; cursor: pointer;
+  }
+  .trim-toggle:hover { background: oklch(0.2 0.01 270); color: white; }
+  .trim-toggle.active {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+  .trim-bar {
+    display: none;
+    align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px;
+    background: oklch(0.13 0.013 270);
+    border-top: 1px solid oklch(0.2 0.01 270);
+    color: oklch(0.85 0.01 270);
+    font-size: 12px;
+  }
+  .trim-bar.active { display: flex; }
+  .trim-bar button {
+    height: 26px; padding: 0 10px;
+    background: transparent; color: oklch(0.85 0.01 270);
+    border: 1px solid oklch(0.25 0.01 270); border-radius: 5px;
+    font-size: 11.5px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px;
+    cursor: pointer;
+  }
+  .trim-bar button:hover:not(:disabled) { background: oklch(0.2 0.01 270); color: white; }
+  .trim-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .trim-bar .trim-readout {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    font-family: 'Geist Mono'; font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+  }
+  .trim-bar .trim-readout .label { color: oklch(0.6 0.01 270); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .trim-bar .trim-readout .v { color: white; }
+  .trim-bar .trim-readout.unset .v { color: oklch(0.5 0.01 270); }
+  .trim-bar .trim-spacer { flex: 1; }
+  .trim-bar .trim-save {
+    background: var(--accent); color: white;
+    border-color: var(--accent);
+  }
+  .trim-bar .trim-save:hover:not(:disabled) { background: oklch(0.6 0.18 282); color: white; }
+  .trim-bar .trim-msg {
+    font-size: 11.5px; color: oklch(0.7 0.01 270);
+    margin-left: 4px;
+  }
+  .trim-bar .trim-msg.error { color: var(--danger); }
+  .trim-bar .trim-msg.success { color: var(--success); }
+
+  /* Range overlay on the scrub bar — sits above scrub-fill. */
+  .scrub-range {
+    position: absolute; top: 0; bottom: 0;
+    background: var(--accent-soft); opacity: 0.45;
+    pointer-events: none;
+    border-left: 2px solid var(--accent);
+    border-right: 2px solid var(--accent);
+    box-sizing: border-box;
+    display: none;
+  }
+  .scrub-range.active { display: block; }
+
+  /* Save modal */
+  .trim-modal-backdrop {
+    position: fixed; inset: 0;
+    background: oklch(0 0 0 / 0.55);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .trim-modal-backdrop.active { display: flex; }
+  .trim-modal {
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 12px 40px oklch(0 0 0 / 0.5);
+    width: min(420px, 92vw);
+    padding: 20px 22px;
+  }
+  .trim-modal h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+  .trim-modal p { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+  .trim-modal .range {
+    font-family: 'Geist Mono'; font-size: 12.5px;
+    background: var(--bg-2); border-radius: 6px;
+    padding: 8px 12px; margin-bottom: 14px;
+    color: var(--fg-2);
+  }
+  .trim-modal .opts { display: grid; gap: 8px; margin-bottom: 18px; }
+  .trim-modal label {
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 9px 11px; border: 1px solid var(--border);
+    border-radius: 7px; cursor: pointer; font-size: 13px;
+  }
+  .trim-modal label:has(input:checked) {
+    border-color: var(--accent); background: var(--accent-soft);
+  }
+  .trim-modal label .desc { color: var(--muted); font-size: 11.5px; display: block; margin-top: 2px; }
+  .trim-modal input[type="radio"] { margin-top: 2px; accent-color: var(--accent); }
+  .trim-modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .trim-modal .actions button {
+    height: 32px; padding: 0 14px; border-radius: 6px;
+    font-size: 13px; font-weight: 500; border: 1px solid var(--border);
+    background: var(--surface); color: var(--fg); cursor: pointer;
+  }
+  .trim-modal .actions button:hover:not(:disabled) { background: var(--surface-hover); }
+  .trim-modal .actions button.primary {
+    background: var(--accent); color: white; border-color: var(--accent);
+  }
+  .trim-modal .actions button.primary:hover:not(:disabled) { background: oklch(0.6 0.18 282); }
+  .trim-modal .actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .trim-modal .modal-msg { color: var(--danger); font-size: 12px; margin-top: 8px; min-height: 16px; }
+
   .side {
     display: grid;
     grid-template-rows: auto 1fr;
@@ -417,6 +530,7 @@ __TRACKS_HTML__
         <div class="scrub" id="scrub">
           <div class="scrub-track">
             <div class="scrub-fill" id="scrub-fill" style="width: 0%"></div>
+            <div class="scrub-range" id="scrub-range"></div>
             <div class="scrub-handle" id="scrub-handle" style="left: 0%"></div>
             <div id="scrub-markers"></div>
           </div>
@@ -427,6 +541,24 @@ __TRACKS_HTML__
           <button data-rate="2">2×</button>
           <button data-rate="4">4×</button>
         </div>
+        <button class="trim-toggle" id="trim-toggle" title="트림 모드 (단축키 I/O로 마크)">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="4" cy="11" r="2"/><circle cx="4" cy="5" r="2"/>
+            <path d="M14 4 6.5 11M14 12 9 8.5"/>
+          </svg>
+          <span>트리밍</span>
+        </button>
+      </div>
+      <div class="trim-bar" id="trim-bar">
+        <button id="trim-mark-in" title="현재 시점을 시작점으로 (I)">[ I 시작 ]</button>
+        <button id="trim-mark-out" title="현재 시점을 끝점으로 (O)">[ O 끝 ]</button>
+        <button id="trim-reset" title="구간 초기화 (Backspace)">초기화</button>
+        <span class="trim-readout unset" id="trim-readout-in"><span class="label">in</span><span class="v">—</span></span>
+        <span class="trim-readout unset" id="trim-readout-out"><span class="label">out</span><span class="v">—</span></span>
+        <span class="trim-readout unset" id="trim-readout-len"><span class="label">길이</span><span class="v">—</span></span>
+        <span class="trim-spacer"></span>
+        <span class="trim-msg" id="trim-msg"></span>
+        <button class="trim-save" id="trim-save" disabled>저장…</button>
       </div>
     </div>
 
@@ -472,6 +604,33 @@ __TRACKS_HTML__
   </div>
 </div>
 
+<div class="trim-modal-backdrop" id="trim-modal-backdrop">
+  <div class="trim-modal" role="dialog" aria-labelledby="trim-modal-title">
+    <h2 id="trim-modal-title">트림 저장</h2>
+    <p>선택한 구간을 새 세션으로 저장하거나 원본을 덮어쓸 수 있습니다.</p>
+    <div class="range" id="trim-modal-range">—</div>
+    <div class="opts">
+      <label>
+        <input type="radio" name="trim-mode" value="new" checked>
+        <span>
+          새 세션으로 저장 <span class="desc">원본은 그대로, <code>{원본id}_trim_NNN</code> 폴더에 잘린 결과를 만듭니다.</span>
+        </span>
+      </label>
+      <label>
+        <input type="radio" name="trim-mode" value="overwrite">
+        <span>
+          원본 덮어쓰기 <span class="desc">디스크 공간을 절약하지만 되돌릴 수 없습니다.</span>
+        </span>
+      </label>
+    </div>
+    <div class="actions">
+      <button id="trim-modal-cancel">취소</button>
+      <button class="primary" id="trim-modal-confirm">저장</button>
+    </div>
+    <div class="modal-msg" id="trim-modal-msg"></div>
+  </div>
+</div>
+
 <script id="events-data" type="application/json">__EVENTS_JSON__</script>
 <script id="meta-data" type="application/json">__META_JSON__</script>
 <script id="metrics-data" type="application/json">__METRICS_JSON__</script>
@@ -487,7 +646,13 @@ __TRACKS_HTML__
   // ── State ─────────────────────────────────────────────────
   const video = document.getElementById('video');
   let DURATION = parseFloat(META.duration_seconds) || 0;
-  const state = { t: 0, tab: 'all', filter: 'all', query: '' };
+  const SESSION_ID = META.session_id || '';
+  const state = {
+    t: 0, tab: 'all', filter: 'all', query: '',
+    // trim mode
+    trimActive: false,
+    trimIn: null, trimOut: null,
+  };
 
   function fmtT(t) {
     if (!isFinite(t) || t < 0) t = 0;
@@ -938,9 +1103,233 @@ __TRACKS_HTML__
   });
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // Trim mode: I / O mark, Backspace reset. Skipped entirely when no
+    // backend is available — those keys do nothing rather than activate a
+    // toolbar the user can't act on.
+    if (TRIM_BACKEND !== 'none') {
+      if (e.key === 'i' || e.key === 'I')      { e.preventDefault(); setTrimIn(state.t); return; }
+      if (e.key === 'o' || e.key === 'O')      { e.preventDefault(); setTrimOut(state.t); return; }
+      if (state.trimActive && e.key === 'Backspace') { e.preventDefault(); resetTrim(); return; }
+      if (e.key === 'Escape' && TRIM.modal.classList.contains('active')) {
+        e.preventDefault(); closeTrimModal(); return;
+      }
+    }
     if (e.key === ' ')        { e.preventDefault(); document.getElementById('play').click(); }
     else if (e.key === 'ArrowLeft')  document.getElementById('prev').click();
     else if (e.key === 'ArrowRight') document.getElementById('next').click();
+  });
+
+  // ── Trim mode ─────────────────────────────────────────
+  // Only show the trim toolbar when a backend can actually save (Hub HTTP or
+  // a Tauri WebviewWindow). In a plain file:// browser there's no way to
+  // execute the trim, so hide the UI entirely rather than show a disabled
+  // button with a confusing tooltip.
+  const TRIM_BACKEND = (function () {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) return 'tauri';
+    const proto = (window.location && window.location.protocol) || '';
+    if (proto === 'http:' || proto === 'https:') return 'hub';
+    return 'none';
+  })();
+
+  if (TRIM_BACKEND === 'none') {
+    const tt = document.getElementById('trim-toggle');
+    const tb = document.getElementById('trim-bar');
+    if (tt) tt.style.display = 'none';
+    if (tb) tb.style.display = 'none';
+  }
+
+  const TRIM = {
+    toggle: document.getElementById('trim-toggle'),
+    bar: document.getElementById('trim-bar'),
+    range: document.getElementById('scrub-range'),
+    inBtn: document.getElementById('trim-mark-in'),
+    outBtn: document.getElementById('trim-mark-out'),
+    resetBtn: document.getElementById('trim-reset'),
+    saveBtn: document.getElementById('trim-save'),
+    msg: document.getElementById('trim-msg'),
+    readoutIn: document.getElementById('trim-readout-in'),
+    readoutOut: document.getElementById('trim-readout-out'),
+    readoutLen: document.getElementById('trim-readout-len'),
+    modal: document.getElementById('trim-modal-backdrop'),
+    modalRange: document.getElementById('trim-modal-range'),
+    modalCancel: document.getElementById('trim-modal-cancel'),
+    modalConfirm: document.getElementById('trim-modal-confirm'),
+    modalMsg: document.getElementById('trim-modal-msg'),
+  };
+
+  function fmtTrimT(t) {
+    if (t == null || !isFinite(t)) return '—';
+    if (t < 0) t = 0;
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    const ms = Math.round((t - Math.floor(t)) * 1000);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+  }
+
+  function setTrimMsg(text, level) {
+    TRIM.msg.textContent = text || '';
+    TRIM.msg.className = 'trim-msg' + (level ? ' ' + level : '');
+  }
+
+  function renderTrim() {
+    const hasIn = state.trimIn != null;
+    const hasOut = state.trimOut != null;
+    const lo = hasIn ? state.trimIn : null;
+    const hi = hasOut ? state.trimOut : null;
+    TRIM.readoutIn.classList.toggle('unset', !hasIn);
+    TRIM.readoutOut.classList.toggle('unset', !hasOut);
+    TRIM.readoutIn.querySelector('.v').textContent = fmtTrimT(lo);
+    TRIM.readoutOut.querySelector('.v').textContent = fmtTrimT(hi);
+    let len = null;
+    if (hasIn && hasOut) len = Math.max(0, hi - lo);
+    TRIM.readoutLen.classList.toggle('unset', len == null);
+    TRIM.readoutLen.querySelector('.v').textContent = len == null ? '—' : fmtTrimT(len);
+
+    // Range overlay on scrub bar
+    if (hasIn && hasOut && DURATION > 0 && hi > lo) {
+      const leftPct = Math.max(0, Math.min(100, (lo / DURATION) * 100));
+      const widthPct = Math.max(0, Math.min(100 - leftPct, ((hi - lo) / DURATION) * 100));
+      TRIM.range.style.left = leftPct + '%';
+      TRIM.range.style.width = widthPct + '%';
+      TRIM.range.classList.add('active');
+    } else {
+      TRIM.range.classList.remove('active');
+    }
+
+    // Save button enabled when both marks set, valid window, and a backend exists.
+    const valid = hasIn && hasOut && (hi - lo) >= 0.1;
+    const backend = TRIM_BACKEND;
+    const canSave = valid && backend !== 'none';
+    TRIM.saveBtn.disabled = !canSave;
+    if (valid && backend === 'none') {
+      setTrimMsg('Hub 업로드 또는 Tauri 앱에서 열어주세요', 'error');
+    } else if (!valid && hasIn && hasOut) {
+      setTrimMsg('구간이 너무 짧습니다 (≥ 0.1s)', 'error');
+    } else if (state.trimActive && !valid) {
+      setTrimMsg('I/O 키 또는 버튼으로 시작·끝을 지정하세요');
+    } else if (state.trimActive) {
+      setTrimMsg('');
+    }
+  }
+
+  function setTrimActive(on) {
+    state.trimActive = !!on;
+    TRIM.toggle.classList.toggle('active', state.trimActive);
+    TRIM.bar.classList.toggle('active', state.trimActive);
+    if (!state.trimActive) setTrimMsg('');
+    renderTrim();
+  }
+
+  function setTrimIn(t) {
+    if (t == null || !isFinite(t)) return;
+    state.trimIn = Math.max(0, Math.min(DURATION, t));
+    // Auto-flip if out is now before in.
+    if (state.trimOut != null && state.trimOut < state.trimIn) {
+      const swap = state.trimOut; state.trimOut = state.trimIn; state.trimIn = swap;
+    }
+    if (!state.trimActive) setTrimActive(true);
+    renderTrim();
+  }
+  function setTrimOut(t) {
+    if (t == null || !isFinite(t)) return;
+    state.trimOut = Math.max(0, Math.min(DURATION, t));
+    if (state.trimIn != null && state.trimOut < state.trimIn) {
+      const swap = state.trimOut; state.trimOut = state.trimIn; state.trimIn = swap;
+    }
+    if (!state.trimActive) setTrimActive(true);
+    renderTrim();
+  }
+  function resetTrim() {
+    state.trimIn = state.trimOut = null;
+    setTrimMsg('');
+    renderTrim();
+  }
+
+  TRIM.toggle.addEventListener('click', () => setTrimActive(!state.trimActive));
+  TRIM.inBtn.addEventListener('click', () => setTrimIn(state.t));
+  TRIM.outBtn.addEventListener('click', () => setTrimOut(state.t));
+  TRIM.resetBtn.addEventListener('click', resetTrim);
+
+  // Modal open/close
+  function openTrimModal() {
+    const lo = state.trimIn, hi = state.trimOut;
+    if (lo == null || hi == null || hi - lo < 0.1) return;
+    TRIM.modalRange.textContent = `${fmtTrimT(lo)} → ${fmtTrimT(hi)}    (길이 ${fmtTrimT(hi - lo)})`;
+    TRIM.modalMsg.textContent = '';
+    TRIM.modal.classList.add('active');
+  }
+  function closeTrimModal() { TRIM.modal.classList.remove('active'); }
+  TRIM.saveBtn.addEventListener('click', openTrimModal);
+  TRIM.modalCancel.addEventListener('click', closeTrimModal);
+  TRIM.modal.addEventListener('click', e => { if (e.target === TRIM.modal) closeTrimModal(); });
+
+  async function dispatchTrim({ tStart, tEnd, overwrite }) {
+    const backend = TRIM_BACKEND;
+    if (backend === 'tauri') {
+      // Tauri 2 exposes invoke at window.__TAURI_INTERNALS__.invoke and
+      // also globally as window.__TAURI__.core.invoke (with withGlobalTauri).
+      const invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke)
+        || (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke);
+      if (!invoke) throw new Error('Tauri invoke 함수를 찾을 수 없습니다');
+      return await invoke('trim_session', {
+        sessionId: SESSION_ID,
+        tStart: tStart, tEnd: tEnd, overwrite: overwrite,
+      });
+    }
+    if (backend === 'hub') {
+      const r = await fetch(`/api/sessions/${encodeURIComponent(SESSION_ID)}/trim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ t_start: tStart, t_end: tEnd, overwrite: overwrite }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`HTTP ${r.status}: ${txt}`);
+      }
+      return await r.json();
+    }
+    throw new Error('이 viewer는 트림을 지원하지 않는 환경에서 열렸습니다.');
+  }
+
+  TRIM.modalConfirm.addEventListener('click', async () => {
+    const overwrite =
+      document.querySelector('input[name="trim-mode"]:checked').value === 'overwrite';
+    const lo = state.trimIn, hi = state.trimOut;
+    TRIM.modalConfirm.disabled = true;
+    TRIM.modalCancel.disabled = true;
+    TRIM.modalMsg.textContent = '처리 중…';
+    TRIM.modalMsg.style.color = 'var(--muted)';
+    try {
+      const result = await dispatchTrim({ tStart: lo, tEnd: hi, overwrite });
+      const backend = TRIM_BACKEND;
+      if (backend === 'hub' && result && result.viewer_path && !overwrite) {
+        // Navigate to the freshly trimmed session's viewer.
+        window.location.href = result.viewer_path;
+        return;
+      }
+      if (backend === 'tauri' && result && result.session_id && !overwrite) {
+        // Reopen the new session's viewer in a Tauri window.
+        const invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke)
+          || (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke);
+        try { await invoke('open_viewer', { sessionId: result.session_id }); } catch (e) {}
+        closeTrimModal();
+        setTrimMsg(`저장됨: ${result.session_id}`, 'success');
+        return;
+      }
+      if (overwrite) {
+        closeTrimModal();
+        window.location.reload();
+        return;
+      }
+      closeTrimModal();
+      setTrimMsg('저장 완료', 'success');
+    } catch (e) {
+      TRIM.modalMsg.textContent = String(e && e.message ? e.message : e);
+      TRIM.modalMsg.style.color = 'var(--danger)';
+    } finally {
+      TRIM.modalConfirm.disabled = false;
+      TRIM.modalCancel.disabled = false;
+    }
   });
 
   // ── Listen for seek requests from the embedding Hub detail page. ──
@@ -962,6 +1351,7 @@ __TRACKS_HTML__
   renderMarkers();
   renderMetrics();
   renderEvents();
+  renderTrim();
   paintThemeIcon();
 })();
 </script>

@@ -185,6 +185,43 @@ def cmd_hub_download() -> dict:
     return {"session_id": session_id, "path": str(target)}
 
 
+def cmd_trim_session() -> dict:
+    """Trim a finished session: argv[2:] = session_id t_start t_end overwrite [output_root].
+
+    Wraps ``core.trim.trim_session``; called from the Tauri ``trim_session``
+    Rust command when the user clicks Save in viewer.html.
+    """
+    if len(sys.argv) < 6:
+        return {"error": "usage: bridge.py trim-session <session_id> <t_start> <t_end> <overwrite0|1> [<output_root>]"}
+    session_id = sys.argv[2]
+    try:
+        t_start = float(sys.argv[3])
+        t_end = float(sys.argv[4])
+    except ValueError:
+        return {"error": "t_start and t_end must be numbers"}
+    overwrite = sys.argv[5] in ("1", "true", "True", "yes")
+    out_root_arg = sys.argv[6] if len(sys.argv) > 6 else ""
+    output_root = Path(out_root_arg) if out_root_arg else _REPO_ROOT / "output"
+    src_dir = output_root / session_id
+    if not src_dir.is_dir():
+        return {"error": f"session not found: {src_dir}"}
+    from core.trim import trim_session
+    result = trim_session(
+        src_dir=src_dir,
+        output_root=output_root,
+        t_start=t_start,
+        t_end=t_end,
+        overwrite=overwrite,
+    )
+    return {
+        "session_id": result.new_session_id,
+        "session_dir": str(result.session_dir),
+        "viewer_path": str(result.session_dir / "viewer.html"),
+        "duration_seconds": result.duration_seconds,
+        "warnings": result.warnings,
+    }
+
+
 def cmd_hub_sync_queue() -> dict:
     """Find unuploaded local sessions and upload them all. Returns summary."""
     url, token = _hub_args()
@@ -244,6 +281,7 @@ COMMANDS = {
     "hub-share": cmd_hub_share,
     "hub-download": cmd_hub_download,
     "hub-sync-queue": cmd_hub_sync_queue,
+    "trim-session": cmd_trim_session,
 }
 
 

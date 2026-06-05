@@ -58,6 +58,7 @@ from core.screen_recorder import (
     WindowTarget,
 )
 from core.session import Session
+from core.timeline_utils import format_vtt_time as _format_vtt_time
 from core.viewer_generator import generate_viewer
 
 # Sink signature shared by the lightweight recorders in lookback mode:
@@ -71,14 +72,6 @@ FINAL_NAME = "screen.mp4"
 DEFAULT_BUFFER_SECONDS = 30
 MIN_BUFFER_SECONDS = 5
 MAX_BUFFER_SECONDS = 300
-
-
-def _format_vtt_time(seconds: float) -> str:
-    seconds = max(0.0, seconds)
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = seconds - 3600 * h - 60 * m
-    return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
 class RingEventBuffer:
