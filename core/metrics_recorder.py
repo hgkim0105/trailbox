@@ -19,6 +19,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import psutil
 
@@ -40,11 +41,15 @@ class MetricsRecorder:
         output_path: Path,
         t0_perf: float,
         interval_s: float = 1.0,
+        *,
+        sink: Callable[[dict, "str | None", float], None] | None = None,
     ) -> None:
         self.pid = int(pid)
         self.output_path = Path(output_path)
         self.t0_perf = float(t0_perf)
         self.interval_s = float(interval_s)
+        # Lookback mode: route samples to the sink instead of process.jsonl.
+        self._sink = sink
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -67,8 +72,9 @@ class MetricsRecorder:
                 f"access denied reading PID {self.pid} (anti-cheat or elevated process)"
             ) from e
 
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = open(self.output_path, "w", encoding="utf-8", newline="\n")
+        if self._sink is None:
+            self.output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._fh = open(self.output_path, "w", encoding="utf-8", newline="\n")
 
         # Best-effort GPU monitor — failure to attach (no GPU counters / driver
         # missing) is non-fatal, samples will just lack gpu_pct.
@@ -168,6 +174,10 @@ class MetricsRecorder:
             "process": payload,
             "ecs": {"version": _ECS_VERSION},
         }
+        if self._sink is not None:
+            self._sink(sample, None, 0.0)
+            self._samples_written += 1
+            return True
         if self._fh is not None:
             try:
                 self._fh.write(json.dumps(sample, ensure_ascii=False) + "\n")

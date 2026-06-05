@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -163,6 +164,7 @@ class LogCollector(FileSystemEventHandler):
         *,
         log_dirs: list[Path] | None = None,
         recursive: bool = True,
+        sink: Callable[[dict, "str | None", float], None] | None = None,
     ) -> None:
         # log_dir kept as a positional alias for back-compat with older
         # callers/tests. Accepts a single Path or a list.
@@ -196,6 +198,10 @@ class LogCollector(FileSystemEventHandler):
         self.t0_perf = float(t0_perf)
         self.extensions = frozenset(e.lower() for e in extensions)
         self.recursive = bool(recursive)
+        # Lookback mode: route finished records to the sink instead of writing
+        # logs.jsonl / logs.vtt. The raw-file archive is also skipped — a
+        # captured clip is a time window, not a snapshot of whole log files.
+        self._sink = sink
 
         # Precompute a display label per watched root. Default to the leaf
         # folder name; if two roots share a leaf (e.g. C:\GameA\Logs and
@@ -247,13 +253,14 @@ class LogCollector(FileSystemEventHandler):
                 "log_dir not found: " + ", ".join(str(d) for d in missing)
             )
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._jsonl_fh = open(
-            self.output_dir / "logs.jsonl", "w", encoding="utf-8", newline="\n"
-        )
-        self._vtt_fh = open(
-            self.output_dir / "logs.vtt", "w", encoding="utf-8", newline="\n"
-        )
-        self._vtt_fh.write("WEBVTT\n\n")
+        if self._sink is None:
+            self._jsonl_fh = open(
+                self.output_dir / "logs.jsonl", "w", encoding="utf-8", newline="\n"
+            )
+            self._vtt_fh = open(
+                self.output_dir / "logs.vtt", "w", encoding="utf-8", newline="\n"
+            )
+            self._vtt_fh.write("WEBVTT\n\n")
 
         # Snapshot existing log files at EOF; only new appended content is
         # captured. Walk recursively if requested so nested folders (e.g. a
@@ -514,31 +521,41 @@ class LogCollector(FileSystemEventHandler):
             "message": text,
             "ecs": {"version": ECS_VERSION},
         }
-        try:
-            if self._jsonl_fh is not None:
-                self._jsonl_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
-
         # VTT cue label: when there are 2+ sources, prefix "source/file"
         # so the subtitle overlay is unambiguous; otherwise just the file.
         if len(self.log_dirs) > 1:
             cue_label = f"{source}/{display}" if display else source
         else:
             cue_label = display
+        cue_text = f"[{cue_label}] {_vtt_escape(text)}"
+
+        if self._sink is not None:
+            # Lookback mode: ring-buffer the record + its cue.
+            self._sink(record, cue_text, VTT_CUE_DURATION_S)
+            self._lines_written += 1
+            return
+
+        try:
+            if self._jsonl_fh is not None:
+                self._jsonl_fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
         try:
             if self._vtt_fh is not None:
                 start = _format_vtt_time(t_video)
                 end = _format_vtt_time(t_video + VTT_CUE_DURATION_S)
-                self._vtt_fh.write(
-                    f"{start} --> {end}\n[{cue_label}] {_vtt_escape(text)}\n\n"
-                )
+                self._vtt_fh.write(f"{start} --> {end}\n{cue_text}\n\n")
         except OSError:
             pass
 
         self._lines_written += 1
 
     def _archive_raw(self) -> None:
+        # Lookback mode buffers a rolling window, not whole files — archiving
+        # the full source logs would defeat the point, so skip it.
+        if self._sink is not None:
+            return
         if not self._tailers:
             return
         self._raw_dir.mkdir(parents=True, exist_ok=True)

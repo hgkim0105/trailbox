@@ -19,7 +19,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # win32gui (pywin32) and pynput together add ~150-250ms to import. Both are
 # only touched when a recording is actually running, so we defer them to
@@ -61,10 +61,15 @@ class InputRecorder:
         output_dir: Path,
         t0_perf: float,
         window_hwnd: int | None = None,
+        *,
+        sink: Callable[[dict, "str | None", float], None] | None = None,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.t0_perf = float(t0_perf)
         self.window_hwnd = int(window_hwnd) if window_hwnd else None
+        # When set (lookback mode), finished records go to the sink instead of
+        # being written to inputs.jsonl / inputs.vtt; no files are opened.
+        self._sink = sink
 
         self._stop = threading.Event()
         # Typed as Any to avoid importing pynput at module scope.
@@ -82,14 +87,15 @@ class InputRecorder:
     def start(self) -> None:
         from pynput import keyboard, mouse
 
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._jsonl_fh = open(
-            self.output_dir / "inputs.jsonl", "w", encoding="utf-8", newline="\n"
-        )
-        self._vtt_fh = open(
-            self.output_dir / "inputs.vtt", "w", encoding="utf-8", newline="\n"
-        )
-        self._vtt_fh.write("WEBVTT\n\n")
+        if self._sink is None:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            self._jsonl_fh = open(
+                self.output_dir / "inputs.jsonl", "w", encoding="utf-8", newline="\n"
+            )
+            self._vtt_fh = open(
+                self.output_dir / "inputs.vtt", "w", encoding="utf-8", newline="\n"
+            )
+            self._vtt_fh.write("WEBVTT\n\n")
 
         self._key_listener = keyboard.Listener(
             on_press=self._on_press,
@@ -152,6 +158,14 @@ class InputRecorder:
             "input": payload,
             "ecs": {"version": _ECS_VERSION},
         }
+        if self._sink is not None:
+            # Lookback mode: hand the finished record to the ring buffer. The
+            # VTT cue text mirrors the file path's labeling so a captured clip
+            # renders the same overlay.
+            self._sink(record, vtt_text, _VTT_CUE_DURATION_S)
+            self._events_written += 1
+            return
+
         line = json.dumps(record, ensure_ascii=False) + "\n"
         with self._lock:
             if self._jsonl_fh is not None:

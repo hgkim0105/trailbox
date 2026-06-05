@@ -16,12 +16,14 @@ write). For scrcpy it's passed through as ``--max-fps``.
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import signal
 import subprocess
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,17 +96,45 @@ CaptureTarget = MonitorTarget | WindowTarget | AndroidDeviceTarget | IOSDeviceTa
 
 
 class ScreenRecorder:
+    # Lookback ring segment length. Short enough that a captured clip is
+    # keyframe-trimmable to within a couple seconds of the requested window;
+    # long enough that segment churn (and the per-segment mp4/ts overhead)
+    # stays negligible.
+    _SEG_SECONDS = 2.0
+
     def __init__(
         self,
         output_path: Path,
         target: CaptureTarget,
         max_fps: int = 60,
         frames_log_path: Path | None = None,
+        *,
+        lookback: bool = False,
+        buffer_seconds: float = 30.0,
     ) -> None:
         self.output_path = Path(output_path)
         self.target = target
         self.max_fps = max(1, int(max_fps))
         self.frames_log_path = Path(frames_log_path) if frames_log_path else None
+
+        # Lookback mode: ffmpeg writes a rolling ring of mpegts segments into
+        # ``output_path`` (treated as a directory) instead of one mp4. A janitor
+        # prunes old segments and records each segment's creation perf-time so
+        # save_window() can map a wall-window onto the right files. Per-frame
+        # timing also goes to an in-memory ring instead of frames.jsonl.
+        self.lookback = bool(lookback)
+        self.buffer_seconds = float(buffer_seconds)
+        self._seg_dir = Path(output_path) if self.lookback else None
+        self._janitor_thread: threading.Thread | None = None
+        # perf_counter()/time.time() pair captured at start, so a segment file's
+        # wall-clock creation time can be converted into the buffering timeline.
+        self._perf0 = 0.0
+        self._wall0 = 0.0
+        # segment index -> creation perf-time, in ascending index order.
+        self._seg_marks: "dict[int, float]" = {}
+        self._seg_lock = threading.Lock()
+        # Per-frame timing ring: (perf_time, delta_ms). Bounded by janitor.
+        self._frame_ring: deque[tuple[float, float | None]] = deque()
 
         self._stop = threading.Event()
         self._started = threading.Event()
@@ -169,6 +199,11 @@ class ScreenRecorder:
     def _run(self) -> None:
         try:
             self._open_frame_log()
+            if self.lookback:
+                # Anchor the wall↔perf conversion used to date segment files.
+                self._perf0 = time.perf_counter()
+                self._wall0 = time.time()
+                self._start_janitor()
             if isinstance(self.target, IOSDeviceTarget):
                 self._run_ios(self.target)
             elif isinstance(self.target, AndroidDeviceTarget):
@@ -186,6 +221,9 @@ class ScreenRecorder:
             # EOF on stdin and finalize the mp4 footer cleanly.
             self._close_scrcpy()
             self._close_ffmpeg()
+            if self._janitor_thread is not None:
+                self._janitor_thread.join(timeout=2.0)
+                self._janitor_thread = None
 
     # ---- iOS (AVFoundation / CoreMediaIO, macOS-only) ---------------------
 
@@ -563,9 +601,19 @@ class ScreenRecorder:
         else:
             t_video = t - self._first_write_t
             delta_ms = (t - self._last_write_t) * 1000.0
-            self._frame_intervals_ms.append(delta_ms)
         self._last_write_t = t
-        self._frame_log(t_video, delta_ms)
+        if self.lookback:
+            # Per-frame timing goes to a bounded ring; save_window() slices it.
+            # We keep the absolute perf-time so frames map onto the same window
+            # the video/audio/event streams use.
+            cutoff = t - self.buffer_seconds
+            self._frame_ring.append((t, delta_ms))
+            while self._frame_ring and self._frame_ring[0][0] < cutoff:
+                self._frame_ring.popleft()
+        else:
+            if delta_ms is not None:
+                self._frame_intervals_ms.append(delta_ms)
+            self._frame_log(t_video, delta_ms)
         self._frames_written += 1
 
     def _frame_log(self, t_video: float, delta_ms: float | None) -> None:
@@ -611,6 +659,8 @@ class ScreenRecorder:
         }
 
     def _spawn_ffmpeg(self, width: int, height: int) -> subprocess.Popen:
+        if self.lookback:
+            return self._spawn_ffmpeg_segments(width, height)
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self._stderr_log = open(str(self.output_path) + ".ffmpeg.log", "wb")
         # -use_wallclock_as_timestamps stamps each input frame with its arrival
@@ -668,6 +718,262 @@ class ScreenRecorder:
                 self._stderr_log.close()
             except OSError:
                 pass
+
+    # ---- Lookback: segment ring + window extraction -----------------------
+
+    def _spawn_ffmpeg_segments(self, width: int, height: int) -> subprocess.Popen:
+        """ffmpeg that encodes into a rolling ring of mpegts segments.
+
+        Same BGRA-stdin → libx264 pipeline as the normal path, but the output
+        is the segment muxer: one ``seg_%05d.ts`` every ``_SEG_SECONDS``, each
+        starting on a forced keyframe so the trailing segments concat cleanly
+        with ``-c copy`` at capture time. mpegts is used (not fragmented mp4)
+        because it tolerates reading the still-being-written active segment.
+        """
+        assert self._seg_dir is not None
+        self._seg_dir.mkdir(parents=True, exist_ok=True)
+        self._stderr_log = open(str(self._seg_dir / "ffmpeg.log"), "wb")
+        seg_pattern = str(self._seg_dir / "seg_%05d.ts")
+        gop = max(1, int(self._SEG_SECONDS * self.max_fps))
+        cmd = [
+            get_ffmpeg_exe(),
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-y",
+            "-use_wallclock_as_timestamps", "1",
+            "-f", "rawvideo",
+            "-pix_fmt", "bgra",
+            "-s", f"{width}x{height}",
+            "-framerate", str(self.max_fps),
+            "-i", "-",
+            "-an",
+            "-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-g", str(gop),
+            "-force_key_frames", f"expr:gte(t,n_forced*{self._SEG_SECONDS})",
+            "-f", "segment",
+            "-segment_time", str(self._SEG_SECONDS),
+            "-segment_format", "mpegts",
+            "-reset_timestamps", "1",
+            seg_pattern,
+        ]
+        return subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=self._stderr_log,
+            bufsize=0,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW")
+                else 0
+            ),
+        )
+
+    def _start_janitor(self) -> None:
+        self._janitor_thread = threading.Thread(
+            target=self._janitor_loop, name="ScreenSegJanitor", daemon=True
+        )
+        self._janitor_thread.start()
+
+    def _seg_index(self, path: str) -> int:
+        stem = Path(path).stem  # "seg_00042"
+        try:
+            return int(stem.split("_")[-1])
+        except ValueError:
+            return -1
+
+    def _perf_of_file(self, path: str) -> float:
+        """Convert a segment file's wall-clock creation time to the perf timeline."""
+        try:
+            wall = os.path.getctime(path)
+        except OSError:
+            wall = time.time()
+        return wall - self._wall0 + self._perf0
+
+    def _janitor_loop(self) -> None:
+        """Record new segments' start times; prune ones older than the window.
+
+        Polls the segment dir a few times a second. Each newly-seen segment
+        index gets its creation perf-time stamped (the content-start of that
+        segment). Segments whose successor is already older than the buffer
+        window get deleted, keeping disk usage bounded to ~buffer_seconds of
+        video regardless of how long buffering runs.
+        """
+        # Keep a little margin beyond the requested window so save_window()
+        # can always cover the full buffer even mid-segment.
+        keep_seconds = self.buffer_seconds + 3 * self._SEG_SECONDS
+        assert self._seg_dir is not None
+        pattern = str(self._seg_dir / "seg_*.ts")
+        while not self._stop.is_set():
+            try:
+                files = sorted(glob.glob(pattern), key=self._seg_index)
+                now = time.perf_counter()
+                with self._seg_lock:
+                    for f in files:
+                        idx = self._seg_index(f)
+                        if idx >= 0 and idx not in self._seg_marks:
+                            self._seg_marks[idx] = self._perf_of_file(f)
+                    cutoff = now - keep_seconds
+                    # Drop segments older than the keep window. Never touch the
+                    # two newest (one is the active write target).
+                    for f in files[:-2]:
+                        idx = self._seg_index(f)
+                        mark = self._seg_marks.get(idx)
+                        if mark is not None and mark < cutoff:
+                            try:
+                                os.remove(f)
+                            except OSError:
+                                pass
+                            self._seg_marks.pop(idx, None)
+            except Exception:  # noqa: BLE001 - janitor is best-effort
+                pass
+            self._stop.wait(timeout=0.25)
+
+    def save_window(
+        self, t_end_perf: float, buffer_seconds: float, out_path: Path
+    ) -> tuple[float, float]:
+        """Concat the trailing segments overlapping the window into ``out_path``.
+
+        Returns ``(t0_new_perf, duration_s)`` where ``t0_new_perf`` is the
+        content-start of the earliest concatenated segment — the shared zero the
+        caller rebases audio + events to. Buffering is undisturbed: we only read
+        finalized + active segment files.
+        """
+        assert self._seg_dir is not None
+        cutoff = t_end_perf - float(buffer_seconds)
+        pattern = str(self._seg_dir / "seg_*.ts")
+        files = sorted(glob.glob(pattern), key=self._seg_index)
+        if not files:
+            raise RuntimeError("no video segments buffered yet")
+
+        with self._seg_lock:
+            marks = dict(self._seg_marks)
+            for f in files:
+                idx = self._seg_index(f)
+                if idx not in marks:
+                    marks[idx] = self._perf_of_file(f)
+
+        # A segment overlaps the window if its successor starts after the
+        # cutoff (or it is the last segment). Walk newest→oldest, keep going
+        # until a segment starts before the cutoff.
+        included: list[str] = []
+        for i in range(len(files) - 1, -1, -1):
+            included.append(files[i])
+            start = marks.get(self._seg_index(files[i]), t_end_perf)
+            if start <= cutoff:
+                break
+        included.reverse()
+        if not included:
+            included = [files[-1]]
+
+        t0_new = marks.get(self._seg_index(included[0]), cutoff)
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        list_path = out_path.with_suffix(".segments.txt")
+        list_path.write_text(
+            "\n".join(f"file '{Path(p).as_posix()}'" for p in included),
+            encoding="utf-8",
+        )
+        log_path = open(str(out_path) + ".concat.log", "wb")
+        try:
+            cmd = [
+                get_ffmpeg_exe(),
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(list_path),
+                "-c", "copy",
+                "-movflags", "+faststart",
+                str(out_path),
+            ]
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=log_path,
+                creationflags=(
+                    subprocess.CREATE_NO_WINDOW
+                    if hasattr(subprocess, "CREATE_NO_WINDOW")
+                    else 0
+                ),
+            )
+        finally:
+            log_path.close()
+        if proc.returncode != 0 or not out_path.exists():
+            raise RuntimeError("ffmpeg segment concat failed (see .concat.log)")
+        try:
+            list_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+        return t0_new, max(0.0, t_end_perf - t0_new)
+
+    def frame_window(
+        self, t0_new_perf: float, t_end_perf: float, frames_log_path: Path
+    ) -> tuple[int, float, dict]:
+        """Write frames.jsonl for the captured window and return its stats.
+
+        Mirrors the per-frame log + frame_stats of a normal session but only
+        for frames whose write-time falls inside ``[t0_new_perf, t_end_perf]``,
+        rebased so the clip starts at ``t_video_s == 0``.
+        """
+        frames = [
+            (t, d) for (t, d) in list(self._frame_ring)
+            if t0_new_perf <= t <= t_end_perf
+        ]
+        frames_log_path.parent.mkdir(parents=True, exist_ok=True)
+        intervals: list[float] = []
+        with open(frames_log_path, "w", encoding="utf-8", newline="\n") as fh:
+            for index, (t, delta_ms) in enumerate(frames):
+                t_video = round(t - t0_new_perf, 4)
+                # Drop the carried-over delta on the first kept frame — it spans
+                # the gap before the window and would skew jitter stats.
+                d = None if index == 0 else delta_ms
+                if d is not None:
+                    intervals.append(d)
+                rec = {
+                    "@timestamp": datetime.now(timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "t_video_s": t_video,
+                    "frame": {
+                        "index": index,
+                        "delta_ms": round(d, 3) if d is not None else None,
+                    },
+                    "ecs": {"version": "8.11"},
+                }
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+        count = len(frames)
+        effective_fps = 0.0
+        if count >= 2:
+            span = frames[-1][0] - frames[0][0]
+            if span > 0:
+                effective_fps = (count - 1) / span
+        stats = self._intervals_stats(intervals)
+        return count, effective_fps, stats
+
+    @staticmethod
+    def _intervals_stats(intervals: list[float]) -> dict:
+        if not intervals:
+            return {}
+        sorted_iv = sorted(intervals)
+        n = len(sorted_iv)
+        p99 = sorted_iv[min(n - 1, int(n * 0.99))]
+        p95 = sorted_iv[min(n - 1, int(n * 0.95))]
+        return {
+            "intervals": n,
+            "min_ms": round(min(intervals), 3),
+            "avg_ms": round(sum(intervals) / n, 3),
+            "max_ms": round(max(intervals), 3),
+            "p95_ms": round(p95, 3),
+            "p99_ms": round(p99, 3),
+        }
 
     # ---- scrcpy (Android) -------------------------------------------------
 
