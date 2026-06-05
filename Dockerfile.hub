@@ -30,8 +30,12 @@ COPY requirements-hub.txt ./
 RUN pip install --no-cache-dir -r requirements-hub.txt
 
 # Copy only the modules the server actually needs.
+# core/trim, timeline_utils, viewer_generator landed when the Hub gained the
+# session-trim endpoint (v0.14.0): the trim engine ffmpeg-cuts screen.mp4 and
+# regenerates viewer.html for the new clip server-side, so the container
+# needs those three on top of the frame_extractor that get_frame_at uses.
 COPY hub_server/ ./hub_server/
-COPY core/__init__.py core/frame_extractor.py ./core/
+COPY core/__init__.py core/frame_extractor.py core/trim.py core/timeline_utils.py core/viewer_generator.py ./core/
 COPY hub_entry.py ./
 
 # Storage volume mount point.
