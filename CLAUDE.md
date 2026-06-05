@@ -89,6 +89,19 @@ That field is written into every JSONL line from every recorder. It's how the vi
 
 Both paths feed the same ffmpeg subprocess. **Critical**: ffmpeg is spawned with `-use_wallclock_as_timestamps 1` + `-fps_mode passthrough`. We write to ffmpeg's stdin **only when a new frame is available** (subject to `max_fps` rate cap). Do not reintroduce a fixed-cadence ticker — the prior version did, and the resulting duplicate-frame judder was the bug that drove the VFR redesign.
 
+## Lookback ("instant replay") mode (`core/lookback.py`)
+
+A second capture model alongside start/stop: buffer continuously, then save the *preceding* N seconds the moment the user hits the capture hotkey (`Ctrl+Alt+S`) or button. NVIDIA ShadowPlay-style — buffering keeps running after each capture, so one run can yield many clips. **Windows desktop targets only** (Monitor/Window); mobile targets fall back to start/stop in `main.py`.
+
+Each stream is bounded *while idle-buffering* — that's the whole point, since buffering may run for hours:
+
+- **Video** can't sit in RAM as raw frames (1080p60×30s ≈ 14 GB). `ScreenRecorder(lookback=True)` keeps the same BGRA→libx264 pipeline but swaps the single-mp4 output for the **segment muxer**: a rolling ring of `seg_%05d.ts` (mpegts, `_SEG_SECONDS=2`, each forced to start on a keyframe). A janitor thread prunes old segments and stamps each one's creation perf-time (via `os.path.getctime` mapped onto the buffering clock). `save_window()` concats the trailing segments overlapping `[t_save - N, t_save]` with `-c copy` — mpegts is chosen precisely because it tolerates reading the still-being-written active segment.
+- **Audio / logs / inputs / metrics** are cheap, so they ring-buffer in memory. The lightweight recorders gained an optional `sink` callback (keyword-only); when set they push finished records to a `RingEventBuffer` (pruned by `t_video_s` age) instead of opening files. `AudioRecorder(lookback=True)` keeps a deque of `(perf, pcm_bytes)` chunks and `flush_window()` sample-accurately trims the first/last chunk.
+
+**The rebasing rule is what keeps the `t_video_s` contract intact.** On capture, `t0_new` = the content-start of the earliest concatenated video segment (NOT `t_save - N`, which would be keyframe-misaligned). Audio/events are then shifted by the constant `t0_new - t0_buffer` so the saved clip starts at `t_video_s == 0` and video/audio/events stay aligned to the same zero. All recorders share one process-wide `perf_counter()` clock, which is what makes the cross-thread `t0_new` comparison valid.
+
+`LookbackController` owns the buffering recorders + per-stream rings and runs the whole capture→mux→finalize→viewer flow on the GUI thread (same place `_on_stop_requested` already does synchronous mux). The produced session is byte-for-byte a normal session folder (`capture_mode: "lookback"` in the meta is the only tell), so the viewer + MCP server need no changes.
+
 ## COM threading order (per-thread now; was per-module before v0.8.x startup work)
 
 Historically `core.screen_recorder` (dxcam → comtypes) HAD TO import before `core.audio_recorder` (soundcard) at main-thread module level, because the second one to load would crash with `OSError [WinError -2147417850] "스레드 모드가 설정된 후에는 바꿀 수 없습니다"`.

@@ -19,7 +19,14 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 
 class RecordingOverlay(QWidget):
-    def __init__(self, stop_hotkey_label: str = "Ctrl+Alt+R") -> None:
+    def __init__(
+        self,
+        stop_hotkey_label: str = "Ctrl+Alt+R",
+        capture_hotkey_label: str | None = None,
+    ) -> None:
+        # When ``capture_hotkey_label`` is given we're in lookback mode: the
+        # overlay reads "버퍼링" and advertises both the capture and stop keys.
+        self._capture_hotkey_label = capture_hotkey_label
         super().__init__(
             None,
             Qt.WindowType.FramelessWindowHint
@@ -74,7 +81,11 @@ class RecordingOverlay(QWidget):
         )
         layout.addWidget(self._time)
 
-        self._hint = QLabel(f"·  {stop_hotkey_label} 정지", self)
+        if self._capture_hotkey_label is not None:
+            hint = f"·  {self._capture_hotkey_label} 저장 · {stop_hotkey_label} 종료"
+        else:
+            hint = f"·  {stop_hotkey_label} 정지"
+        self._hint = QLabel(hint, self)
         self._hint.setStyleSheet(
             "color: #cccccc; font-size: 11px;"
         )

@@ -56,6 +56,7 @@ from core.ios_metrics_recorder import IOSMetricsRecorder
 from core.audio_recorder import AudioRecorder
 from core.global_hotkey import GlobalHotkey
 from core.input_recorder import InputRecorder
+from core.lookback import LookbackConfig, LookbackController
 from core.log_collector import LogCollector
 from core.metrics_recorder import MetricsRecorder
 from core.post_mux import mux_av
@@ -87,6 +88,12 @@ FINAL_NAME = "screen.mp4"
 
 STOP_HOTKEY = "<ctrl>+<alt>+r"
 STOP_HOTKEY_LABEL = "Ctrl+Alt+R"
+
+# Lookback ("instant replay") capture trigger — saves the trailing N seconds
+# without stopping the buffer. Distinct from the stop hotkey so a capture never
+# accidentally ends the buffering run.
+CAPTURE_HOTKEY = "<ctrl>+<alt>+s"
+CAPTURE_HOTKEY_LABEL = "Ctrl+Alt+S"
 
 
 class TrailboxWindow(QMainWindow):
@@ -120,6 +127,10 @@ class TrailboxWindow(QMainWindow):
         self._metrics_recorder: MetricsRecorder | None = None
         self._overlay: RecordingOverlay | None = None
         self._stop_hotkey: GlobalHotkey | None = None
+        self._capture_hotkey: GlobalHotkey | None = None
+        # Set while a lookback buffering run is active; mutually exclusive with
+        # the normal start/stop recorder set above.
+        self._lookback_controller: LookbackController | None = None
         # The PID/name MetricsRecorder is sampling — separate from
         # session.target_pid which only records app-launcher-spawned processes.
         self._metrics_target_pid: int | None = None
@@ -129,6 +140,7 @@ class TrailboxWindow(QMainWindow):
         self.recorder.start_requested.connect(self._on_start_requested)
         self.recorder.stop_requested.connect(self._on_stop_requested)
         self.recorder.view_requested.connect(self._on_view_requested)
+        self.recorder.capture_requested.connect(self._on_capture_requested)
 
     def _on_app_launched(self, pid: int, exe_path: str) -> None:
         self.statusBar().showMessage(f"앱 실행됨 (PID {pid}): {exe_path}", 5000)
@@ -504,6 +516,13 @@ class TrailboxWindow(QMainWindow):
             self._stop_hotkey.start()
             return
 
+        # ---- Lookback (instant-replay) branch — desktop only ----
+        # Continuously buffer instead of recording; the user later captures the
+        # trailing N seconds. Mobile targets returned above before reaching here.
+        if self.recorder.lookback_enabled():
+            self._start_lookback(target)
+            return
+
         # ---- Desktop (monitor / window) branch ----
         exe_path = self.launcher.exe_path()
         if not exe_path:
@@ -655,7 +674,138 @@ class TrailboxWindow(QMainWindow):
         self._stop_hotkey.triggered.connect(self._on_stop_requested)
         self._stop_hotkey.start()
 
+    def _start_lookback(self, target) -> None:
+        """Begin a lookback buffering run for a desktop capture target."""
+        exe_path = self.launcher.exe_path()
+        if not exe_path:
+            info = self.launcher.selected_window_info()
+            if info is not None:
+                exe_path = info.process_name or info.title
+
+        self.recorder.set_transitioning("starting")
+        QApplication.processEvents()
+
+        self._system_info = gather_system_info()
+
+        target_pid = self._resolve_target_pid(target)
+        self._metrics_target_pid = target_pid
+        self._metrics_target_name = ""
+        if target_pid is not None:
+            try:
+                import psutil as _ps
+                self._metrics_target_name = _ps.Process(target_pid).name()
+            except Exception:  # noqa: BLE001
+                pass
+
+        config = LookbackConfig(
+            target=target,
+            output_root=OUTPUT_ROOT,
+            buffer_seconds=float(self.recorder.lookback_buffer_seconds()),
+            max_fps=self.launcher.capture_fps(),
+            audio_enabled=self.launcher.audio_enabled(),
+            input_enabled=self.launcher.input_enabled(),
+            metrics_enabled=self.launcher.metrics_enabled(),
+            metrics_pid=target_pid,
+            metrics_target_name=self._metrics_target_name,
+            log_dirs=[Path(p) for p in self.launcher.log_dirs()],
+            log_recursive=self.launcher.log_recursive(),
+            log_extensions=self.launcher.log_extensions(),
+            exe_path=exe_path or "lookback",
+            window_hwnd=target.hwnd if isinstance(target, WindowTarget) else None,
+            system_info=self._system_info,
+        )
+        controller = LookbackController(config)
+        try:
+            controller.start()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Trailbox", f"버퍼링 시작 실패:\n{e}")
+            try:
+                controller.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self.recorder.set_recording(False)
+            return
+        self._lookback_controller = controller
+
+        self.recorder.set_recording(True)
+        self.recorder.set_session_id(None)
+        self.statusBar().showMessage(
+            f"버퍼링 시작: 직전 {int(config.buffer_seconds)}초 보관 중 "
+            f"({CAPTURE_HOTKEY_LABEL} 또는 «직전 구간 저장»으로 캡처)",
+            8000,
+        )
+
+        # Overlay shows the buffering state; both the capture and stop hotkeys
+        # are live while buffering.
+        self._overlay = RecordingOverlay(
+            stop_hotkey_label=STOP_HOTKEY_LABEL,
+            capture_hotkey_label=CAPTURE_HOTKEY_LABEL,
+        )
+        self._overlay.begin()
+        self._stop_hotkey = GlobalHotkey(STOP_HOTKEY)
+        self._stop_hotkey.triggered.connect(self._on_stop_requested)
+        self._stop_hotkey.start()
+        self._capture_hotkey = GlobalHotkey(CAPTURE_HOTKEY)
+        self._capture_hotkey.triggered.connect(self._on_capture_requested)
+        self._capture_hotkey.start()
+
+    def _on_capture_requested(self) -> None:
+        """Lookback: materialize the trailing N seconds into a session."""
+        controller = self._lookback_controller
+        if controller is None:
+            return
+        self.statusBar().showMessage("⏳ 직전 구간 저장 중…", 3000)
+        QApplication.processEvents()
+        try:
+            result = controller.capture()
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "Trailbox", f"캡처 실패:\n{e}")
+            return
+
+        self.statusBar().showMessage(
+            f"세션 저장됨: {result.meta_path} "
+            f"(~{result.duration_seconds:.1f}s, {result.frames_written} frames)",
+            8000,
+        )
+        if result.errors:
+            QMessageBox.warning(
+                self,
+                "Trailbox",
+                "캡처 중 일부 오류:\n" + "\n".join(result.errors),
+            )
+        if self.recorder.auto_upload_enabled():
+            from ui.hub_dialogs import auto_upload_session
+            auto_upload_session(result.session_dir, self)
+
+    def _stop_lookback(self) -> None:
+        """Tear down an active lookback buffering run."""
+        self.recorder.set_transitioning("stopping")
+        QApplication.processEvents()
+        if self._overlay is not None:
+            self._overlay.end()
+            self._overlay.deleteLater()
+            self._overlay = None
+        for hk_attr in ("_stop_hotkey", "_capture_hotkey"):
+            hk = getattr(self, hk_attr)
+            if hk is not None:
+                hk.stop()
+                setattr(self, hk_attr, None)
+        controller = self._lookback_controller
+        self._lookback_controller = None
+        if controller is not None:
+            try:
+                controller.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        self.recorder.set_recording(False)
+        self.recorder.set_session_id(None)
+        self.statusBar().showMessage("버퍼링 종료", 5000)
+
     def _on_stop_requested(self) -> None:
+        if self._lookback_controller is not None:
+            self._stop_lookback()
+            return
+
         session = self._session
         if session is None:
             self.recorder.set_recording(False)
@@ -887,6 +1037,17 @@ class TrailboxWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.launcher.stop_pickers()
+        if self._lookback_controller is not None:
+            try:
+                self._lookback_controller.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._lookback_controller = None
+        if self._capture_hotkey is not None:
+            try:
+                self._capture_hotkey.stop()
+            except Exception:  # noqa: BLE001
+                pass
         if self._screen_recorder is not None:
             try:
                 self._screen_recorder.stop()
