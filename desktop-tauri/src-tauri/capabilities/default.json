@@ -17,6 +17,10 @@
     "core:window:allow-set-focus",
     "core:event:default",
     "core:event:allow-listen",
-    "core:event:allow-emit"
+    "core:event:allow-emit",
+    "dialog:default",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    "dialog:allow-ask"
   ]
 }

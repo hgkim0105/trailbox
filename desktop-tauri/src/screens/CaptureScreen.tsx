@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, type MutableRefObject } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { Icon } from '../components/Icon';
 import { WINDOWS, ANDROID_DEVICES, IOS_DEVICES } from '../data/mock';
 import type { WindowInfo, AdbDevice, IOSDevice } from '../data/mock';
@@ -234,7 +235,7 @@ export function CaptureScreen({
       showToast('Hub 연결이 필요합니다. Hub 탭에서 설정하세요.', 'err');
       return;
     }
-    if (!confirm(`세션 "${sid}"을(를) Hub에 업로드하고 공유 링크를 발급하시겠습니까?`)) return;
+    if (!(await confirm(`세션 "${sid}"을(를) Hub에 업로드하고 공유 링크를 발급하시겠습니까?`, { title: 'Hub 업로드 · 공유', kind: 'info' }))) return;
     showToast('Hub에 업로드 중…', 'info');
     try {
       await invoke('hub_upload', { url: hubUrl, token: hubToken, sessionId: sid });

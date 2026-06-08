@@ -100,13 +100,25 @@ ffprobe output/_ios_smoke/screen.mp4   # video+audio 트랙 확인
 
 ---
 
+## ✅ 화면 캡처(AVF) 검증 완료 (2026-06-07, macOS 26 / iPhone 16, iOS 26.5)
+
+iPhone 화면이 풀컬러(1206×2622, h264 60fps + aac audio)로 캡처됨. "검은 화면" 증상은 **3겹 원인**이었고 전부 수정됨:
+
+1. **카메라 TCC 권한** — 테더 iPhone은 AVF상 *카메라* 장치라 Camera 권한을 받음. `notDetermined`/`denied`면 AVCaptureSession이 **에러 없이 검은 프레임**을 녹화함(정상 크기 .mov). → `_run_ios`가 `requestAccessForMediaType:`로 명시 요청 후 `authorized`가 아니면 거부.
+2. **`enable_screen_capture_devices()`가 조용히 no-op이었음** — pyobjc 12.x의 `CMIOObjectSetPropertyData`가 트레일링 `const void *data`를 못 마샬링(`converting to a C array`). bytes/array/NSData 전부 실패. → **ctypes로 CoreMediaIO 직접 호출**(OSStatus 0 검증).
+3. **muxed 화면 장치는 메인 스레드에서 AVCaptureSession을 시작해야 노출됨** — macOS 26에선 CMIO 플래그만으론 부족. 화면 장치(`localizedName='형근의 iPhone'`, `modelID='iOS Device'`, **muxed**)는 *어떤 프로세스든 캡처 세션을 시작*해야 coremediaiod가 USB를 스캔해 노출함(= QuickTime이 몰래 하던 일). 게다가 그 장치-도착 알림은 **메인 런루프에서만** 처리됨 → 레코더 백그라운드 스레드의 트리거는 무효. → 내장 카메라로 throwaway 세션을 **`start()`(메인 스레드)**에서 띄워 트리거(`trigger_screen_capture_devices()`), 노출 후 레코더 스레드가 muxed 장치를 claim, 그 다음 트리거 세션 종료. 한 번 노출되면 프로세스 전역으로 보이고 종료 후에도 유지됨.
+
+⚠️ **연속성 카메라 함정**: AVF Video 장치 목록의 `iPhone18,1`은 화면이 아니라 **Continuity Camera**(후면 카메라)다. 이걸 화면으로 폴백 캡처하면 검은(엎어둔) 카메라 화면이 나옴. 화면 장치는 *muxed* + `modelID=='iOS Device'`로만 식별 — Video 폴백 제거함.
+
+진단 스크립트: `scripts/ios_capture_diag.py`(세션 단계별 추적), `scripts/ios_trigger_probe.py`(트리거 가설 검증). 본인 Terminal에서 실행해야 함(카메라 권한 귀속 + 메인 런루프).
+
 ## 튜닝 예상 지점 (실기에서 깨질 가능성 높은 순)
 
 | # | 위치 | 증상 / 할 일 |
 |---|---|---|
 | 1 | tunneld 데몬 자체 | `sudo pymobiledevice3 remote tunneld`가 떠 있지 않으면 `IOSMetricsRecorder._error`에 "tunneld not reachable" 메시지가 들어감. **메트릭만 영향** — 화면/로그는 진행. 떠 있는데도 device가 안 잡히면 페어링/Developer Mode 의심 |
-| 2 | `core/ios_device.py:enable_screen_capture_devices()` | CMIO 프로퍼티 set이 pyobjc 바인딩에서 인자 형태가 안 맞을 수 있음. `capturable=False`면 여기부터. QuickTime을 한 번 열면 OS가 대신 켜주므로 그걸로 우회 검증 가능 |
-| 3 | `core/screen_recorder.py:_run_ios()` (192~) | `AVCaptureDevice.devicesWithMediaType_(AVMediaTypeMuxed)` 결과/디바이스 매칭, `AVCaptureMovieFileOutput` delegate 시그니처, `NSRunLoop` 슬라이스. delegate 메서드명은 Objective-C 셀렉터 그대로(`captureOutput:didFinishRecordingToOutputFileAtURL:...`) — pyobjc 변환명 확인 |
+| 2 | ✅ 해결됨 (위 "화면 캡처 검증 완료" 참조) | `enable_screen_capture_devices()` ctypes 수정 + 메인 스레드 트리거. `capturable=False`면 내장 카메라 존재 여부 확인(트리거에 필요) |
+| 3 | `core/screen_recorder.py:_run_ios()` | delegate 시그니처는 검증됨(`didStart`/`didFinish` 모두 동작, 에러는 `delegate_err`로 보존). 캡처 시작 후 **~2.5~3초 워밍업** 뒤 프레임이 흐르기 시작하므로 짧은(5초 미만) 녹화는 빌 수 있음 — 실사용 길이에선 무관 |
 | 4 | `core/ios_metrics_recorder.py:_extract_proc()` | Sysmontap이 yield하는 `list[dict]` 안의 키 이름(`cpuUsage`/`physFootprint`/`name`/`pid`...) 실기 확인. 한 틱 `print(entries[0])` → 후보키 보정. cpu가 0-1 fraction인지 0-100인지도 여기서 결정 (코드는 둘 다 처리하나 한쪽으로 굳히면 정확도 향상) |
 | 5 | `core/ios_metrics_recorder.py:_extract_gfx()` | Graphics 이벤트가 `(selector, [args])` tuple로 오는지 dict notification으로 오는지 실기 확인. `print(sample)` 한 번이면 끝. fps/gpu 키 이름(`CoreAnimationFramesPerSecond`/`Device Utilization %`)도 같은 자리 |
 | 6 | `core/ios_log_collector.py:_fields()` | `OsTraceService.syslog()` 엔트리의 속성명(`message`/`label`/`level`/`pid`) 버전 확인. 안 되면 `SyslogService.watch()` 문자열 폴백으로 자동 강등됨 |

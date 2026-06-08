@@ -141,29 +141,42 @@ class IOSLogCollector:
     # ---- Reader loop ------------------------------------------------------
 
     def _reader_loop(self) -> None:
-        """Thread entry: drive the async lockdown + sync syslog gen."""
+        """Thread entry: drive the async lockdown + syslog gen."""
         try:
             asyncio.run(self._reader_loop_async())
         except BaseException as e:  # noqa: BLE001
             self._error = e
 
-    async def _reader_loop_async(self) -> None:
-        """Open lockdown async, then iterate the sync syslog gen in an executor.
+    async def _await_stop(self) -> None:
+        while not self._stop.is_set():
+            await asyncio.sleep(0.2)
 
-        The syslog generator blocks on a socket; we surface stop() by polling
-        ``self._stop`` between yields. If the device sits silent past stop,
-        the daemon thread is reclaimed at process exit (existing contract).
+    async def _log_loop(self, gen) -> None:
+        async for entry in gen:
+            if self._stop.is_set():
+                break
+            self._emit(entry)
+
+    async def _reader_loop_async(self) -> None:
+        """Open lockdown async, then iterate the async syslog gen.
+
+        We run a stop watcher task alongside the log generator loop, using
+        FIRST_COMPLETED to exit cleanly when self._stop is set even if the
+        syslog stream is completely silent.
         """
         lockdown = await _open_lockdown(self.udid)
         try:
             gen = _open_syslog_gen(lockdown)
-            loop = asyncio.get_running_loop()
-            sentinel = object()
-            while not self._stop.is_set():
-                entry = await loop.run_in_executor(None, next, gen, sentinel)
-                if entry is sentinel:
-                    break
-                self._emit(entry)
+            stop_task = asyncio.create_task(self._await_stop(), name="ios-log-stop")
+            log_task = asyncio.create_task(self._log_loop(gen), name="ios-log-generator")
+            
+            done, pending = await asyncio.wait(
+                [stop_task, log_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
         finally:
             try:
                 await lockdown.close()
