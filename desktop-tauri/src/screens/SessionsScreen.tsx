@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { confirm, message } from '@tauri-apps/plugin-dialog';
 import { Icon } from '../components/Icon';
 import { type HubState, type UnifiedSession } from '../data/mock';
 
@@ -121,15 +122,16 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
   const [downloadProg, setDownloadProg] = useState<string | null>(null);
 
   const doOpenViewer = async (sid: string) => {
-    try { await invoke('open_viewer', { sessionId: sid }); } catch (e) { alert(`뷰어 열기 실패: ${e}`); }
+    try { await invoke('open_viewer', { sessionId: sid }); } catch (e) { await message(`뷰어 열기 실패: ${e}`, { title: 'Trailbox', kind: 'error' }); }
   };
   const doOpenHubViewer = async (sid: string) => {
     if (!hub.configured) return;
-    try { await invoke('open_url', { url: `${hub.url}/sessions/${sid}/v/` }); } catch (e) { alert(`Hub 뷰어 열기 실패: ${e}`); }
+    try { await invoke('open_url', { url: `${hub.url}/sessions/${sid}/v/` }); } catch (e) { await message(`Hub 뷰어 열기 실패: ${e}`, { title: 'Trailbox', kind: 'error' }); }
   };
   const doDelete = async (sid: string) => {
-    if (!confirm(`세션 ${sid}을(를) 삭제하시겠습니까?`)) return;
-    try { await invoke('delete_session', { sessionId: sid }); setSelected(null); onRefresh?.(); } catch (e) { alert(`삭제 실패: ${e}`); }
+    const ok = await confirm(`세션 ${sid}을(를) 삭제하시겠습니까?`, { title: '세션 삭제', kind: 'warning' });
+    if (!ok) return;
+    try { await invoke('delete_session', { sessionId: sid }); setSelected(null); onRefresh?.(); } catch (e) { await message(`삭제 실패: ${e}`, { title: 'Trailbox', kind: 'error' }); }
   };
   const doUpload = async (sid: string) => {
     if (!hub.configured) return;
@@ -139,7 +141,7 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
       setUploadProg({ sid, done: 100, total: 100 });
       setTimeout(() => setUploadProg(null), 800);
       onRefresh?.();
-    } catch (e) { setUploadProg(null); alert(`업로드 실패: ${e}`); }
+    } catch (e) { setUploadProg(null); await message(`업로드 실패: ${e}`, { title: 'Trailbox', kind: 'error' }); }
   };
   const doDownload = async (sid: string) => {
     if (!hub.configured) return;
@@ -148,7 +150,7 @@ export function SessionsScreen({ hub, localSessions: rawLocal, remoteSessions: r
       await invoke('hub_download', { url: hub.url, token: hub.token, sessionId: sid });
       setDownloadProg(null);
       onRefresh?.();
-    } catch (e) { setDownloadProg(null); alert(`다운로드 실패: ${e}`); }
+    } catch (e) { setDownloadProg(null); await message(`다운로드 실패: ${e}`, { title: 'Trailbox', kind: 'error' }); }
   };
 
   return (
