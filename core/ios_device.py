@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 from dataclasses import dataclass
 
 
@@ -59,22 +60,130 @@ def enable_screen_capture_devices() -> None:
     if not _is_macos():
         return
     try:
+        import ctypes
         import CoreMediaIO
-        from Foundation import NSMutableData
 
-        prop = CoreMediaIO.CMIOObjectPropertyAddress(
-            CoreMediaIO.kCMIOHardwarePropertyAllowScreenCaptureDevices,
-            CoreMediaIO.kCMIOObjectPropertyScopeGlobal,
-            CoreMediaIO.kCMIOObjectPropertyElementMain,
+        # pyobjc's CMIOObjectSetPropertyData binding can't marshal the trailing
+        # ``const void *data`` (it raises "converting to a C array" for bytes /
+        # array / memoryview / NSData alike on pyobjc 12.x), so the property set
+        # silently no-op'd and the iPhone never surfaced as a screen-capture
+        # device. Call the C function directly via ctypes instead — verified to
+        # return OSStatus 0. (Constants are read from the pyobjc module so the
+        # fourcc values stay correct.)
+        cmio = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreMediaIO.framework/CoreMediaIO"
         )
-        enable = NSMutableData.dataWithLength_(4)
-        # write uint32(1) into the buffer
-        enable.replaceBytesInRange_withBytes_length_((0, 4), b"\x01\x00\x00\x00", 4)
-        CoreMediaIO.CMIOObjectSetPropertyData(
-            CoreMediaIO.kCMIOObjectSystemObject, prop, 0, None, 4, enable
+
+        class _Addr(ctypes.Structure):
+            _fields_ = [
+                ("mSelector", ctypes.c_uint32),
+                ("mScope", ctypes.c_uint32),
+                ("mElement", ctypes.c_uint32),
+            ]
+
+        cmio.CMIOObjectSetPropertyData.restype = ctypes.c_int32
+        addr = _Addr(
+            int(CoreMediaIO.kCMIOHardwarePropertyAllowScreenCaptureDevices),
+            int(CoreMediaIO.kCMIOObjectPropertyScopeGlobal),
+            int(CoreMediaIO.kCMIOObjectPropertyElementMain),
+        )
+        val = ctypes.c_uint32(1)
+        cmio.CMIOObjectSetPropertyData(
+            ctypes.c_uint32(int(CoreMediaIO.kCMIOObjectSystemObject)),
+            ctypes.byref(addr),
+            ctypes.c_uint32(0),
+            None,
+            ctypes.c_uint32(4),
+            ctypes.byref(val),
         )
     except Exception:  # noqa: BLE001 - best-effort; capture may still partly work
         pass
+
+
+def _muxed_ios_screen_devices():
+    """AVCaptureDevices that are the tethered iPhone's *screen* (not camera).
+
+    The screen-capture device is a **muxed** device whose modelID is the
+    literal ``"iOS Device"`` and whose name is the bare device name (e.g.
+    ``형근의 iPhone``). The iPhone's Continuity Camera is a separate *video*
+    device with a real hardware modelID (``iPhone18,1``) and a ``…카메라`` /
+    ``…Camera`` name — capturing that gives the rear-camera feed, NOT the
+    screen, which is the black-screen bug we hit. So we match on the muxed
+    media type only.
+    """
+    if not _is_macos():
+        return []
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeMuxed
+        return list(AVCaptureDevice.devicesWithMediaType_(AVMediaTypeMuxed) or [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def trigger_screen_capture_devices(timeout: float = 5.0):
+    """Make the tethered iPhone's screen device enumerate, returning a live
+    "trigger" ``AVCaptureSession`` the caller MUST keep running until it has
+    claimed the iPhone device (then stop it), or ``None`` on failure.
+
+    On macOS 26 / iOS 26 the CMIO ``AllowScreenCaptureDevices`` flag is *not*
+    enough on its own — the muxed ``iOS Device`` only materializes once some
+    process actually **starts an AVCaptureSession** (this is what QuickTime's
+    "New Movie Recording" was secretly doing). Starting a throwaway session on
+    the built-in Mac camera reproduces that trigger; the iPhone screen device
+    then appears and stays. Verified on-device 2026-06-07.
+
+    The trigger session uses the built-in camera (so it needs Camera TCC, which
+    the iOS capture path already requires). We hand the live session back rather
+    than stopping it here so the device can't vanish in the gap before the real
+    recording session claims it.
+    """
+    if not _is_macos():
+        return None
+    enable_screen_capture_devices()
+    if _muxed_ios_screen_devices():
+        return None  # already exposed (e.g. QuickTime open) — no trigger needed
+    try:
+        from AVFoundation import (
+            AVCaptureSession,
+            AVCaptureDevice,
+            AVCaptureDeviceInput,
+            AVMediaTypeVideo,
+        )
+        from Foundation import NSRunLoop, NSDate
+    except Exception:  # noqa: BLE001
+        return None
+
+    builtin = None
+    for d in AVCaptureDevice.devicesWithMediaType_(AVMediaTypeVideo) or []:
+        try:
+            if not _looks_like_ios_model(str(d.modelID())):
+                builtin = d
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    if builtin is None:
+        return None
+
+    session = AVCaptureSession.alloc().init()
+    inp, _err = AVCaptureDeviceInput.deviceInputWithDevice_error_(builtin, None)
+    if inp is None or not session.canAddInput_(inp):
+        return None
+    session.addInput_(inp)
+    session.startRunning()
+
+    rl = NSRunLoop.currentRunLoop()
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        if _muxed_ios_screen_devices():
+            return session
+        rl.runMode_beforeDate_(
+            "kCFRunLoopDefaultMode", NSDate.dateWithTimeIntervalSinceNow_(0.1)
+        )
+    try:
+        session.stopRunning()
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 # ---- Discovery --------------------------------------------------------------
@@ -123,50 +232,78 @@ def _usbmux_devices() -> list[tuple[str, str, str]]:
         return []
 
 
-def _avfoundation_capture_names() -> set[str]:
-    """Localized names of AVFoundation muxed (iOS) capture devices, or empty."""
-    if not _is_macos():
-        return set()
-    try:
-        enable_screen_capture_devices()
-        from AVFoundation import AVCaptureDevice, AVMediaTypeMuxed
+def _looks_like_ios_model(model_id: str) -> bool:
+    """True for AVFoundation modelIDs that denote a tethered iOS device.
 
-        names: set[str] = set()
-        for dev in AVCaptureDevice.devicesWithMediaType_(AVMediaTypeMuxed) or []:
+    A tethered iPhone reports modelID like ``iPhone18,1``; an iPad ``iPad…``.
+    The Mac's own webcam reports a localized human string (e.g.
+    ``MacBook Pro 카메라``), so this filter keeps built-in / USB webcams from
+    being mistaken for a phone when we scan *Video* devices.
+    """
+    m = model_id.strip().lower()
+    return m.startswith(("iphone", "ipad", "ipod"))
+
+
+def _normalize_name(s: str) -> str:
+    """Strip typographic quotes + collapse whitespace + lowercase.
+
+    AVFoundation wraps the device name in curly quotes and appends a localized
+    suffix (``'형근의 iPhone' 카메라`` / ``… Camera``); usbmux returns the bare
+    ``형근의 iPhone``. Normalizing both makes one a substring of the other
+    regardless of UI language.
+    """
+    for ch in ("‘", "’", "“", "”", "'", '"'):
+        s = s.replace(ch, "")
+    return " ".join(s.split()).lower()
+
+
+def names_match(usbmux_name: str, avf_name: str) -> bool:
+    """Whether a usbmux name and an AVFoundation localizedName refer to the
+    same physical device (containment after normalization)."""
+    u, a = _normalize_name(usbmux_name), _normalize_name(avf_name)
+    return bool(u) and (u in a or a in u)
+
+
+def _has_builtin_camera() -> bool:
+    """True if a non-iOS video device exists to trigger screen capture with.
+
+    The iPhone screen device only enumerates after we start a throwaway session
+    on some other camera (see ``trigger_screen_capture_devices``). With no
+    built-in/USB camera there's nothing to trigger with, so capture can't work.
+    """
+    if not _is_macos():
+        return False
+    try:
+        from AVFoundation import AVCaptureDevice, AVMediaTypeVideo
+        for d in AVCaptureDevice.devicesWithMediaType_(AVMediaTypeVideo) or []:
             try:
-                names.add(str(dev.localizedName()))
+                if not _looks_like_ios_model(str(d.modelID())):
+                    return True
             except Exception:  # noqa: BLE001
                 continue
-        return names
     except Exception:  # noqa: BLE001
-        return set()
+        pass
+    return False
 
 
 def list_devices() -> list[IOSDeviceInfo]:
-    """Return connected iOS devices, cross-referencing usbmux + AVFoundation.
+    """Return connected iOS devices (from usbmux).
 
-    ``capturable`` is True when AVFoundation also sees the device by name (i.e.
-    screen capture should work). usbmux-only devices still appear so the UI can
-    explain why capture is unavailable (untrusted / wrong cable).
+    ``capturable`` reflects whether the iPhone *screen* can be recorded. We do
+    NOT enumerate AVFoundation here to decide it: the screen device only appears
+    after a trigger session is started (which would flash the Mac camera on
+    every dropdown refresh), and the only iOS device AVFoundation lists *without*
+    the trigger is the Continuity **Camera** — recording that gives the rear
+    camera, not the screen, so treating it as "capturable" was the source of the
+    black-screen bug. Instead a usbmux device is capturable when we have a camera
+    to trigger the screen device with at capture time. Off macOS, never.
     """
     usb = _usbmux_devices()
-    cap_names = _avfoundation_capture_names()
-    out: list[IOSDeviceInfo] = []
-    for udid, name, ver in usb:
-        out.append(
-            IOSDeviceInfo(
-                udid=udid,
-                name=name,
-                ios_version=ver,
-                capturable=name in cap_names,
-            )
-        )
-    # AVFoundation may surface a device usbmux missed (e.g. usbmux race on
-    # first plug-in). Add capture-only entries so the user can still record.
-    known = {d.name for d in out}
-    for name in cap_names - known:
-        out.append(IOSDeviceInfo(udid="", name=name, capturable=True))
-    return out
+    can_trigger = _has_builtin_camera()
+    return [
+        IOSDeviceInfo(udid=udid, name=name, ios_version=ver, capturable=can_trigger)
+        for udid, name, ver in usb
+    ]
 
 
 def get_foreground_app(udid: str) -> str | None:

@@ -160,11 +160,23 @@ class ScreenRecorder:
         self._scrcpy_proc: subprocess.Popen | None = None
         self._scrcpy_stderr_log = None
 
+        # iOS: the throwaway built-in-camera session that makes the iPhone
+        # screen device enumerate. It MUST be created on the main thread (the
+        # CoreMediaIO device-arrival notification is only processed on the main
+        # run loop), so start() does it before spawning the recorder thread.
+        self._ios_trigger_session = None
+
     # ---- Public API -------------------------------------------------------
 
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("ScreenRecorder already started")
+        # iOS prep happens on the *calling* thread (main thread in the GUI and
+        # in smoke tests) because the screen-device trigger + camera-permission
+        # prompt only work off the main run loop. Do it before the recorder
+        # thread spawns so the muxed device is already visible when it runs.
+        if isinstance(self.target, IOSDeviceTarget):
+            self._ios_main_thread_prep()
         self._thread = threading.Thread(
             target=self._run, name="ScreenRecorder", daemon=True
         )
@@ -173,12 +185,40 @@ class ScreenRecorder:
         if self._error is not None:
             raise self._error
 
+    def _ios_main_thread_prep(self) -> None:
+        """Main-thread iOS setup: camera authorization + screen-device trigger.
+
+        Both rely on the main run loop (the camera-permission prompt and the
+        CoreMediaIO device-arrival notification are delivered there), so this
+        cannot run in the recorder thread. Best-effort: any failure is left for
+        ``_run_ios`` to surface as a clear "device not found" error.
+        """
+        import sys as _sys
+        if _sys.platform != "darwin":
+            return
+        try:
+            from Foundation import NSRunLoop, NSDate
+            from AVFoundation import AVCaptureDevice, AVMediaTypeVideo
+            from core import ios_device
+
+            self._ensure_camera_authorized(AVCaptureDevice, AVMediaTypeVideo,
+                                           NSRunLoop, NSDate)
+            self._ios_trigger_session = ios_device.trigger_screen_capture_devices()
+        except BaseException:  # noqa: BLE001 - surfaced later as device-not-found
+            pass
+
     def stop(self, timeout: float = 10.0) -> None:
         self._stop.set()
         # Wake up any wait-for-frame loop blocked on the event.
         self._new_frame_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=timeout)
+            # The iOS backend finalizes a .mov and then remuxes it to screen.mp4
+            # inside this thread on stop; that runs well past the default budget,
+            # and cutting the join short leaves a .ios.mov with no screen.mp4.
+            join_timeout = timeout
+            if isinstance(self.target, IOSDeviceTarget):
+                join_timeout = max(timeout, 60.0)
+            self._thread.join(timeout=join_timeout)
         if self._error is not None:
             raise self._error
 
@@ -227,6 +267,55 @@ class ScreenRecorder:
 
     # ---- iOS (AVFoundation / CoreMediaIO, macOS-only) ---------------------
 
+    @staticmethod
+    def _ensure_camera_authorized(AVCaptureDevice, media_type, NSRunLoop, NSDate):
+        """Block until the Camera TCC permission is `authorized`, else raise.
+
+        AVFoundation authorization status codes: 0 notDetermined, 1 restricted,
+        2 denied, 3 authorized. Only 3 yields real frames; 0/1/2 all silently
+        produce a black recording. On `notDetermined` we fire
+        ``requestAccessForMediaType:completionHandler:`` (the only call that
+        shows the system prompt) and pump the run loop until the user answers.
+
+        Requesting access requires an ``NSCameraUsageDescription`` in the host's
+        Info.plist: the bundled Trailbox.app injects it, and a raw-python run
+        inherits Terminal.app's. Without it the prompt can't appear and the
+        status stays notDetermined — which is exactly the case we error on.
+        """
+        status = AVCaptureDevice.authorizationStatusForMediaType_(media_type)
+        if status == 3:
+            return
+        if status == 0:  # notDetermined → request + wait for the user's answer
+            done = threading.Event()
+
+            def _handler(_granted):
+                done.set()
+
+            AVCaptureDevice.requestAccessForMediaType_completionHandler_(
+                media_type, _handler
+            )
+            # The completion handler is delivered on an internal dispatch queue,
+            # but the system prompt needs a live run loop — pump it until the
+            # user responds (cap at 120s so a walked-away user still unwinds).
+            rl = NSRunLoop.currentRunLoop()
+            deadline = time.perf_counter() + 120.0
+            while not done.is_set() and time.perf_counter() < deadline:
+                rl.runMode_beforeDate_(
+                    "kCFRunLoopDefaultMode",
+                    NSDate.dateWithTimeIntervalSinceNow_(0.1),
+                )
+            status = AVCaptureDevice.authorizationStatusForMediaType_(media_type)
+            if status == 3:
+                return
+
+        raise RuntimeError(
+            "Camera permission required to capture the iPhone screen "
+            f"(authorization status={status}, expected 3=authorized). "
+            "Grant it in System Settings > Privacy & Security > Camera "
+            "for Trailbox (or your terminal), then record again. Without it "
+            "AVFoundation records only black frames."
+        )
+
     def _run_ios(self, target: IOSDeviceTarget) -> None:
         """Capture a tethered iOS device via AVFoundation (macOS-only).
 
@@ -252,40 +341,78 @@ class ScreenRecorder:
             AVCaptureDeviceInput,
             AVCaptureMovieFileOutput,
             AVMediaTypeMuxed,
+            AVMediaTypeVideo,
         )
 
         from core import ios_device
 
-        # Reveal the iPhone as a capture device (QuickTime's mechanism).
-        ios_device.enable_screen_capture_devices()
+        # Camera authorization + the screen-device trigger already ran on the
+        # main thread in start()/_ios_main_thread_prep (both need the main run
+        # loop). The muxed "iOS Device" is therefore already visible here, and
+        # the throwaway built-in-camera trigger session is held in
+        # self._ios_trigger_session — we keep it running until our real session
+        # has claimed the iPhone device, then stop it. (Re-checking auth here is
+        # cheap and returns immediately when already authorized.)
+        self._ensure_camera_authorized(AVCaptureDevice, AVMediaTypeVideo,
+                                       NSRunLoop, NSDate)
+        trigger_session = self._ios_trigger_session
+        self._ios_trigger_session = None
 
-        # Find the AVCaptureDevice matching the chosen device name.
-        device = None
-        for dev in AVCaptureDevice.devicesWithMediaType_(AVMediaTypeMuxed) or []:
-            try:
-                if str(dev.localizedName()) == target.device_name:
-                    device = dev
-                    break
-            except Exception:  # noqa: BLE001
-                continue
-        if device is None:
-            raise RuntimeError(
-                f"iOS capture device not found: {target.device_name!r}. "
-                "Unlock the device, tap 'Trust', and re-check the cable."
+        def _find_screen_device():
+            """The tethered iPhone's *screen* — a MUXED device (video+audio).
+
+            Prefer a name match against the target; else the sole muxed device
+            whose modelID is "iOS Device". We never fall back to a *video*
+            device: the iPhone's only video device is its Continuity Camera,
+            and recording that yields the camera feed, not the screen (the
+            black-screen bug)."""
+            muxed = list(AVCaptureDevice.devicesWithMediaType_(AVMediaTypeMuxed) or [])
+            for dev in muxed:
+                try:
+                    if ios_device.names_match(target.device_name,
+                                              str(dev.localizedName())):
+                        return dev
+                except Exception:  # noqa: BLE001
+                    continue
+            for dev in muxed:  # name didn't match — take the lone iOS screen dev
+                try:
+                    if str(dev.modelID()) == "iOS Device":
+                        return dev
+                except Exception:  # noqa: BLE001
+                    continue
+            return muxed[0] if muxed else None
+
+        try:
+            video_dev = _find_screen_device()
+
+            if video_dev is None:
+                raise RuntimeError(
+                    f"iPhone screen-capture device not found: {target.device_name!r}. "
+                    "Unlock the device + tap 'Trust', keep the screen on, and "
+                    "confirm a built-in/USB camera exists (used to trigger the "
+                    "screen device). The Continuity Camera alone is not the screen."
+                )
+
+            session = AVCaptureSession.alloc().init()
+
+            # The muxed iOS screen device carries video + audio together, so a
+            # single input covers both — no separate mic input needed.
+            dev_input, err_ptr = AVCaptureDeviceInput.deviceInputWithDevice_error_(
+                video_dev, None
             )
-
-        err_ptr = None
-        dev_input, err_ptr = AVCaptureDeviceInput.deviceInputWithDevice_error_(
-            device, None
-        )
-        if dev_input is None:
-            raise RuntimeError(f"AVCaptureDeviceInput failed: {err_ptr}")
-
-        session = AVCaptureSession.alloc().init()
-        if session.canAddInput_(dev_input):
-            session.addInput_(dev_input)
-        else:
-            raise RuntimeError("AVCaptureSession refused the iOS device input")
+            if dev_input is None:
+                raise RuntimeError(f"AVCaptureDeviceInput failed: {err_ptr}")
+            if session.canAddInput_(dev_input):
+                session.addInput_(dev_input)
+            else:
+                raise RuntimeError("AVCaptureSession refused the iOS device input")
+        except BaseException:
+            if trigger_session is not None:
+                try:
+                    trigger_session.stopRunning()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
 
         movie_out = AVCaptureMovieFileOutput.alloc().init()
         if session.canAddOutput_(movie_out):
@@ -294,12 +421,27 @@ class ScreenRecorder:
             raise RuntimeError("AVCaptureSession refused the movie file output")
 
         # Recording-finished delegate (AVCaptureFileOutputRecordingDelegate).
+        # We capture the error from didFinish: an interrupted/failed capture
+        # reports it here, and swallowing it leaves only the generic "empty
+        # .mov" — surface it so the real cause (e.g. session interrupted, no
+        # connection) is visible.
         finished = threading.Event()
+        delegate_err: dict[str, str] = {}
 
         class _RecDelegate(NSObject):
-            def captureOutput_didFinishRecordingToOutputFileAtURL_fromConnections_error_(  # noqa: N802,E501
-                self, _out, _url, _conns, _error
+            def captureOutput_didStartRecordingToOutputFileAtURL_fromConnections_(  # noqa: N802,E501
+                self, _out, _url, _conns
             ):
+                pass
+
+            def captureOutput_didFinishRecordingToOutputFileAtURL_fromConnections_error_(  # noqa: N802,E501
+                self, _out, _url, _conns, error
+            ):
+                if error is not None:
+                    try:
+                        delegate_err["msg"] = str(error.localizedDescription())
+                    except Exception:  # noqa: BLE001
+                        delegate_err["msg"] = str(error)
                 finished.set()
 
         delegate = _RecDelegate.alloc().init()
@@ -315,9 +457,47 @@ class ScreenRecorder:
                 pass
         mov_url = NSURL.fileURLWithPath_(str(mov_path))
 
+        # AVCaptureMovieFileOutput gives no per-frame callback, so the live
+        # frame count is derived from its recordedDuration (a CMTime) × the
+        # device's active max frame rate. Without this the status gauge and the
+        # final screen_frames/effective_fps sit at 0 on the iOS backend.
+        fps_nominal = 30.0
+        try:
+            ranges = video_dev.activeFormat().videoSupportedFrameRateRanges()
+            if ranges:
+                fps_nominal = float(ranges[0].maxFrameRate()) or 30.0
+        except Exception:  # noqa: BLE001
+            pass
+
+        def _recorded_seconds() -> float:
+            # CMTime → seconds without importing CoreMedia: value / timescale.
+            try:
+                t = movie_out.recordedDuration()
+                ts = getattr(t, "timescale", 0)
+                return (t.value / ts) if ts else 0.0
+            except Exception:  # noqa: BLE001
+                return 0.0
+
+        def _refresh_frames() -> None:
+            secs = _recorded_seconds()
+            if secs <= 0:
+                return
+            if self._first_write_t is None:
+                self._first_write_t = time.perf_counter() - secs
+            self._frames_written = int(round(secs * fps_nominal))
+            self._last_write_t = time.perf_counter()
+
         session.startRunning()
+        # Our session now holds the iPhone screen device, so the throwaway
+        # trigger session (built-in camera) has done its job — stop it to free
+        # the Mac camera (turn its indicator light off).
+        if trigger_session is not None:
+            try:
+                trigger_session.stopRunning()
+            except Exception:  # noqa: BLE001
+                pass
+            trigger_session = None
         movie_out.startRecordingToOutputFileURL_recordingDelegate_(mov_url, delegate)
-        self._first_write_t = time.perf_counter()
         self._started.set()
 
         # Cocoa needs a live run loop for the capture/delegate callbacks. Spin
@@ -327,26 +507,57 @@ class ScreenRecorder:
             rl.runMode_beforeDate_(
                 "kCFRunLoopDefaultMode", NSDate.dateWithTimeIntervalSinceNow_(0.2)
             )
+            _refresh_frames()
 
         movie_out.stopRecording()
-        # Drain the run loop until the delegate confirms the file is finalized.
-        deadline = time.perf_counter() + 10.0
-        while not finished.is_set() and time.perf_counter() < deadline:
+        # stopRecording() finalizes the file asynchronously; isRecording stays
+        # True until it's fully closed. Poll that (with the delegate as a
+        # backstop) while spinning the run loop — the delegate callback arrives
+        # on a dispatch queue, not this NSRunLoop, so waiting on it alone was
+        # unreliable and always burned the full timeout.
+        deadline = time.perf_counter() + 15.0
+        while (
+            movie_out.isRecording()
+            and not finished.is_set()
+            and time.perf_counter() < deadline
+        ):
             rl.runMode_beforeDate_(
                 "kCFRunLoopDefaultMode", NSDate.dateWithTimeIntervalSinceNow_(0.1)
             )
-        session.stopRunning()
-        self._last_write_t = time.perf_counter()
+        _refresh_frames()
 
         if not mov_path.exists() or mov_path.stat().st_size < 1024:
-            raise RuntimeError("iOS capture produced no video (empty .mov)")
+            # Tear the (possibly half-dead) session down best-effort and bail.
+            try:
+                session.stopRunning()
+            except Exception:  # noqa: BLE001
+                pass
+            extra = f" (delegate error: {delegate_err['msg']})" if delegate_err.get("msg") else ""
+            raise RuntimeError("iOS capture produced no video (empty .mov)" + extra)
 
-        # Remux to the final mp4 (no re-encode), then drop the intermediate.
+        # Remux the finalized .mov BEFORE tearing the session down: on a degraded
+        # USB link session.stopRunning() can block for tens of seconds and must
+        # not gate the deliverable. Once screen.video.mp4 exists the
+        # orchestrator's post-mux finds it even if this thread is later cut off
+        # by the stop() join.
         self._remux_mov(mov_path)
         try:
             mov_path.unlink()
         except OSError:
             pass
+
+        # session.stopRunning() can block for tens of seconds on a degraded USB
+        # link. The deliverable (screen.mp4) is already written, so tear the
+        # session down in the background and let this thread return promptly —
+        # otherwise every iOS stop looks like a ~60s hang in the UI.
+        def _teardown():
+            try:
+                session.stopRunning()
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=_teardown, name="iOSSessionTeardown",
+                         daemon=True).start()
 
     def _remux_mov(self, mov_path: Path) -> None:
         """ffmpeg ``-c copy -movflags +faststart`` from a finished .mov."""
