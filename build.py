@@ -11,6 +11,11 @@ The Windows path produces four artifacts under ``dist/``:
                             LAN deployments where a Linux container is overkill.
   - ``trailbox-bridge.exe`` — PyInstaller sidecar that the Tauri desktop app
                               spawns for capture / Hub API calls.
+  - ``trailbox-desktop.exe`` — Rust + React Tauri shell. Produced by
+                               ``npm run tauri:build`` which build.py invokes
+                               on Windows (Node + Rust toolchain required).
+                               Inno Setup renames this to ``Trailbox.exe`` at
+                               install time.
 
 Plus, if Inno Setup is installed, ``Trailbox-Setup.exe`` (installer wrapper).
 
@@ -214,10 +219,46 @@ def _find_iscc() -> Path | None:
     return Path(found) if found else None
 
 
+def _build_tauri_windows(repo_root: Path) -> Path | None:
+    """Build the Tauri desktop shell on Windows and stage it in ``dist/``.
+
+    The Inno Setup script (`installer/Trailbox-installer.iss`) ships
+    ``dist/trailbox-desktop.exe`` as the user-facing GUI launcher (Inno
+    renames it to ``Trailbox.exe`` at install time). That binary is produced
+    by ``npm run tauri:build`` in ``desktop-tauri/`` — a Rust + React build
+    that lives outside PyInstaller's reach. We invoke it here so a single
+    ``python build.py`` run yields every artifact the installer needs;
+    historically this was a manual step and forgetting it left Inno Setup
+    failing with "Source file ... trailbox-desktop.exe does not exist."
+
+    If ``npm`` isn't on PATH we skip with a clear message rather than
+    failing the whole build — that lets PyInstaller-only iterations work
+    on machines without Node / Rust installed.
+    """
+    npm = shutil.which("npm")
+    desktop_dir = repo_root / "desktop-tauri"
+    if npm is None or not (desktop_dir / "package.json").is_file():
+        print("\n=== skipping Tauri shell build (npm or desktop-tauri/ missing) ===")
+        return None
+    print(f"\n=== building Tauri shell ({desktop_dir.name}) ===")
+    print(f"$ {npm} run tauri:build  (cwd={desktop_dir})")
+    subprocess.run([npm, "run", "tauri:build"], cwd=desktop_dir, check=True)
+    src = desktop_dir / "src-tauri" / "target" / "release" / f"trailbox-desktop{_EXE}"
+    if not src.is_file():
+        raise RuntimeError(f"Tauri build did not produce {src}")
+    dst = repo_root / "dist" / src.name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    print(f"staged {dst.name} → {dst}")
+    return dst
+
+
 def _build_installer(repo_root: Path) -> Path | None:
     """Compile the Inno Setup installer if ISCC.exe is available.
 
-    Requires Trailbox.exe / Trailbox-mcp.exe / Trailbox-hub.exe in dist/.
+    Requires Trailbox.exe / Trailbox-mcp.exe / Trailbox-hub.exe /
+    trailbox-desktop.exe in dist/ (the last one staged by
+    :func:`_build_tauri_windows`).
     """
     iscc = _find_iscc()
     iss = repo_root / "installer" / "Trailbox-installer.iss"
@@ -492,10 +533,15 @@ def _build_windows(repo_root: Path, ffmpeg_exe: Path) -> int:
         "desktop-tauri/bridge_entry.py", _BRIDGE_FLAGS, ffmpeg_exe, repo_root
     )
 
+    # Tauri shell — Rust + React build that the installer wraps as Trailbox.exe.
+    # Failing here aborts the run rather than half-baking the installer step.
+    tauri_exe = _build_tauri_windows(repo_root)
     installer_exe = _build_installer(repo_root)
 
     print("\n=== done ===")
     outputs = [gui_exe, mcp_exe, hub_exe, bridge_exe]
+    if tauri_exe is not None:
+        outputs.append(tauri_exe)
     if installer_exe is not None:
         outputs.append(installer_exe)
     for path in outputs:

@@ -142,11 +142,59 @@ pub fn get_output_root() -> String {
 
 #[tauri::command]
 pub fn open_viewer(session_id: String) -> Result<(), String> {
+    // We tried spawning a Tauri WebviewWindow with the asset protocol so that
+    // viewer.html could call trim_session via Tauri IPC. WebView2 reliably
+    // hangs (white screen, unresponsive) on top-level navigation to both
+    // file:// and the asset host in additional windows. Trim is handled by
+    // the in-app TrimModal on the Sessions screen instead, so we keep this
+    // as the original "open in the user's default browser" behaviour.
     let viewer = output_root().join(&session_id).join("viewer.html");
     if !viewer.is_file() {
         return Err(format!("viewer.html not found for {}", session_id));
     }
     open::that(&viewer).map_err(|e| e.to_string())
+}
+
+// Resolve the on-disk path to a session's `screen.mp4`. The React modal
+// passes the result through `convertFileSrc` so the video element can
+// stream it via the asset protocol on the main window.
+#[tauri::command]
+pub fn get_session_video_path(session_id: String) -> Result<String, String> {
+    let video = output_root().join(&session_id).join("screen.mp4");
+    if !video.is_file() {
+        return Err(format!("screen.mp4 not found for {}", session_id));
+    }
+    let s = video.to_string_lossy().to_string();
+    // Strip the Windows extended-length prefix so convertFileSrc produces
+    // a regular path component, not "\\?\C:\…".
+    let cleaned = if cfg!(target_os = "windows") {
+        s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+    } else {
+        s
+    };
+    Ok(cleaned)
+}
+
+// Trim a finished session via the bridge (delegates to core/trim.py).
+// Used by the Save button inside viewer.html when the viewer is running
+// in a Tauri WebviewWindow (window.__TAURI_INTERNALS__ present).
+#[tauri::command]
+pub async fn trim_session(
+    session_id: String,
+    t_start: f64,
+    t_end: f64,
+    overwrite: bool,
+) -> Result<serde_json::Value, String> {
+    let out_root = output_root().to_string_lossy().to_string();
+    call_bridge(vec![
+        "trim-session".into(),
+        session_id,
+        t_start.to_string(),
+        t_end.to_string(),
+        if overwrite { "1".into() } else { "0".into() },
+        out_root,
+    ])
+    .await
 }
 
 #[tauri::command]
@@ -468,6 +516,9 @@ pub struct RecordingProcess {
     pub child_handle: Mutex<Option<Child>>,
     pub latest_status: Arc<Mutex<Option<serde_json::Value>>>,
     pub done_result: Arc<Mutex<Option<serde_json::Value>>>,
+    // Queue of "saved" events from the lookback bridge — the React UI polls
+    // this so it can refresh the session list and show a toast per capture.
+    pub saved_events: Arc<Mutex<Vec<serde_json::Value>>>,
 }
 
 impl Default for RecordingProcess {
@@ -477,8 +528,32 @@ impl Default for RecordingProcess {
             child_handle: Mutex::new(None),
             latest_status: Arc::new(Mutex::new(None)),
             done_result: Arc::new(Mutex::new(None)),
+            saved_events: Arc::new(Mutex::new(Vec::new())),
         }
     }
+}
+
+// Clear stale state if the previous bridge process is already gone — Stop
+// flows are best-effort and an unclean exit (panic, killed window, etc.)
+// leaves child_stdin: Some(...) with nothing on the other end, which blocks
+// every subsequent start. Returns true iff state was cleared.
+fn reap_dead_bridge(state: &RecordingProcess) -> bool {
+    let mut handle_guard = match state.child_handle.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    let still_running = match handle_guard.as_mut() {
+        Some(c) => matches!(c.try_wait(), Ok(None)),
+        None => false,
+    };
+    if still_running { return false; }
+    if let Some(mut c) = handle_guard.take() { let _ = c.wait(); }
+    drop(handle_guard);
+    if let Ok(mut s) = state.child_stdin.lock() { *s = None; }
+    if let Ok(mut s) = state.latest_status.lock() { *s = None; }
+    if let Ok(mut s) = state.done_result.lock() { *s = None; }
+    if let Ok(mut q) = state.saved_events.lock() { q.clear(); }
+    true
 }
 
 #[tauri::command]
@@ -486,6 +561,7 @@ pub fn start_recording(
     config: serde_json::Value,
     state: State<RecordingProcess>,
 ) -> Result<String, String> {
+    reap_dead_bridge(&state);
     {
         let guard = state.child_stdin.lock().map_err(|e| e.to_string())?;
         if guard.is_some() {
@@ -553,6 +629,7 @@ pub fn start_recording(
     // Background thread: read status lines from stdout
     let status_arc = Arc::clone(&state.latest_status);
     let done_arc = Arc::clone(&state.done_result);
+    let saved_arc = Arc::clone(&state.saved_events);
     std::thread::spawn(move || {
         for line in stdout.lines() {
             let line = match line {
@@ -568,8 +645,11 @@ pub fn start_recording(
                 Some("status") => {
                     if let Ok(mut s) = status_arc.lock() { *s = Some(evt); }
                 }
-                Some("done") => {
+                Some("done") | Some("stopped") => {
                     if let Ok(mut d) = done_arc.lock() { *d = Some(evt); }
+                }
+                Some("saved") => {
+                    if let Ok(mut q) = saved_arc.lock() { q.push(evt); }
                 }
                 Some("exit") => break,
                 _ => {}
@@ -619,4 +699,174 @@ pub fn read_recording_status(state: State<RecordingProcess>) -> Result<Option<se
     if guard.is_none() { return Ok(None); }
     let status = state.latest_status.lock().map_err(|e| e.to_string())?;
     Ok(status.clone())
+}
+
+// ── Lookback ("instant replay") mode ───────────────────────────────────
+//
+// Same bridge subprocess + RecordingProcess state as regular recording —
+// the bridge dispatches on the initial command (start vs start-buffering)
+// and the stdout reader thread already tags status / saved / stopped events
+// into the right slots. These three commands wrap the three lifecycle
+// transitions: spin up buffering, capture the trailing window, tear down.
+
+#[tauri::command]
+pub fn start_buffering(
+    config: serde_json::Value,
+    state: State<RecordingProcess>,
+) -> Result<f64, String> {
+    reap_dead_bridge(&state);
+    {
+        let guard = state.child_stdin.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("recording or buffering already in progress".into());
+        }
+    }
+
+    let root = project_root();
+    let (cmd, cmd_args) = bridge_record_command();
+    let mut spawn_cmd = Command::new(&cmd);
+    spawn_cmd.args(&cmd_args).current_dir(&root)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    { use std::os::windows::process::CommandExt; spawn_cmd.creation_flags(CREATE_NO_WINDOW); }
+    let mut child = spawn_cmd.spawn()
+        .map_err(|e| format!("failed to spawn recording bridge: {}", e))?;
+
+    let mut stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+
+    // Read "ready"
+    {
+        let mut line = String::new();
+        stdout.read_line(&mut line).map_err(|e| e.to_string())?;
+        let evt: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        if evt.get("event").and_then(|v| v.as_str()) != Some("ready") {
+            return Err(format!("expected 'ready', got: {}", line.trim()));
+        }
+    }
+
+    // Send start-buffering command. Fields mirror start_recording but include
+    // buffer_seconds so the LookbackController knows the ring window size.
+    {
+        let start_cmd = serde_json::json!({
+            "cmd": "start-buffering",
+            "target": config.get("target"),
+            "exe_path": config.get("exe_path"),
+            "log_dirs": config.get("log_dirs"),
+            "log_recursive": config.get("log_recursive"),
+            "log_extensions": config.get("log_extensions"),
+            "max_fps": config.get("max_fps"),
+            "audio": config.get("audio"),
+            "input": config.get("input"),
+            "metrics": config.get("metrics"),
+            "buffer_seconds": config.get("buffer_seconds"),
+        });
+        let line = serde_json::to_string(&start_cmd).map_err(|e| e.to_string())?;
+        stdin.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        stdin.write_all(b"\n").map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+    }
+
+    // Read "buffering" — confirms the ring is up and tells us the actual
+    // (clamped) buffer length the controller settled on.
+    let buffer_seconds: f64;
+    {
+        let mut line = String::new();
+        stdout.read_line(&mut line).map_err(|e| e.to_string())?;
+        let evt: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        match evt.get("event").and_then(|v| v.as_str()) {
+            Some("buffering") => {
+                buffer_seconds = evt.get("buffer_seconds").and_then(|v| v.as_f64()).unwrap_or(30.0);
+            }
+            Some("error") => {
+                let msg = evt.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                return Err(msg.to_string());
+            }
+            _ => return Err(format!("unexpected event: {}", line.trim())),
+        }
+    }
+
+    *state.child_stdin.lock().map_err(|e| e.to_string())? = Some(stdin);
+    *state.child_handle.lock().map_err(|e| e.to_string())? = Some(child);
+    *state.latest_status.lock().map_err(|e| e.to_string())? = None;
+    *state.done_result.lock().map_err(|e| e.to_string())? = None;
+    if let Ok(mut q) = state.saved_events.lock() { q.clear(); }
+
+    let status_arc = Arc::clone(&state.latest_status);
+    let done_arc = Arc::clone(&state.done_result);
+    let saved_arc = Arc::clone(&state.saved_events);
+    std::thread::spawn(move || {
+        for line in stdout.lines() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+            if line.trim().is_empty() { continue; }
+            let evt: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            match evt.get("event").and_then(|v| v.as_str()) {
+                Some("status") => {
+                    if let Ok(mut s) = status_arc.lock() { *s = Some(evt); }
+                }
+                Some("stopped") | Some("done") => {
+                    if let Ok(mut d) = done_arc.lock() { *d = Some(evt); }
+                }
+                Some("saved") => {
+                    if let Ok(mut q) = saved_arc.lock() { q.push(evt); }
+                }
+                Some("exit") => break,
+                _ => {}
+            }
+        }
+    });
+
+    Ok(buffer_seconds)
+}
+
+#[tauri::command]
+pub fn save_lookback_now(state: State<RecordingProcess>) -> Result<(), String> {
+    let mut guard = state.child_stdin.lock().map_err(|e| e.to_string())?;
+    let stdin = guard.as_mut().ok_or("no buffering in progress")?;
+    stdin.write_all(b"{\"cmd\":\"save-now\"}\n").map_err(|e| e.to_string())?;
+    stdin.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_buffering(state: State<RecordingProcess>) -> Result<serde_json::Value, String> {
+    {
+        let mut guard = state.child_stdin.lock().map_err(|e| e.to_string())?;
+        let stdin = guard.as_mut().ok_or("no buffering in progress")?;
+        stdin.write_all(b"{\"cmd\":\"stop-buffering\"}\n").map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+    }
+
+    let done_arc = Arc::clone(&state.done_result);
+    for _ in 0..100 { // up to ~10s for graceful shutdown
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Ok(d) = done_arc.lock() {
+            if d.is_some() { break; }
+        }
+    }
+
+    let result = state.done_result.lock().map_err(|e| e.to_string())?
+        .take().unwrap_or(serde_json::Value::Null);
+    if let Ok(mut child) = state.child_handle.lock() {
+        if let Some(mut c) = child.take() { let _ = c.wait(); }
+    }
+    *state.child_stdin.lock().map_err(|e| e.to_string())? = None;
+    *state.latest_status.lock().map_err(|e| e.to_string())? = None;
+    Ok(result)
+}
+
+// Drain queued "saved" events — the UI calls this after triggering a save (or
+// on a poll tick) and gets one entry per capture. Cleared on read.
+#[tauri::command]
+pub fn drain_lookback_saved(state: State<RecordingProcess>) -> Result<Vec<serde_json::Value>, String> {
+    let mut q = state.saved_events.lock().map_err(|e| e.to_string())?;
+    let out = q.clone();
+    q.clear();
+    Ok(out)
 }

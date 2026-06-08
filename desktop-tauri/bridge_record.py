@@ -1,6 +1,10 @@
 """Headless recording daemon for Tauri IPC.
 
-Protocol (JSON-lines over stdin/stdout):
+Two capture modes share one bridge instance — each instance handles a single
+session (recording mode) or a single buffering run that yields zero-or-many
+clips (lookback mode), then exits.
+
+Recording mode protocol:
 
     → {"cmd":"start","target":{"kind":"window","hwnd":123},"exe_path":"...","log_dirs":[],"max_fps":60,"audio":true,"input":true,"metrics":true}
     ← {"event":"started","session_id":"..."}
@@ -9,6 +13,19 @@ Protocol (JSON-lines over stdin/stdout):
     → {"cmd":"stop"}
     ← {"event":"stopping"}
     ← {"event":"done","session_id":"...","duration":42.5,"frames":1280}
+    ← {"event":"exit"}
+
+Lookback mode protocol (Windows desktop targets only — Monitor / Window):
+
+    → {"cmd":"start-buffering","target":{...},"buffer_seconds":30,"max_fps":60,"audio":true,"input":true,"metrics":true,"exe_path":"...","log_dirs":[]}
+    ← {"event":"buffering","buffer_seconds":30}
+    ← {"event":"status","elapsed":1,...}
+    ...
+    → {"cmd":"save-now"}
+    ← {"event":"saved","session_id":"...","duration":30.0,"frames":900}
+    ...   (more save-now calls may follow; buffer keeps running)
+    → {"cmd":"stop-buffering"}
+    ← {"event":"stopped"}
     ← {"event":"exit"}
 
 Errors:
@@ -39,6 +56,171 @@ def _output_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent / "output"
     return _REPO_ROOT / "output"
+
+
+def _run_lookback(start_msg: dict) -> None:
+    """Drive a LookbackController until ``stop-buffering``.
+
+    The recording flow above is single-shot (start → stop → exit). Lookback
+    inverts that: ``start-buffering`` spins up a continuously-running
+    buffer, and the user can call ``save-now`` any number of times to
+    materialize the trailing window into its own session. Each save returns
+    the new ``session_id`` so the React UI can refresh the sessions list.
+    """
+    from core.lookback import (
+        DEFAULT_BUFFER_SECONDS, MAX_BUFFER_SECONDS, MIN_BUFFER_SECONDS,
+        LookbackConfig, LookbackController,
+    )
+    from core.screen_recorder import MonitorTarget, WindowTarget
+    from core.system_info import gather as gather_system_info
+
+    target_cfg = start_msg.get("target", {})
+    kind = target_cfg.get("kind", "monitor")
+    if kind == "window":
+        hwnd = int(target_cfg.get("hwnd", 0) or 0)
+        title = target_cfg.get("title", "")
+        target = WindowTarget(hwnd=hwnd, title=title)
+        window_hwnd = hwnd or None
+    elif kind == "monitor":
+        target = MonitorTarget(index=int(target_cfg.get("index", 0) or 0))
+        window_hwnd = None
+    else:
+        _emit({
+            "event": "error",
+            "message": f"lookback supports window/monitor only (got '{kind}')",
+        })
+        return
+
+    try:
+        buffer_seconds = float(start_msg.get("buffer_seconds") or DEFAULT_BUFFER_SECONDS)
+    except (TypeError, ValueError):
+        buffer_seconds = float(DEFAULT_BUFFER_SECONDS)
+    buffer_seconds = max(float(MIN_BUFFER_SECONDS), min(float(MAX_BUFFER_SECONDS), buffer_seconds))
+
+    log_dirs = [Path(p) for p in start_msg.get("log_dirs", []) if p]
+    extensions = frozenset(start_msg.get("log_extensions") or [".log", ".txt"])
+
+    # Best-effort metrics PID resolution (window target only — matches what the
+    # recording path does, see the metrics_pid block above).
+    metrics_pid = None
+    metrics_target_name = ""
+    if start_msg.get("metrics", True) and window_hwnd:
+        try:
+            import win32process
+            import psutil
+            _, pid = win32process.GetWindowThreadProcessId(window_hwnd)
+            if pid:
+                metrics_pid = int(pid)
+                try:
+                    metrics_target_name = psutil.Process(metrics_pid).name() or ""
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    system_info = {}
+    try:
+        system_info = gather_system_info()
+    except Exception:
+        pass
+
+    cfg = LookbackConfig(
+        target=target,
+        output_root=_output_root(),
+        buffer_seconds=buffer_seconds,
+        max_fps=int(start_msg.get("max_fps", 60) or 60),
+        audio_enabled=bool(start_msg.get("audio", True)),
+        input_enabled=bool(start_msg.get("input", True)),
+        metrics_enabled=bool(start_msg.get("metrics", True)),
+        metrics_pid=metrics_pid,
+        metrics_target_name=metrics_target_name,
+        log_dirs=log_dirs,
+        log_recursive=bool(start_msg.get("log_recursive", True)),
+        log_extensions=extensions,
+        exe_path=start_msg.get("exe_path") or None,
+        window_hwnd=window_hwnd,
+        system_info=system_info,
+    )
+
+    controller = LookbackController(cfg)
+    try:
+        controller.start()
+    except Exception as e:  # noqa: BLE001
+        _emit({"event": "error", "message": f"buffer start failed: {e}"})
+        return
+
+    _emit({"event": "buffering", "buffer_seconds": buffer_seconds})
+
+    # Inbound command queue — stdin reader drops commands onto this so the
+    # main thread can pump status events without blocking on input.
+    inbox: list[dict] = []
+    inbox_lock = threading.Lock()
+    stop_flag = threading.Event()
+
+    def stdin_reader() -> None:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                cmd = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            with inbox_lock:
+                inbox.append(cmd)
+            if cmd.get("cmd") == "stop-buffering":
+                stop_flag.set()
+                return
+
+    reader_thread = threading.Thread(target=stdin_reader, daemon=True)
+    reader_thread.start()
+
+    start_perf = time.time()
+    next_status_at = start_perf
+    captures = 0
+    try:
+        while not stop_flag.is_set():
+            # Drain pending commands.
+            with inbox_lock:
+                pending = inbox[:]
+                inbox.clear()
+            for cmd in pending:
+                name = cmd.get("cmd")
+                if name == "save-now":
+                    try:
+                        result = controller.capture()
+                        captures += 1
+                        _emit({
+                            "event": "saved",
+                            "session_id": str(result.session_dir.name),
+                            "duration": round(result.duration_seconds, 2),
+                            "frames": int(result.frames_written),
+                            "errors": result.errors or [],
+                        })
+                    except Exception as e:  # noqa: BLE001
+                        _emit({"event": "error", "message": f"save failed: {e}"})
+                elif name == "stop-buffering":
+                    stop_flag.set()
+                # other commands ignored
+
+            now = time.time()
+            if now >= next_status_at:
+                _emit({
+                    "event": "status",
+                    "elapsed": round(now - start_perf, 1),
+                    "captures": captures,
+                    "buffer_seconds": buffer_seconds,
+                })
+                next_status_at = now + 1.0
+
+            stop_flag.wait(timeout=0.2)
+    finally:
+        try:
+            controller.stop()
+        except Exception:
+            pass
+        _emit({"event": "stopped", "captures": captures})
+        _emit({"event": "exit"})
 
 
 def main() -> int:
@@ -74,8 +256,12 @@ def main() -> int:
             _emit({"event": "error", "message": f"invalid JSON: {line}"})
             continue
 
-        if msg.get("cmd") != "start":
-            _emit({"event": "error", "message": f"expected 'start', got '{msg.get('cmd')}'"})
+        cmd_name = msg.get("cmd")
+        if cmd_name == "start-buffering":
+            _run_lookback(msg)
+            return 0
+        if cmd_name != "start":
+            _emit({"event": "error", "message": f"expected 'start' or 'start-buffering', got '{cmd_name}'"})
             continue
 
         # Parse config

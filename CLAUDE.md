@@ -50,7 +50,7 @@ Release flow, in this order:
 1. Bump ALL THREE: `__version__` in `main.py`, `MyAppVersion` in `installer/Trailbox-installer.iss`, and `version` in `desktop-tauri/src-tauri/tauri.conf.json` to the target version (`"0.2.5"`, no `v` prefix).
 2. Commit the bumps.
 3. `git tag vX.Y.Z` on that commit, push commit + tag together.
-4. `build.py` to produce `dist/Trailbox{,-mcp,-hub,-Setup}.exe` — **must run after step 1** so the bundled `main.py` carries the new version AND the installer banner shows the new version. Build artifacts created before the bump will report the old version forever.
+4. `build.py` to produce `dist/Trailbox{,-mcp,-hub,-Setup}.exe` — **must run after step 1** so the bundled `main.py` carries the new version AND the installer banner shows the new version. Build artifacts created before the bump will report the old version forever. `build.py` invokes `npm run tauri:build` itself for the Tauri shell, then stages `trailbox-desktop.exe` under `dist/` for Inno Setup; you no longer need to run the Tauri build by hand. Make sure no `tauri dev` is running first — it holds `desktop-tauri/src-tauri/target/` and the release build will fail to overwrite the locked binary.
 5. `gh release create vX.Y.Z` attaching the binaries — see the note below about GUI packaging.
 
 If you find `__version__` already lagging the latest tag, fix forward (bump + new release) rather than retroactively moving the existing tag — published .exe SHA-sums shouldn't change under a fixed tag name.

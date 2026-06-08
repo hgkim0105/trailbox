@@ -10,6 +10,15 @@ type Props = {
   transition: 'starting' | 'stopping' | null;
   onStart: () => void;
   onStop: () => void;
+  // Lookback ("instant replay") — opt-in second capture mode. UI guards on
+  // window/monitor targets only (the bridge would refuse Android/iOS anyway).
+  buffering: boolean;
+  bufferSeconds: number;
+  onBufferSecondsChange: (s: number) => void;
+  onStartBuffering: () => void;
+  onSaveLookback: () => void;
+  onStopBuffering: () => void;
+  recentCaptures: Array<{ session_id: string; at: number; duration: number }>;
   elapsed: number;
   fmtElapsed: (s: number) => string;
   sessionId: string | null;
@@ -25,6 +34,13 @@ type Props = {
 
 type Target = 'monitor' | 'window' | 'android' | 'ios';
 
+// iOS capture goes through AVFoundation, which is macOS-only. The Windows
+// build has no working path for it, so hide the option entirely rather than
+// let users select something that will always fail to start.
+const IS_WINDOWS = typeof navigator !== 'undefined'
+  && /Windows/i.test(navigator.userAgent ?? '');
+const IOS_SUPPORTED = !IS_WINDOWS;
+
 function MiniSpark({ color }: { color: string }) {
   const pts = useMemo(() => {
     const arr: number[] = [];
@@ -36,8 +52,41 @@ function MiniSpark({ color }: { color: string }) {
   return <svg className="tbd-mini-spark" viewBox="0 0 200 100" preserveAspectRatio="none"><polyline points={d} fill="none" stroke={color} strokeWidth="2" opacity="0.75" /></svg>;
 }
 
-export function CaptureScreen({ recording, transition, onStart, onStop, elapsed, fmtElapsed, sessionId, configRef, hubConfigured, hubUrl, hubToken, showToast, liveStatus, lastSession: lastSessionProp, autoUploadRef }: Props) {
+export function CaptureScreen({
+  recording, transition, onStart, onStop,
+  buffering, bufferSeconds, onBufferSecondsChange, onStartBuffering, onSaveLookback, onStopBuffering, recentCaptures,
+  elapsed, fmtElapsed, sessionId, configRef,
+  hubConfigured, hubUrl, hubToken, showToast, liveStatus,
+  lastSession: lastSessionProp, autoUploadRef,
+}: Props) {
+  const [mode, setMode] = useState<'record' | 'lookback'>('record');
   const [target, setTarget] = useState<Target>('window');
+  // Lookback is desktop-only (Monitor/Window). Auto-revert to 'record' on
+  // unsupported targets, and force-show the right mode while a session is
+  // in flight so the visible UI matches what's actually running.
+  const lookbackSupported = target === 'window' || target === 'monitor';
+  useEffect(() => {
+    if (!lookbackSupported && mode === 'lookback') setMode('record');
+  }, [lookbackSupported, mode]);
+  useEffect(() => {
+    if (recording && mode !== 'record') setMode('record');
+    if (buffering && mode !== 'lookback') setMode('lookback');
+  }, [recording, buffering, mode]);
+
+  // Flash the save button at the moment of click — not when the bridge's
+  // "saved" event lands, since that gets polled at 1 Hz so the visual lag is
+  // ~1s. The confirmation that the save actually succeeded shows up in the
+  // recent-captures list below (slide-in animation on a new row).
+  const [flashKey, setFlashKey] = useState(0);
+  const onSaveClick = useCallback(() => {
+    setFlashKey(k => k + 1);
+    onSaveLookback();
+  }, [onSaveLookback]);
+
+  const fmtClock = (ms: number) => {
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  };
   const [exe, setExe] = useState('');
   const [logDir, setLogDir] = useState('');
   const [extraDirs, setExtraDirs] = useState<string[]>([]);
@@ -284,7 +333,9 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
                 <button className={`tbd-radio ${target === 'monitor' ? 'active' : ''}`} onClick={() => setTarget('monitor')}>{Icon.PC()}전체 모니터</button>
                 <button className={`tbd-radio ${target === 'window' ? 'active' : ''}`} onClick={() => setTarget('window')}>{Icon.Window()}특정 창 (WGC)</button>
                 <button className={`tbd-radio ${target === 'android' ? 'active' : ''}`} onClick={() => { setTarget('android'); refreshDevices(); }}>{Icon.Phone()}Android</button>
-                <button className={`tbd-radio ${target === 'ios' ? 'active' : ''}`} onClick={() => { setTarget('ios'); refreshIosDevices(); }}>{Icon.Phone()}iOS</button>
+                {IOS_SUPPORTED && (
+                  <button className={`tbd-radio ${target === 'ios' ? 'active' : ''}`} onClick={() => { setTarget('ios'); refreshIosDevices(); }}>{Icon.Phone()}iOS</button>
+                )}
               </div>
 
               {target === 'window' && (
@@ -386,17 +437,157 @@ export function CaptureScreen({ recording, transition, onStart, onStop, elapsed,
           </div>
         </div>
 
-        {/* Right: status panel */}
+        {/* Right: status panel.
+
+            Mode tabs are always rendered so the user can always see both
+            choices (the previous "hide while running" version made the tabs
+            invisible when an action was in flight, which felt like the
+            record button had vanished). Tabs cross-disable while a session
+            is active so the user can't switch out from under the bridge. */}
         <div>
-          <button className={`tbd-record-btn ${btnState}`} onClick={transition ? undefined : recording ? onStop : onStart}>
-            <div className="tbd-record-btn__dot" />
-            <div className="tbd-record-btn__label">
-              {transition === 'starting' ? '준비 중…' : transition === 'stopping' ? '마무리 중…' : recording ? '녹화 중지' : '녹화 시작'}
-            </div>
-            <div className="tbd-record-btn__sub">
-              {recording ? fmtElapsed(elapsed) : <kbd>Ctrl+Alt+R</kbd>}
-            </div>
-          </button>
+          {/* Mode tabs — always visible, prominent at the top of the panel. */}
+          <div className="tbd-mode-tabs" role="tablist" aria-label="캡처 모드">
+            <button
+              role="tab"
+              aria-selected={mode === 'record'}
+              className={`tbd-mode-tab ${mode === 'record' ? 'active' : ''}`}
+              onClick={() => setMode('record')}
+              disabled={buffering}
+              title={buffering ? '버퍼링 중에는 모드 전환 불가' : ''}
+            >{Icon.Capture()}<span>녹화</span></button>
+            <button
+              role="tab"
+              aria-selected={mode === 'lookback'}
+              className={`tbd-mode-tab ${mode === 'lookback' ? 'active' : ''}`}
+              onClick={() => setMode('lookback')}
+              disabled={recording || !lookbackSupported}
+              title={
+                !lookbackSupported ? 'Windows 데스크탑 캡처만 지원'
+                : recording ? '녹화 중에는 모드 전환 불가'
+                : '직전 N초 저장 (NVIDIA ShadowPlay 스타일)'
+              }
+            >{Icon.Clock()}<span>직전 기록 저장</span></button>
+          </div>
+
+          {mode === 'record' && (
+            <button
+              className={`tbd-record-btn ${btnState}`}
+              onClick={transition ? undefined : recording ? onStop : onStart}
+              disabled={!!transition}
+            >
+              <div className="tbd-record-btn__dot" />
+              <div className="tbd-record-btn__label">
+                {transition === 'starting' ? '준비 중…' : transition === 'stopping' ? '마무리 중…' : recording ? '녹화 중지' : '녹화 시작'}
+              </div>
+              <div className="tbd-record-btn__sub">
+                {recording ? fmtElapsed(elapsed) : <kbd>Ctrl+Alt+R</kbd>}
+              </div>
+            </button>
+          )}
+
+          {mode === 'lookback' && !buffering && (
+            <>
+              <button
+                className={`tbd-record-btn ${transition ? 'transition' : ''}`}
+                onClick={transition ? undefined : onStartBuffering}
+                disabled={!!transition || !lookbackSupported}
+              >
+                <div className="tbd-record-btn__dot" />
+                <div className="tbd-record-btn__label">
+                  {transition === 'starting' ? '준비 중…' : '버퍼링 시작'}
+                </div>
+                <div className="tbd-record-btn__sub">
+                  직전 {bufferSeconds}초를 항상 보관
+                </div>
+              </button>
+              <div className="tbd-card" style={{ marginTop: 14 }}>
+                <div className="tbd-card__body" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>버퍼 길이</span>
+                  <input
+                    type="number"
+                    className="tbd-input mono"
+                    min={5}
+                    max={300}
+                    step={5}
+                    value={bufferSeconds}
+                    onChange={e => {
+                      const v = parseInt(e.target.value || '30', 10);
+                      if (!isNaN(v)) onBufferSecondsChange(Math.max(5, Math.min(300, v)));
+                    }}
+                    style={{ width: 80 }}
+                  />
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>초 (5–300)</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {mode === 'lookback' && buffering && (
+            <>
+              <button
+                key={flashKey}
+                className="tbd-record-btn recording lookback-save"
+                onClick={transition ? undefined : onSaveClick}
+                style={{ position: 'relative', overflow: 'hidden' }}
+              >
+                <div className="tbd-record-btn__dot" />
+                <div className="tbd-record-btn__label">
+                  {transition === 'stopping' ? '마무리 중…' : '✂ 지금 저장'}
+                </div>
+                <div className="tbd-record-btn__sub">
+                  직전 {bufferSeconds}초 클립 · 저장 {recentCaptures.length}회
+                </div>
+              </button>
+
+              <div className="tbd-card" style={{ marginTop: 10 }}>
+                <div className="tbd-card__head" style={{ padding: '6px 12px' }}>
+                  <h3 style={{ margin: 0, fontSize: 11.5 }}>
+                    최근 저장 {recentCaptures.length > 0 && <span style={{ color: 'var(--muted)', fontWeight: 400 }}>· {recentCaptures.length}개</span>}
+                  </h3>
+                </div>
+                <div className="tbd-card__body" style={{ padding: '6px 12px', maxHeight: 132, overflowY: 'auto' }}>
+                  {recentCaptures.length === 0 ? (
+                    <div style={{ fontSize: 11.5, color: 'var(--muted)', textAlign: 'center', padding: '8px 0' }}>
+                      "지금 저장"을 누르면 직전 {bufferSeconds}초가 새 세션으로 기록됩니다
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {recentCaptures.slice(-5).reverse().map((c, i) => (
+                        <div
+                          key={`${c.at}-${i}`}
+                          className="mono"
+                          style={{
+                            display: 'flex', gap: 8, alignItems: 'baseline',
+                            fontSize: 11, padding: '3px 0',
+                            animation: i === 0 ? 'tbd-toast-in 0.25s ease-out' : undefined,
+                          }}
+                        >
+                          <span style={{
+                            width: 6, height: 6, borderRadius: '50%',
+                            background: 'var(--success)', flexShrink: 0,
+                            alignSelf: 'center',
+                          }} />
+                          <span style={{ color: 'var(--muted)', minWidth: 58 }}>{fmtClock(c.at)}</span>
+                          <span style={{ color: 'var(--fg-2)', minWidth: 36 }}>{Math.round(c.duration)}s</span>
+                          <span style={{
+                            flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap', color: 'var(--fg)',
+                          }}>{c.session_id}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <button
+                className="tbd-btn"
+                onClick={onStopBuffering}
+                disabled={!!transition}
+                style={{ width: '100%', marginTop: 8 }}
+              >버퍼링 중지</button>
+            </>
+          )}
 
           <div className="tbd-card" style={{ marginTop: 14 }}>
             <div className="tbd-card__body" style={{ padding: '8px 14px' }}>
