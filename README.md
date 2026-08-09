@@ -1,6 +1,6 @@
 # Trailbox
 
-Windows 멀티-시그널 세션 레코더. **화면 · 시스템 사운드 · 앱 로그 · 키마 입력 · CPU/GPU/RAM 텔레메트리** 를 *하나의 타임라인에 정렬해* 녹화하고, 브라우저에서 통합 뷰어로 보고, 팀과 링크로 공유합니다.
+멀티-시그널 세션 레코더. **화면 · 시스템 사운드 · 앱 로그 · 키보드/마우스 입력 · CPU/GPU/RAM 텔레메트리**를 하나의 타임라인에 정렬해 녹화하고, 브라우저에서 검토하거나 팀과 링크로 공유합니다.
 
 PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처합니다 — 화면 + logcat + 터치 입력 + jank/CPU/RSS 메트릭을 동일한 타임라인으로.
 
@@ -10,15 +10,21 @@ PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처�
 
 ## 받기
 
-[**Releases 최신**](https://github.com/hgkim0105/trailbox/releases/latest) 에서 **`Trailbox-Setup.exe`** (~256 MB) 받아 더블클릭.
+릴리스마다 제공 플랫폼이 다릅니다. `Releases/latest`가 항상 Windows 설치 파일을 포함하지는 않습니다.
 
-설치 마법사가 셋업 종류 (Full / Client / GUI-only / Custom) 와 Hub 연결 정보를 물어보고 알아서 잡아 줍니다. **Python · ffmpeg · adb · scrcpy · 그 외 의존성 모두 .exe 안에 포함** — 별도 설치 불필요.
+| 플랫폼 | 권장 파일 | 상태 |
+|---|---|---|
+| Windows 10 1903+ | [**Trailbox-Setup.exe — v0.14.0**](https://github.com/hgkim0105/trailbox/releases/download/v0.14.0/Trailbox-Setup.exe) | Windows용 최신 설치 파일. GUI, MCP, Hub, Android 도구 포함 |
+| macOS Apple Silicon | [**Trailbox_0.15.0_aarch64.dmg — v0.15.0**](https://github.com/hgkim0105/trailbox/releases/download/v0.15.0/Trailbox_0.15.0_aarch64.dmg) | macOS/iOS 캡처 미리보기. ad-hoc 서명, 미공증 |
 
-> 분리된 `Trailbox.exe` / `Trailbox-mcp.exe` / `Trailbox-hub.exe` 도 같은 페이지에 있음. 인스톨러 안 쓰고 수동 배치할 때만.
+모든 버전과 독립 실행 파일은 [**Releases**](https://github.com/hgkim0105/trailbox/releases)에서 확인할 수 있습니다.
+
+Windows 설치 마법사는 셋업 종류(Full / Client / GUI-only / Custom)와 Hub 연결 정보를 설정합니다. Python, ffmpeg, adb, scrcpy와 다른 런타임 의존성은 설치 파일에 포함됩니다.
 
 요구사항:
-- **PC**: Windows 10 1903+ (Windows 11 권장)
-- **Android 캡처** (선택): USB 디버깅이 켜진 Android 4.4+ 디바이스. Samsung 갤럭시면 «자동 차단» 의 «USB 케이블로 명령 차단» 옵션 OFF 필요
+- **Windows**: Windows 10 1903+ (Windows 11 권장)
+- **Android 캡처**: USB 디버깅이 켜진 Android 4.4+ 디바이스. Samsung 갤럭시면 «자동 차단»의 «USB 케이블로 명령 차단» 옵션 OFF 필요
+- **macOS/iOS 미리보기**: Apple Silicon Mac, USB로 연결하고 신뢰한 iPhone. 제한과 추가 설정은 [macOS/iOS 핸드오프 문서](docs/mac-ios-HANDOFF.md) 참고
 
 ---
 
@@ -186,7 +192,7 @@ Claude Desktop 재시작 후 채팅에서 활용:
 - "logs 에서 'error' 들어간 라인만 영상 타임코드와 같이 보여줘"
 - "5번째 마우스 클릭 시점에 화면이 어땠어?" (영상 프레임을 JPEG 로 추출해 보여줌)
 
-7개 도구 (`list_sessions` / `get_session` / `query_events` / `get_metrics` / `search_logs` / `get_frame_at` / `get_viewer_path`) 가 자동 인식됩니다.
+8개 읽기 전용 도구(`list_sessions` / `get_session` / `query_events` / `get_metrics` / `search_logs` / `get_frame_at` / `get_viewer_path` / `get_frame_stats`)가 자동 인식됩니다.
 
 ---
 

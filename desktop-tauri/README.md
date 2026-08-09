@@ -1,94 +1,80 @@
-# Trailbox Desktop (Tauri 포팅)
+# Trailbox Desktop
 
-PyQt6 데스크톱 클라이언트를 Tauri 2 + React + TypeScript 로 옮기는 작업.
-디자인 스펙은 `design_handoff_trailbox_desktop/` 폴더(레포 루트) 참고.
+Trailbox의 데스크톱 클라이언트입니다. Tauri 2 + React + TypeScript UI가 Rust command를 통해 Python 캡처 엔진과 Hub 클라이언트를 호출합니다.
 
-> 현재 상태: **scaffolding only**. 빌드되는 빈 셸 + 디자인 토큰 +
-> 사이드바와 3개 화면 stub 만 들어있음. 실제 캡처/세션/Hub 기능은
-> 아직 IPC 로 연결되지 않았음 — 기존 PyQt6 클라이언트가 그대로 메인.
+Windows 설치 파일은 `v0.14.0`에서 제공하고, Apple Silicon용 macOS/iOS 캡처는 `v0.15.0` 미리보기로 배포합니다. 플랫폼별 다운로드 경로는 루트 [README](../README.md)를 참고하세요.
 
-## 디렉토리
+## 현재 구조
 
+```text
+React UI
+  ├─ CaptureScreen       캡처 설정, 녹화, Lookback
+  ├─ SessionsScreen      로컬·Hub 세션, 뷰어, Trim
+  └─ HubSettingsScreen   로그인, 동기화, 보존 설정
+          │ Tauri invoke / event
+          ▼
+Rust commands
+  ├─ 파일·다이얼로그·오버레이 직접 처리
+  └─ Python bridge 프로세스 호출
+          ▼
+Python core
+  ├─ 화면·오디오·로그·입력·텔레메트리 캡처
+  ├─ viewer.html 생성
+  └─ Hub 업로드·다운로드
 ```
-desktop-tauri/
-├── package.json              Vite + React + TS + Tauri CLI
-├── vite.config.ts            포트 1420 (Tauri 관례)
-├── tsconfig.json
-├── index.html                FOUC-safe 테마 init + Geist 폰트 <link>
-├── src/
-│   ├── main.tsx              React 엔트리
-│   ├── App.tsx               사이드바 + 화면 라우팅
-│   ├── theme/
-│   │   ├── tokens.css        OKLCH 토큰 (light + dark) — Hub 와 동일
-│   │   └── desktop.css       데스크톱 밀도 베이스 (13px / 200px 사이드바)
-│   ├── components/
-│   │   ├── Icon.tsx          inline SVG 아이콘 세트
-│   │   ├── Sidebar.tsx
-│   │   └── ThemeToggle.tsx
-│   └── screens/
-│       ├── CaptureScreen.tsx    stub — ui/launcher_panel.py + recorder_panel.py 대체 예정
-│       ├── SessionsScreen.tsx   stub — ui/session_picker.py + remote_session_picker.py 대체 예정
-│       └── HubSettingsScreen.tsx stub — ui/hub_dialogs.py 대체 예정
-└── src-tauri/
-    ├── Cargo.toml
-    ├── build.rs
-    ├── tauri.conf.json       main window 만 정의 (overlay 는 후속)
-    ├── capabilities/
-    │   └── default.json      Tauri 2 보안 모델 (현재는 core:default 만)
-    └── src/
-        ├── main.rs
-        └── lib.rs             tauri::Builder — IPC 명령은 아직 비어있음
-```
+
+세부 모듈과 IPC 흐름은 [ARCHITECTURE.md](../ARCHITECTURE.md)에 정리되어 있습니다.
+
+## 연결된 기능
+
+- Windows 모니터·창 캡처와 녹화 오버레이
+- Android 디바이스 캡처
+- macOS/iOS 캡처 미리보기
+- 로컬 세션 목록, 뷰어 열기, 삭제
+- 세션 Trim과 Lookback 저장
+- Hub 로그인, 업로드·다운로드, 동기화와 정리 정책
+- 파일·폴더 선택, 창 선택, 전역 단축키
+- 다크·라이트 테마
 
 ## 개발 환경
 
-- Node 20+ (verified with 24.15)
+- Node.js 20+
 - npm 10+
-- Rust 1.77+ (verified with 1.95)
-- Windows MSVC 툴체인 (Tauri Rust 빌드용)
-- `tauri-build` 가 처음 빌드 시 추가 도구를 받아옴
-
-## 시작
+- Rust 1.77+
+- Python 3.11+와 루트 `requirements.txt`
+- Windows 빌드는 MSVC 툴체인 필요
+- macOS 번들은 Apple Silicon 환경에서 생성
 
 ```powershell
 cd desktop-tauri
+npm ci
 
-# 1. JS 의존성 설치
-npm install
-
-# 2. Vite (React) 빌드만 검증 — Rust 안 건드림
+# React/TypeScript만 검증
 npm run build
 
-# 3. Tauri dev 모드 (React + Rust 같이) — 첫 실행은 cargo 컴파일 때문에 느림
+# Tauri 개발 모드
 npm run tauri:dev
+
+# 현재 플랫폼용 Tauri 번들
+npm run tauri:build
 ```
 
-## 알려진 todo
+전체 Windows 설치 파일, Python sidecar, MCP, Hub를 함께 빌드하려면 저장소 루트의 `build.py`를 사용합니다. 릴리스 순서는 루트 [CLAUDE.md](../CLAUDE.md)의 버전 동기화 절차를 따릅니다.
 
-- **아이콘 파일** 아직 없음. `tauri.conf.json#bundle.icon` 경로의 파일들이
-  실제 존재해야 `npm run tauri:build` 가 성공. 임시 생성:
-  ```powershell
-  # 32×32 이상 PNG 한 장 준비한 뒤
-  npx tauri icon path\to\logo.png
-  ```
-  생성된 `src-tauri/icons/` 는 commit 함 (dev 환경 의존성 줄이려고).
+## 버전
 
-- **Recording overlay window** — 현재 conf 에서 빠짐.
-  `design_handoff_trailbox_desktop/src-desktop/recording-overlay.jsx`
-  스펙대로 별도 entry HTML + Vite multi-page + tauri.conf 에 windows 한 줄
-  추가해서 살릴 예정.
+제품 버전의 기준은 다음 세 파일입니다.
 
-- **IPC 명령** — `tauri::command` 핸들러 0 개. 첫 명령 후보:
-  `enumerate_windows`, `find_log_dir_for_pid`, `start_recording`,
-  `stop_recording`, `list_local_sessions`. 백엔드는 일단 기존 Python
-  subprocess 로 호출하고, 단계적으로 Rust crate 로 이관 (windows-capture-rs,
-  cpal, enigo 등).
+- `../main.py`의 `__version__`
+- `../installer/Trailbox-installer.iss`의 `MyAppVersion`
+- `src-tauri/tauri.conf.json`의 `version`
 
-- **Hub 클라이언트** — `core/hub_client.py` 와 동일한 API 를 호출하는 wrapper.
-  토큰은 `tauri-plugin-stronghold` (OS keychain) 에 저장.
+`package.json`과 `Cargo.toml`의 `0.0.0`은 제품 릴리스 버전으로 사용하지 않습니다.
 
-- **글로벌 단축키** `Ctrl+Alt+R` (녹화 중지) / `Ctrl+Shift+P` (창 선택) —
-  `tauri-plugin-global-shortcut` 추가.
+## 플랫폼 상태
 
-자세한 화면별 컴포넌트 명세 + 컬러/사이즈 토큰은
-`design_handoff_trailbox_desktop/README.md` 참고.
+- **Windows:** `v0.14.0` 설치 파일 제공
+- **Android:** Windows 호스트에서 USB 디바이스 캡처
+- **macOS/iOS:** `v0.15.0` Apple Silicon 미리보기. ad-hoc 서명, 미공증
+
+macOS/iOS의 실기 검증 내용과 남은 제한은 [mac-ios-HANDOFF.md](../docs/mac-ios-HANDOFF.md)를 참고하세요.
