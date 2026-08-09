@@ -15,7 +15,7 @@ PC 데스크탑뿐 아니라 **USB 연결된 Android 디바이스** 도 캡처�
 | 플랫폼 | 권장 파일 | 상태 |
 |---|---|---|
 | Windows 10 1903+ | [**Trailbox-Setup.exe — v0.14.0**](https://github.com/hgkim0105/trailbox/releases/download/v0.14.0/Trailbox-Setup.exe) | Windows용 최신 설치 파일. GUI, MCP, Hub, Android 도구 포함 |
-| macOS Apple Silicon | [**Trailbox_0.15.0_aarch64.dmg — v0.15.0**](https://github.com/hgkim0105/trailbox/releases/download/v0.15.0/Trailbox_0.15.0_aarch64.dmg) | macOS/iOS 캡처 미리보기. ad-hoc 서명, 미공증 |
+| macOS Apple Silicon | [**Trailbox_0.15.0_aarch64.dmg — v0.15.0**](https://github.com/hgkim0105/trailbox/releases/download/v0.15.0/Trailbox_0.15.0_aarch64.dmg) | macOS용 iPhone 캡처 미리보기. ad-hoc 서명, 미공증 |
 
 모든 버전과 독립 실행 파일은 [**Releases**](https://github.com/hgkim0105/trailbox/releases)에서 확인할 수 있습니다.
 
@@ -24,7 +24,7 @@ Windows 설치 마법사는 셋업 종류(Full / Client / GUI-only / Custom)와 
 요구사항:
 - **Windows**: Windows 10 1903+ (Windows 11 권장)
 - **Android 캡처**: USB 디버깅이 켜진 Android 4.4+ 디바이스. Samsung 갤럭시면 «자동 차단»의 «USB 케이블로 명령 차단» 옵션 OFF 필요
-- **macOS/iOS 미리보기**: Apple Silicon Mac, USB로 연결하고 신뢰한 iPhone. 제한과 추가 설정은 [macOS/iOS 핸드오프 문서](docs/mac-ios-HANDOFF.md) 참고
+- **macOS용 iPhone 캡처 미리보기**: Apple Silicon Mac, USB로 연결하고 신뢰한 iPhone을 캡처합니다. iOS 앱이 아닙니다. 제한과 추가 설정은 [macOS/iPhone 캡처 핸드오프 문서](docs/mac-ios-HANDOFF.md) 참고
 
 ---
 
